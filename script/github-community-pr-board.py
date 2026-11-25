@@ -30,6 +30,10 @@ Reads the event payload dispatched by the GitHub Actions workflow and:
   events that change Size, Last push and Merge conflicts, pushes to main
   that change Merge conflicts, reactions, comments and reviews that change
   Upvotes, and sidebar edits to linked issues that don't fire a PR webhook).
+- When run with PUBLISH_HIGH_MR=1: copies the High MR contributors from
+  Snowflake into a section of the board's README, which every other run
+  reads to set Contributor. Used by the scheduled refresh workflow, in its
+  own step, before REFRESH_ALL.
 
 Review-based status changes (approved → "In Progress (us)", changes
 requested → "In Progress (author)") are handled by built-in board
@@ -41,7 +45,7 @@ skips it rather than failing, so new fields can be rolled out in the
 project UI independently of deploys.
 
 Requires:
-    requests (pip install requests)
+    `requests`; `cryptography` for PUBLISH_HIGH_MR
 
 Usage (called by the workflow, not directly):
     python github-community-pr-board.py
@@ -51,6 +55,7 @@ import json
 import os
 import sys
 import time
+from functools import cache
 from itertools import batched
 from pathlib import Path
 
@@ -61,6 +66,7 @@ from github_helpers import (
     github_rest_api,
     is_staff_member,
     set_github_project_field,
+    update_github_project_readme,
 )
 
 REPO_OWNER = "zed-industries"
@@ -81,6 +87,9 @@ MERGE_CONFLICTS_FIELD = "Merge conflicts"
 HAS_CONFLICTS_OPTION = "❌"
 NO_SELF_REVIEW_LABEL = "no self-review"
 NO_SELF_REVIEW_OPTION = "AI?"
+HIGH_MR_VIEW = "GITHUB_ANALYTICS.ENRICHED.COMMUNITY_HIGH_MR_AUTHORS_V1"
+HIGH_MR_SECTION_START = "<!-- high-mr-contributors:start -->"
+HIGH_MR_SECTION_END = "<!-- high-mr-contributors:end -->"
 POSITIVE_REACTIONS = {"THUMBS_UP", "HEART", "HOORAY", "ROCKET"}
 BOTS_WITH_USER_ACCOUNTS = {"zed-industries-bot"}
 # GitHub answers 502 to batches of 25.
@@ -216,24 +225,28 @@ def compute_size_bucket(total_changes):
     return "XL"
 
 
-def compute_contributor(pr_labels):
-    """Return the Contributor value derived from the PR's labels.
+def compute_contributor(pr):
+    """Return the Contributor value derived from the PR's labels and author.
 
     The auto-labeler is responsible for applying `guild`, `community champion`
     and `first contribution` based on the author's membership/history; anything
     else on the board is treated as a returning contributor (PRs from staff/bots
-    don't reach this function because they're filtered upstream).
+    don't reach this function because they're filtered upstream), shown as
+    High MR when the author has a high merge rate.
 
     Guild takes precedence over Champion because current-cohort guild members
     are frequently also community champions, and their guild status is the more
     relevant signal while the cohort is active.
     """
-    if "guild" in pr_labels:
+    labels = {label["name"] for label in pr["labels"]["nodes"]}
+    if "guild" in labels:
         return "Guild"
-    if "community champion" in pr_labels:
+    if "community champion" in labels:
         return "Champion"
-    if "first contribution" in pr_labels:
+    if "first contribution" in labels:
         return "First PR"
+    if pr["author"] and pr["author"]["login"].lower() in _fetch_high_mr_logins():
+        return "High MR"
     return "Returning"
 
 
@@ -338,7 +351,7 @@ def compute_signals(pr):
     pr_labels = {label["name"] for label in pr["labels"]["nodes"]}
     signals = {
         "Size": compute_size_bucket(pr["additions"] + pr["deletions"]),
-        "Contributor": compute_contributor(pr_labels),
+        "Contributor": compute_contributor(pr),
         "Issue Linked": linked_issue_type(pr),
         # Counts people, not reactions, despite the field's name.
         "Upvotes": count_interested_people(pr),
@@ -386,6 +399,64 @@ def refresh_signals_if_on_board(pr, project_number):
         return
     [item] = github_fetch_board_items([item_id])
     refresh_signals(project, item)
+
+
+def listed_high_mr_logins(text):
+    """Return the logins listed between the High MR markers, or None without them."""
+    start = text.find(HIGH_MR_SECTION_START)
+    if start == -1:
+        return None
+    section = text[start : text.index(HIGH_MR_SECTION_END, start)]
+    return frozenset(
+        line.removeprefix("- ")
+        for line in section.splitlines()
+        if line.startswith("- ")
+    )
+
+
+@cache
+def _fetch_high_mr_logins():
+    readme = fetch_github_project(int(os.environ["PROJECT_NUMBER"]))["readme"] or ""
+    logins = listed_high_mr_logins(readme)
+    if logins is None:
+        raise RuntimeError("No High MR section in the board's README")
+    return logins
+
+
+def readme_with_high_mr_logins(readme, logins):
+    """Return the README with its High MR section replaced or appended."""
+    section = "\n".join([
+        HIGH_MR_SECTION_START,
+        "### High MR contributors",
+        "",
+        *(f"- {login}" for login in logins),
+        HIGH_MR_SECTION_END,
+    ])
+    start = readme.find(HIGH_MR_SECTION_START)
+    if start == -1:
+        return f"{readme.rstrip()}\n\n{section}\n".lstrip()
+    end = readme.index(HIGH_MR_SECTION_END, start) + len(HIGH_MR_SECTION_END)
+    return readme[:start] + section + readme[end:]
+
+
+def publish_high_mr_logins(project_number):
+    # Imported here, since only the publish step installs cryptography.
+    from snowflake_helpers import query_snowflake
+
+    rows = query_snowflake(f"SELECT AUTHOR_LOGIN FROM {HIGH_MR_VIEW}")
+    logins = sorted(row[0] for row in rows)
+    # A broken mart would otherwise turn every High MR card back into Returning.
+    if not logins:
+        raise RuntimeError("Snowflake returned no High MR contributors, list kept")
+    project = fetch_github_project(project_number)
+    readme = project["readme"] or ""
+    if listed_high_mr_logins(readme) == frozenset(logins):
+        print(f"High MR list unchanged ({len(logins)} contributors)")
+        return
+    update_github_project_readme(
+        project["id"], readme_with_high_mr_logins(readme, logins)
+    )
+    print(f"Published {len(logins)} High MR contributors")
 
 
 def recheck_mergeability(project, mergeability_rechecks):
@@ -647,6 +718,10 @@ def github_get_field_value(item_id, field_name):
 if __name__ == "__main__":
 
     project_number = int(os.environ["PROJECT_NUMBER"])
+
+    if os.environ.get("PUBLISH_HIGH_MR") == "1":
+        publish_high_mr_logins(project_number)
+        sys.exit(0)
 
     if os.environ.get("REFRESH_ALL") == "1":
         refresh_all_board_items(project_number)

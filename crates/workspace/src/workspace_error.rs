@@ -103,11 +103,6 @@ impl ErrorAction {
         self
     }
 
-    pub fn with_tooltip(mut self, tooltip: impl Into<SharedString>) -> Self {
-        self.tooltip = Some(tooltip.into());
-        self
-    }
-
     pub fn link(label: impl Into<SharedString>, url: impl Into<Arc<str>>) -> Self {
         Self::new(label, OpenBrowser { url: url.into() }).with_end_icon(IconName::ArrowUpRight)
     }

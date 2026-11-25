@@ -56,7 +56,7 @@ use text::Bias;
 use ui::App;
 use util::markdown::{MarkdownCodeBlock, MarkdownEscaped};
 use util::path_list::PathList;
-use util::{ResultExt, get_default_system_shell_preferring_bash, paths::PathStyle};
+use util::{ResultExt, paths::PathStyle};
 use uuid::Uuid;
 
 pub(crate) enum MetadataUpdate {
@@ -222,11 +222,6 @@ pub struct SandboxAuthorizationDetails {
     pub unsandboxed: bool,
     #[serde(default)]
     pub write_paths: Vec<settings::GrantedWritePath>,
-    /// Windows/WSL only: the command will write to a path on a Windows drive
-    /// (DrvFs), whose sandbox-integrity guarantees are weaker. Drives the
-    /// weaker-guarantee warning banner in the approval prompt.
-    #[serde(default)]
-    pub warn_windows_fs: bool,
     /// The agent-provided justification for requesting these permissions,
     /// shown to the user (attributed to the agent) in the approval prompt.
     #[serde(default)]
@@ -269,7 +264,7 @@ pub struct SandboxFallbackAuthorizationDetails {
     #[serde(default)]
     pub reason: String,
     /// Slug of the sandboxing docs section that best explains how to fix this
-    /// failure (see [`crate::LinuxWslSandboxError::docs_section`]), rendered as a
+    /// failure (see [`crate::SandboxCreationError::docs_section`]), rendered as a
     /// "Learn more" link. `None` when the cause is unknown.
     #[serde(default)]
     pub docs_section: Option<String>,
@@ -578,6 +573,7 @@ pub struct ElicitationEntryId(pub Arc<str>);
 pub struct Elicitation {
     pub id: ElicitationEntryId,
     pub request: acp_v2::CreateElicitationRequest,
+    pub v1_string_patterns: std::collections::BTreeMap<String, String>,
     pub status: ElicitationStatus,
 }
 
@@ -638,7 +634,7 @@ impl ElicitationStore {
 
     fn insert_pending_elicitation(
         &mut self,
-        request: acp_v2::CreateElicitationRequest,
+        request: elicitation::ElicitationRequest,
     ) -> (
         ElicitationEntryId,
         oneshot::Receiver<acp_v2::CreateElicitationResponse>,
@@ -647,7 +643,8 @@ impl ElicitationStore {
         let id = ElicitationEntryId(Uuid::new_v4().to_string().into());
         self.elicitations.push(Elicitation {
             id: id.clone(),
-            request,
+            request: request.request,
+            v1_string_patterns: request.v1_string_patterns,
             status: ElicitationStatus::Pending { respond_tx },
         });
         (id, response_rx)
@@ -754,7 +751,7 @@ impl ElicitationStore {
 
     pub fn request_elicitation(
         &mut self,
-        request: acp_v2::CreateElicitationRequest,
+        request: impl Into<elicitation::ElicitationRequest>,
         cx: &mut Context<Self>,
     ) -> Result<Task<acp_v2::CreateElicitationResponse>, acp_v2::Error> {
         self.request_elicitation_with_id(request, cx)
@@ -763,10 +760,11 @@ impl ElicitationStore {
 
     pub fn request_elicitation_with_id(
         &mut self,
-        request: acp_v2::CreateElicitationRequest,
+        request: impl Into<elicitation::ElicitationRequest>,
         cx: &mut Context<Self>,
     ) -> Result<(ElicitationEntryId, Task<acp_v2::CreateElicitationResponse>), acp_v2::Error> {
-        Self::validate_request(&request)?;
+        let request = request.into();
+        Self::validate_request(&request.request)?;
         let (id, response_rx) = self.insert_pending_elicitation(request);
         cx.emit(ElicitationStoreEvent::ElicitationRequested(id.clone()));
         cx.notify();
@@ -981,7 +979,11 @@ impl ContextCompaction {
         language_registry: &Arc<LanguageRegistry>,
         cx: &mut App,
     ) {
-        self.status = update.status.into();
+        match update.status {
+            MaybeUndefined::Undefined => {}
+            MaybeUndefined::Null => self.status = ContextCompactionStatus::InProgress,
+            MaybeUndefined::Value(status) => self.status = status.into(),
+        }
         match update.summary {
             MaybeUndefined::Undefined => {}
             MaybeUndefined::Null => self.summary = MessageContent::default(),
@@ -1122,7 +1124,7 @@ impl AgentThreadEntry {
         }
     }
 
-    pub fn location(&self, ix: usize) -> Option<(ToolCallLocation, AgentLocation)> {
+    pub fn location(&self, ix: usize) -> Option<(ToolCallLocation, Option<AgentLocation>)> {
         if let AgentThreadEntry::ToolCall(ToolCall {
             locations,
             resolved_locations,
@@ -1131,7 +1133,7 @@ impl AgentThreadEntry {
         {
             Some((
                 locations.get(ix)?.clone(),
-                resolved_locations.get(ix)?.clone()?,
+                resolved_locations.get(ix).cloned().flatten(),
             ))
         } else {
             None
@@ -1181,6 +1183,7 @@ impl From<acp_v2::ToolCallLocation> for ToolCallLocation {
 pub struct ToolCall {
     pub id: acp_v2::ToolCallId,
     pub label: Entity<Markdown>,
+    origin: ToolCallOrigin,
     title: Option<SharedString>,
     pub name: Option<SharedString>,
     pub reported_kind: Option<acp_v2::ToolKind>,
@@ -1261,6 +1264,19 @@ impl PermissionRequest {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ToolCallOrigin {
+    AcpV1,
+    AcpV2,
+    Native,
+}
+
+impl ToolCallOrigin {
+    fn plain_label(self, title: Option<&SharedString>, kind: &acp_v2::ToolKind) -> bool {
+        self == Self::AcpV2 || title.is_none() || *kind == acp_v2::ToolKind::Execute
+    }
+}
+
 struct ToolCallPatch {
     title: MaybeUndefined<String>,
     name: MaybeUndefined<String>,
@@ -1314,12 +1330,15 @@ impl<'a> ToolTerminalResolver<'a> {
 impl ToolContentPatch {
     fn prepare(
         self,
+        origin: ToolCallOrigin,
         terminals: ToolTerminalResolver<'_>,
         cx: &App,
     ) -> Result<Vec<PreparedToolCallContent>> {
         match self {
             Self::V1(content) => PreparedToolCallContent::prepare(content, terminals, cx),
-            Self::V2(content) => PreparedToolCallContent::prepare_v2(content, terminals, cx),
+            Self::V2(content) => {
+                PreparedToolCallContent::prepare_v2(content, origin, terminals, cx)
+            }
         }
     }
 }
@@ -1409,6 +1428,7 @@ impl ToolCall {
         let mut call = Self::from_patch(
             acp_v2::ToolCallId::new(update.tool_call_id.0),
             ToolCallPatch::legacy(update.fields, update.meta),
+            ToolCallOrigin::AcpV1,
             language_registry,
             ToolTerminalResolver::registered(terminals),
             cx,
@@ -1422,6 +1442,7 @@ impl ToolCall {
     fn from_patch(
         id: acp_v2::ToolCallId,
         patch: ToolCallPatch,
+        origin: ToolCallOrigin,
         language_registry: Arc<LanguageRegistry>,
         terminals: ToolTerminalResolver<'_>,
         cx: &mut App,
@@ -1429,7 +1450,7 @@ impl ToolCall {
         let content = patch
             .content
             .take()
-            .map(|content| content.prepare(terminals, cx))
+            .map(|content| content.prepare(origin, terminals, cx))
             .transpose()?
             .unwrap_or_default()
             .into_iter()
@@ -1457,6 +1478,7 @@ impl ToolCall {
             sandbox_fallback_authorization_details_from_meta(&meta);
         let sandbox_not_applied = sandbox_not_applied_from_meta(&meta);
         let label = Self::new_label(
+            origin,
             title.as_ref().filter(|title| !title.trim().is_empty()),
             tool_name.as_ref(),
             kind.as_ref().unwrap_or(&acp_v2::ToolKind::Other),
@@ -1467,6 +1489,7 @@ impl ToolCall {
         let mut result = Self {
             id,
             label,
+            origin,
             title,
             name,
             reported_kind: kind,
@@ -1553,6 +1576,7 @@ impl ToolCall {
     }
 
     fn label_text(
+        origin: ToolCallOrigin,
         title: Option<&SharedString>,
         tool_name: Option<&SharedString>,
         kind: &acp_v2::ToolKind,
@@ -1564,7 +1588,7 @@ impl ToolCall {
                 .unwrap_or_else(|| "Tool call".into());
         };
 
-        if kind == &acp_v2::ToolKind::Execute {
+        if origin == ToolCallOrigin::AcpV2 || kind == &acp_v2::ToolKind::Execute {
             title.clone()
         } else if kind == &acp_v2::ToolKind::Edit {
             MarkdownEscaped(title).to_string().into()
@@ -1576,15 +1600,16 @@ impl ToolCall {
     }
 
     fn new_label(
+        origin: ToolCallOrigin,
         title: Option<&SharedString>,
         tool_name: Option<&SharedString>,
         kind: &acp_v2::ToolKind,
         language_registry: Arc<LanguageRegistry>,
         cx: &mut App,
     ) -> Entity<Markdown> {
-        let text = Self::label_text(title, tool_name, kind);
+        let text = Self::label_text(origin, title, tool_name, kind);
         cx.new(|cx| {
-            if title.is_none() || kind == &acp_v2::ToolKind::Execute {
+            if origin.plain_label(title, kind) {
                 Markdown::new_text(text, cx)
             } else {
                 Markdown::new(text, Some(language_registry), None, cx)
@@ -1625,10 +1650,9 @@ impl ToolCall {
         let content = match content {
             MaybeUndefined::Undefined => None,
             MaybeUndefined::Null => Some(Vec::new()),
-            MaybeUndefined::Value(content) => Some(content.prepare(terminals, cx)?),
+            MaybeUndefined::Value(content) => Some(content.prepare(self.origin, terminals, cx)?),
         };
-        let was_plain_text =
-            self.effective_title().is_none() || self.kind() == &acp_v2::ToolKind::Execute;
+        let was_plain_text = self.origin.plain_label(self.effective_title(), self.kind());
         let mut label_changed = !title.is_undefined() || !kind.is_undefined();
         if !kind.is_undefined() {
             self.reported_kind = kind.take();
@@ -1700,10 +1724,10 @@ impl ToolCall {
             }
         }
         if label_changed {
-            let is_plain_text =
-                self.effective_title().is_none() || self.kind() == &acp_v2::ToolKind::Execute;
+            let is_plain_text = self.origin.plain_label(self.effective_title(), self.kind());
             if was_plain_text != is_plain_text {
                 self.label = Self::new_label(
+                    self.origin,
                     self.effective_title(),
                     self.tool_name.as_ref(),
                     self.kind(),
@@ -1711,8 +1735,12 @@ impl ToolCall {
                     cx,
                 );
             } else {
-                let text =
-                    Self::label_text(self.effective_title(), self.tool_name.as_ref(), self.kind());
+                let text = Self::label_text(
+                    self.origin,
+                    self.effective_title(),
+                    self.tool_name.as_ref(),
+                    self.kind(),
+                );
                 if self.label.read(cx).source() != &text {
                     self.label.update(cx, |label, cx| label.replace(text, cx));
                 }
@@ -1778,25 +1806,25 @@ impl ToolCall {
         language_registry: &Arc<LanguageRegistry>,
         cx: &mut App,
     ) {
-        // Agents may stream tool text one chunk at a time, like message text, so adjacent
-        // plain text continues the previous block instead of starting a new one.
-        if let PreparedToolCallContent::ContentBlock(acp_v2::Content {
-            content: acp_v2::ContentBlock::Text(text),
-            meta: None,
-            ..
-        }) = &content
-            && let Some(ToolCallContent::ContentBlock { block, meta: None }) =
-                self.structured_content.last_mut()
-            && block.append_plain_text(text, cx)
-        {
-            self.update_raw_output_content(language_registry, cx);
-            return;
+        match (self.structured_content.last_mut(), content) {
+            (
+                Some(ToolCallContent::Text {
+                    markdown,
+                    fragments,
+                }),
+                PreparedToolCallContent::Text(more),
+            ) => {
+                markdown.update(cx, |markdown, cx| {
+                    markdown.append(&ToolCallText::join(&more), cx)
+                });
+                fragments.extend(more);
+            }
+            (_, content) => self.structured_content.push(ToolCallContent::from_prepared(
+                content,
+                language_registry,
+                cx,
+            )),
         }
-        self.structured_content.push(ToolCallContent::from_prepared(
-            content,
-            language_registry,
-            cx,
-        ));
         self.update_raw_output_content(language_registry, cx);
     }
 
@@ -1890,7 +1918,7 @@ impl ToolCall {
 
     pub fn to_markdown(&self, cx: &App) -> String {
         let label = self.label.read(cx).source();
-        let label = if self.effective_title().is_none() {
+        let label = if self.origin == ToolCallOrigin::AcpV2 || self.effective_title().is_none() {
             MarkdownEscaped(label).to_string()
         } else {
             label.to_string()
@@ -2786,23 +2814,6 @@ impl ContentBlock {
     ///
     /// Recreating the entity on every streamed snapshot causes the rendered
     /// element to tear down and rebuild, which flickers badly.
-    /// Appends text without annotations or metadata to a block holding the same kind of text.
-    fn append_plain_text(&mut self, text: &acp_v2::TextContent, cx: &mut App) -> bool {
-        let is_plain =
-            |text: &acp_v2::TextContent| text.annotations.is_none() && text.meta.is_none();
-        let (RenderBlock::Markdown { markdown }, Some(acp_v2::ContentBlock::Text(source))) =
-            (&self.render, &mut self.source)
-        else {
-            return false;
-        };
-        if !is_plain(text) || !is_plain(source) {
-            return false;
-        }
-        source.text.push_str(&text.text);
-        markdown.update(cx, |markdown, cx| markdown.append(&text.text, cx));
-        true
-    }
-
     pub fn update_text_in_place(&mut self, block: &acp_v2::ContentBlock, cx: &mut App) -> bool {
         let RenderBlock::Markdown { markdown } = &self.render else {
             return false;
@@ -3182,6 +3193,12 @@ fn text_resource_render_mode(mime_type: Option<&str>) -> TextResourceRenderMode 
 
 #[derive(Debug)]
 pub enum ToolCallContent {
+    /// Adjacent ACP text items form a single Markdown document, but each item's
+    /// annotations and metadata still belong to that item.
+    Text {
+        fragments: Vec<ToolCallText>,
+        markdown: Entity<Markdown>,
+    },
     ContentBlock {
         block: ContentBlock,
         meta: Option<acp_v2::Meta>,
@@ -3206,7 +3223,23 @@ pub enum ToolCallContent {
     },
 }
 
+#[derive(Debug)]
+pub struct ToolCallText {
+    pub content: acp_v2::TextContent,
+    pub meta: Option<acp_v2::Meta>,
+}
+
+impl ToolCallText {
+    fn join(fragments: &[Self]) -> String {
+        fragments
+            .iter()
+            .map(|fragment| fragment.content.text.as_str())
+            .collect()
+    }
+}
+
 enum PreparedToolCallContent {
+    Text(Vec<ToolCallText>),
     ContentBlock(acp_v2::Content),
     LegacyDiff(acp_v1::Diff),
     Terminal {
@@ -3253,23 +3286,41 @@ impl PreparedToolCallContent {
 
     fn prepare_v2(
         content: Vec<acp_v2::ToolCallContent>,
+        origin: ToolCallOrigin,
         terminals: ToolTerminalResolver<'_>,
         cx: &App,
     ) -> Result<Vec<Self>> {
-        content
-            .into_iter()
-            .map(|content| Self::from_v2(content, terminals, cx))
-            .collect()
+        let mut prepared = Vec::new();
+        for item in content {
+            match (
+                prepared.last_mut(),
+                Self::from_v2(item, origin, terminals, cx)?,
+            ) {
+                (Some(Self::Text(fragments)), Self::Text(more)) => fragments.extend(more),
+                (_, item) => prepared.push(item),
+            }
+        }
+        Ok(prepared)
     }
 
     fn from_v2(
         content: acp_v2::ToolCallContent,
+        origin: ToolCallOrigin,
         terminals: ToolTerminalResolver<'_>,
         cx: &App,
     ) -> Result<Self> {
         match content {
-            acp_v2::ToolCallContent::Content(content) => Ok(Self::ContentBlock(*content)),
-            acp_v2::ToolCallContent::Diff(diff) => Ok(Self::DiffPatch(diff)),
+            acp_v2::ToolCallContent::Content(content) => Ok(match *content {
+                acp_v2::Content {
+                    content: acp_v2::ContentBlock::Text(content),
+                    meta,
+                    ..
+                } if origin == ToolCallOrigin::AcpV2 => {
+                    Self::Text(vec![ToolCallText { content, meta }])
+                }
+                content => Self::ContentBlock(content),
+            }),
+            acp_v2::ToolCallContent::Diff(diff) => Ok(Self::DiffPatch(*diff)),
             acp_v2::ToolCallContent::Terminal(terminal) => Ok(Self::Terminal {
                 terminal: terminals.resolve(&terminal.terminal_id, cx)?,
                 meta: terminal.meta,
@@ -3302,6 +3353,14 @@ impl ToolCallContent {
         cx: &mut App,
     ) -> Self {
         match content {
+            PreparedToolCallContent::Text(fragments) => Self::Text {
+                markdown: ContentBlock::create_markdown(
+                    ToolCallText::join(&fragments),
+                    language_registry,
+                    cx,
+                ),
+                fragments,
+            },
             PreparedToolCallContent::ContentBlock(content) => Self::ContentBlock {
                 block: ContentBlock::new_tool_content(content.content, language_registry, cx),
                 meta: content.meta,
@@ -3345,6 +3404,16 @@ impl ToolCallContent {
         cx: &mut App,
     ) {
         match (&mut *self, new) {
+            (
+                Self::Text {
+                    fragments,
+                    markdown,
+                },
+                PreparedToolCallContent::Text(new),
+            ) => {
+                update_markdown_in_place(markdown, &ToolCallText::join(&new), cx);
+                *fragments = new;
+            }
             (
                 Self::ContentBlock { block, meta },
                 PreparedToolCallContent::ContentBlock(content),
@@ -3397,6 +3466,7 @@ impl ToolCallContent {
 
     pub fn to_markdown(&self, cx: &App) -> String {
         match self {
+            Self::Text { markdown, .. } => markdown.read(cx).source().to_string(),
             Self::ContentBlock { block, .. } => block.to_markdown(cx).to_owned(),
             Self::Diff(diff) | Self::LegacyDiff { diff, .. } => diff.read(cx).to_markdown(cx),
             Self::Terminal { terminal, .. } => terminal.read(cx).to_markdown(cx),
@@ -3412,6 +3482,7 @@ impl ToolCallContent {
 
     pub fn markdown(&self) -> Option<&Entity<Markdown>> {
         match self {
+            Self::Text { markdown, .. } => Some(markdown),
             Self::ContentBlock { block, .. } => block.markdown(),
             Self::DiffPatch { render, .. } => render.fallback.as_ref(),
             Self::Other { markdown, .. } => Some(markdown),
@@ -3419,6 +3490,14 @@ impl ToolCallContent {
             | Self::LegacyDiff { .. }
             | Self::Terminal { .. }
             | Self::SessionReference(_) => None,
+        }
+    }
+
+    pub fn text_content<'a>(&'a self, cx: &'a App) -> Option<&'a str> {
+        match self {
+            Self::Text { markdown, .. } => Some(markdown.read(cx).source()),
+            Self::ContentBlock { block, .. } => block.text_content(cx),
+            _ => None,
         }
     }
 
@@ -3795,6 +3874,7 @@ pub struct AcpThread {
     subagent_outcomes: Vec<(usize, acp_v2::StateUpdate)>,
     reported_usage: Option<ReportedTokenUsage>,
     token_usage: Option<TokenUsage>,
+    usage_meta: Option<acp_v2::Meta>,
     cost: Option<SessionCost>,
     prompt_capabilities: acp_v2::PromptCapabilities,
     available_commands: Vec<acp_v2::AvailableCommand>,
@@ -4000,22 +4080,6 @@ pub enum TerminalProviderEvent {
     },
 }
 
-#[derive(Debug, Clone)]
-pub enum TerminalProviderCommand {
-    WriteInput {
-        terminal_id: acp_v2::TerminalId,
-        bytes: Vec<u8>,
-    },
-    Resize {
-        terminal_id: acp_v2::TerminalId,
-        cols: u16,
-        rows: u16,
-    },
-    Close {
-        terminal_id: acp_v2::TerminalId,
-    },
-}
-
 #[derive(PartialEq, Eq, Debug)]
 pub enum ThreadStatus {
     Unconfirmed,
@@ -4159,6 +4223,7 @@ impl AcpThread {
             reported_usage: None,
             connection,
             token_usage: None,
+            usage_meta: None,
             cost: None,
             prompt_capabilities,
             available_commands: Vec::new(),
@@ -4215,10 +4280,7 @@ impl AcpThread {
         Ok(())
     }
 
-    /// Ends a history replay into this session, after a successful load or resume. The
-    /// subagents RFD treats the work states and cancel grants that the replay reported for
-    /// subagents as history, outcomes included: each subagent's work state is unconfirmed,
-    /// and it cannot be cancelled, until the agent reports current ones after the response.
+    /// Discards child state and cancel grants after a failed resume.
     /// Titles and transcripts stay.
     pub fn invalidate_replayed_subagent_state(&mut self, cx: &mut Context<Self>) {
         for subagent in self.subagents.values() {
@@ -4681,6 +4743,7 @@ impl AcpThread {
     pub fn handle_connection_lost(&mut self, cx: &mut Context<Self>) {
         let was_observable = self.activity.ensure_observable().is_ok();
         self.activity.close_observation();
+        self.invalidate_live_state(cx);
         let changed = self.submissions.disconnect();
         if !changed.is_empty() {
             for id in changed {
@@ -4731,9 +4794,26 @@ impl AcpThread {
     pub fn handle_session_closed(&mut self, cx: &mut Context<Self>) {
         // Close confirms stopping without inventing an Idle snapshot or ending receipts.
         self.activity.finish_close();
+        self.invalidate_live_state(cx);
         self.cancel_generic_permission_requests(cx);
         self.cancel_outstanding_elicitations(cx);
+        for subagent in self.subagents.values() {
+            subagent.update(cx, |subagent, cx| subagent.handle_session_closed(cx));
+        }
         cx.notify();
+    }
+
+    fn invalidate_live_state(&mut self, cx: &mut Context<Self>) {
+        if matches!(
+            self.submissions.transport(),
+            SubmissionTransport::AgentOwned
+        ) && let Some(association) = &mut self.subagent_association
+        {
+            association.can_cancel = false;
+        }
+        if self.uses_reported_activity() && self.foreground_activity().is_active() {
+            self.clear_session_state(cx).log_err();
+        }
     }
 
     fn register_submission(
@@ -4879,6 +4959,19 @@ impl AcpThread {
         }
     }
 
+    pub fn update_v2_subagent_state(
+        &mut self,
+        state: acp_v2::StateUpdate,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        // The agent can send the same state on the child's stream and on the
+        // parent's. A second copy is not another outcome.
+        if self.foreground_state() == Some(&state) {
+            return Ok(());
+        }
+        self.update_session_state(state, cx)
+    }
+
     pub fn update_session_state(
         &mut self,
         state: acp_v2::StateUpdate,
@@ -4893,9 +4986,11 @@ impl AcpThread {
         self.received_session_state = true;
         if self.subagent_association.is_some() && matches!(state, acp_v2::StateUpdate::Idle(_)) {
             let entry_count = self.entries.len();
-            // An idle report with no entries since the previous one restates that outcome.
+            // Background updates can add entries between two snapshots of the same idle interval.
             match self.subagent_outcomes.last_mut() {
-                Some((last_entry_count, last_state)) if *last_entry_count == entry_count => {
+                Some((last_entry_count, last_state))
+                    if previous == ForegroundActivity::Idle || *last_entry_count == entry_count =>
+                {
                     *last_state = state.clone();
                 }
                 _ => self.subagent_outcomes.push((entry_count, state.clone())),
@@ -4946,12 +5041,15 @@ impl AcpThread {
                     stop_reason: stop_reason.clone(),
                 });
             }
-            // A subagent's work can stop because Zed cancelled an ancestor. Its requests stay
-            // answerable until it reports that, and then go as if Zed had cancelled it.
             if self.subagent_association.is_some()
                 && matches!(stop_reason, Some(acp_v2::StopReason::Cancelled))
             {
-                self.cancel_local_actions(RequestPermissionOutcome::Cancelled, cx);
+                if self.connection.answers_permission_requests_on_cancel() {
+                    self.cancel_local_actions(RequestPermissionOutcome::Cancelled, cx);
+                } else if was_in_progress {
+                    // Only the agent knows which requests are still needed by background work.
+                    self.mark_foreground_tool_calls_cancelled(cx);
+                }
             }
         }
         if previous != self.foreground_activity() {
@@ -5169,6 +5267,8 @@ impl AcpThread {
                 config_options::from_v1(config_options).map_err(acp_v1::Error::from)?,
             )),
             acp_v1::SessionUpdate::UsageUpdate(update) => {
+                // v1 metadata describes this report, not a patch to the previous one.
+                self.usage_meta = update.meta;
                 self.update_usage(
                     acp_v2::UsageUpdate::new(update.used, update.size)
                         // v1 has no way to clear the cost, so a missing cost leaves it unchanged.
@@ -5176,8 +5276,7 @@ impl AcpThread {
                             MaybeUndefined::Value(
                                 acp_v2::Cost::new(cost.amount, cost.currency).meta(cost.meta),
                             )
-                        }))
-                        .meta(update.meta),
+                        })),
                     cx,
                 );
             }
@@ -6119,7 +6218,7 @@ impl AcpThread {
 
         let mut compaction = ContextCompaction {
             id,
-            status: update.status.clone().into(),
+            status: ContextCompactionStatus::InProgress,
             error: None,
             summary: MessageContent::default(),
             meta: None,
@@ -6266,6 +6365,7 @@ impl AcpThread {
     pub fn update_token_usage(&mut self, usage: Option<TokenUsage>, cx: &mut Context<Self>) {
         if usage.is_none() {
             self.cost = None;
+            self.usage_meta = None;
         }
         let output = usage
             .as_ref()
@@ -6280,6 +6380,7 @@ impl AcpThread {
     }
 
     pub fn update_usage(&mut self, update: acp_v2::UsageUpdate, cx: &mut Context<Self>) {
+        MetadataUpdate::V2(update.meta).apply(&mut self.usage_meta);
         let usage = self.token_usage.get_or_insert_with(Default::default);
         usage.max_tokens = update.size;
         usage.used_tokens = update.used;
@@ -6497,6 +6598,7 @@ impl AcpThread {
             let mut call = ToolCall::from_patch(
                 id.clone(),
                 patch,
+                ToolCallOrigin::AcpV1,
                 language_registry,
                 ToolTerminalResolver::registered(&self.terminals),
                 cx,
@@ -6524,7 +6626,7 @@ impl AcpThread {
         }
         let id = update.tool_call_id.clone();
         let patch = ToolCallPatch::protocol(update);
-        self.upsert_tool_call_patch(id, patch, false, cx)
+        self.upsert_tool_call_patch(id, patch, ToolCallOrigin::AcpV2, cx)
     }
 
     /// In-process updates may reference registered client-managed terminals, but
@@ -6536,14 +6638,14 @@ impl AcpThread {
     ) -> Result<()> {
         let id = update.tool_call_id.clone();
         let patch = ToolCallPatch::protocol(update);
-        self.upsert_tool_call_patch(id, patch, true, cx)
+        self.upsert_tool_call_patch(id, patch, ToolCallOrigin::Native, cx)
     }
 
     fn upsert_tool_call_patch(
         &mut self,
         id: acp_v2::ToolCallId,
         patch: ToolCallPatch,
-        client_managed_terminals_only: bool,
+        origin: ToolCallOrigin,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let locations_changed = !patch.locations.is_undefined();
@@ -6553,7 +6655,7 @@ impl AcpThread {
         let languages = self.project.read(cx).languages().clone();
         let terminals = ToolTerminalResolver {
             terminals: &self.terminals,
-            client_managed_only: client_managed_terminals_only,
+            client_managed_only: origin == ToolCallOrigin::Native,
         };
         if let Some(index) = self.index_for_tool_call(&id) {
             let AgentThreadEntry::ToolCall(call) = &mut self.entries[index] else {
@@ -6568,7 +6670,7 @@ impl AcpThread {
             cx.emit(AcpThreadEvent::EntryUpdated(index));
             result?;
         } else {
-            let call = ToolCall::from_patch(id.clone(), patch, languages, terminals, cx)?;
+            let call = ToolCall::from_patch(id.clone(), patch, origin, languages, terminals, cx)?;
             self.push_entry(AgentThreadEntry::ToolCall(call), cx);
         }
         if locations_changed {
@@ -6592,6 +6694,7 @@ impl AcpThread {
         self.ensure_tool_content_terminal(&content, cx);
         let content = PreparedToolCallContent::from_v2(
             content,
+            ToolCallOrigin::AcpV2,
             ToolTerminalResolver::registered(&self.terminals),
             cx,
         )?;
@@ -6605,6 +6708,7 @@ impl AcpThread {
             let mut call = ToolCall::from_patch(
                 id.clone(),
                 ToolCallPatch::protocol(acp_v2::ToolCallUpdate::new(id)),
+                ToolCallOrigin::AcpV2,
                 language_registry.clone(),
                 ToolTerminalResolver::registered(&self.terminals),
                 cx,
@@ -7131,7 +7235,7 @@ impl AcpThread {
 
     pub fn request_elicitation(
         &mut self,
-        request: acp_v2::CreateElicitationRequest,
+        request: impl Into<elicitation::ElicitationRequest>,
         cx: &mut Context<Self>,
     ) -> Result<Task<acp_v2::CreateElicitationResponse>, acp_v2::Error> {
         self.request_elicitation_with_id(request, cx)
@@ -7140,10 +7244,11 @@ impl AcpThread {
 
     pub fn request_elicitation_with_id(
         &mut self,
-        request: acp_v2::CreateElicitationRequest,
+        request: impl Into<elicitation::ElicitationRequest>,
         cx: &mut Context<Self>,
     ) -> Result<(ElicitationEntryId, Task<acp_v2::CreateElicitationResponse>), acp_v2::Error> {
-        ElicitationStore::validate_request(&request)?;
+        let request = request.into();
+        ElicitationStore::validate_request(&request.request)?;
 
         let (id, response_rx) = self.elicitations.insert_pending_elicitation(request);
         self.push_entry(AgentThreadEntry::Elicitation(id.clone()), cx);
@@ -7861,6 +7966,11 @@ impl AcpThread {
                 || self.has_unsettled_submissions()
             {
                 self.connection.cancel(self.session_id(), cx)?;
+                if self.activity.in_progress()
+                    && !self.connection.answers_permission_requests_on_cancel()
+                {
+                    self.mark_foreground_tool_calls_cancelled(cx);
+                }
             }
             if self.connection.answers_permission_requests_on_cancel() {
                 if self.subagent_association.is_some() {
@@ -7884,7 +7994,13 @@ impl AcpThread {
                     .context("Agent connection lost before cancellation was confirmed")
             }));
         }
-        if self.running_turn.is_some() {
+        // A v1 parent can act on a child's results after its own prompt response. An
+        // explicit stop still names the parent; starting a new prompt is not such a stop.
+        if self.running_turn.is_some()
+            || (matches!(permission_outcome, RequestPermissionOutcome::Cancelled)
+                && self.connection.announces_subagents()
+                && !self.subagents.is_empty())
+        {
             self.connection.cancel(self.session_id(), cx)?;
         }
         self.cancel_outstanding_elicitations(cx);
@@ -7997,6 +8113,39 @@ impl AcpThread {
             self.cancel_permission_request_with_outcome(id, outcome.clone(), cx);
         }
         self.cancel_outstanding_elicitations(cx);
+    }
+
+    fn mark_foreground_tool_calls_cancelled(&mut self, cx: &mut Context<Self>) {
+        let background = self
+            .activity
+            .state()
+            .and_then(|state| state.background())
+            .unwrap_or_default();
+        for (index, entry) in self
+            .entries
+            .iter_mut()
+            .enumerate()
+            .skip(self.activity.first_entry_index())
+        {
+            let AgentThreadEntry::ToolCall(call) = entry else {
+                continue;
+            };
+            if matches!(
+                call.underlying_status(),
+                ToolCallStatus::Pending | ToolCallStatus::InProgress | ToolCallStatus::Paused
+            ) && !background.iter().any(|item| match item {
+                acp_v2::BackgroundWork::ToolCall(item) => item.tool_call_id == call.id,
+                acp_v2::BackgroundWork::Terminal(item) => call
+                    .terminals()
+                    .any(|terminal| terminal.read(cx).id() == &item.terminal_id),
+                _ => false,
+            }) {
+                // This is a display hint. The next reported status replaces it.
+                call.set_local_status(ToolCallStatus::Canceled);
+                cx.emit(AcpThreadEvent::EntryUpdated(index));
+                cx.notify();
+            }
+        }
     }
 
     fn mark_pending_entries_as_canceled(
@@ -8153,11 +8302,9 @@ impl AcpThread {
             let buffer = load.await?;
 
             let snapshot = if reuse_shared_snapshot {
-                this.read_with(cx, |this, _| {
-                    this.shared_buffers.get(&buffer.clone()).cloned()
-                })
-                .log_err()
-                .flatten()
+                this.read_with(cx, |this, _| this.shared_buffers.get(&buffer).cloned())
+                    .log_err()
+                    .flatten()
             } else {
                 None
             };
@@ -8309,6 +8456,7 @@ impl AcpThread {
         cwd: Option<PathBuf>,
         output_byte_limit: Option<u64>,
         sandbox_wrap: Option<SandboxWrap>,
+        shell: String,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
         let env = match &cwd {
@@ -8343,88 +8491,36 @@ impl AcpThread {
             let terminal_id = terminal_id.clone();
             async move |_this, cx| {
                 let env = env.await;
-                let shell = project
-                    .update(cx, |project, cx| {
-                        project
-                            .remote_client()
-                            .and_then(|r| r.read(cx).default_system_shell())
-                    })
-                    .unwrap_or_else(|| get_default_system_shell_preferring_bash());
 
+                let mut builder = ShellBuilder::new(&Shell::Program(shell), is_windows);
+                if headless
+                    || (cfg!(any(target_os = "linux", target_os = "windows"))
+                        && sandbox_wrap.is_some())
+                {
+                    builder = builder.non_interactive();
+                }
+                let (task_command, task_args) = builder
+                    .redirect_stdin_to_dev_null()
+                    .build(Some(command.clone()), &args);
                 // The sandbox owns the network proxy (for restricted-network
                 // policies) and injects the child's proxy env vars, returning
-                // the env to spawn with. On Windows, restricted host access is
-                // rejected inside the sandbox before command preparation.
-                #[cfg(target_os = "windows")]
-                let (task_command, task_args, task_env, sandbox, spawn_cwd) =
-                    if sandbox_wrap.is_some() {
-                        let (task_command, task_args) = task::ShellBuilder::new(
-                            &Shell::Program("/bin/sh".to_string()),
-                            false,
-                        )
-                        .non_interactive()
-                        .redirect_stdin_to_dev_null()
-                        .build(Some(command.clone()), &args);
-                        let wrap = cx.background_spawn(prepare_sandbox_wrap(
-                            task_command,
-                            task_args,
-                            cwd.clone(),
-                            sandbox_wrap,
-                            env,
-                        ));
-                        let timeout = cx.background_executor().timer(WSL_SANDBOX_WRAP_TIMEOUT);
-                        let (task_command, task_args, task_env, sandbox) = futures::select_biased! {
-                            result = wrap.fuse() => result?,
-                            _ = timeout.fuse() => return Err(anyhow::Error::new(
-                                sandbox::SandboxError::WslUnavailable(format!(
-                                    "WSL did not respond within {} seconds while preparing the sandboxed command",
-                                    WSL_SANDBOX_WRAP_TIMEOUT.as_secs()
-                                )),
-                            )),
-                        };
-                        (task_command, task_args, task_env, sandbox, None)
-                    } else {
-                        // No sandbox wrap means we're running unsandboxed, and
-                        // on Windows that deliberately changes the shell: the
-                        // sandboxed path runs under WSL's Linux bash, but this
-                        // fallback uses the host's `shell` against the native cwd.
-                        let mut builder = ShellBuilder::new(&Shell::Program(shell), is_windows);
-                        if headless {
-                            builder = builder.non_interactive();
-                        }
-                        let (task_command, task_args) = builder
-                            .redirect_stdin_to_dev_null()
-                            .build(Some(command.clone()), &args);
-                        (task_command, task_args, env, None, cwd.clone())
-                    };
-
-                #[cfg(not(target_os = "windows"))]
-                let (task_command, task_args, task_env, sandbox, spawn_cwd) = {
-                    let mut builder = ShellBuilder::new(&Shell::Program(shell), is_windows);
-                    if headless || (cfg!(target_os = "linux") && sandbox_wrap.is_some()) {
-                        builder = builder.non_interactive();
-                    }
-                    let (task_command, task_args) = builder
-                        .redirect_stdin_to_dev_null()
-                        .build(Some(command.clone()), &args);
-                    let (task_command, task_args, task_env, sandbox) = cx
-                        .background_spawn(prepare_sandbox_wrap(
-                            task_command,
-                            task_args,
-                            cwd.clone(),
-                            sandbox_wrap,
-                            env,
-                        ))
-                        .await?;
-                    (task_command, task_args, task_env, sandbox, cwd.clone())
-                };
+                // the env to spawn with.
+                let (task_command, task_args, task_env, sandbox) = cx
+                    .background_spawn(prepare_sandbox_wrap(
+                        task_command,
+                        task_args,
+                        cwd.clone(),
+                        sandbox_wrap,
+                        env,
+                    ))
+                    .await?;
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
                             task::SpawnInTerminal {
                                 command: Some(task_command),
                                 args: task_args,
-                                cwd: spawn_cwd,
+                                cwd: cwd.clone(),
                                 env: task_env,
                                 ..Default::default()
                             },
@@ -8757,6 +8853,7 @@ fn update_markdown_in_place(markdown: &Entity<Markdown>, text: &str, cx: &mut Ap
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agent_client_protocol::schema::IndexMap as AcpIndexMap;
     use anyhow::anyhow;
     use futures::stream::StreamExt as _;
     use futures::{channel::mpsc, future::LocalBoxFuture, select};
@@ -9753,7 +9850,7 @@ mod tests {
             let languages = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
             let unknown = acp_v2::ContentBlock::Other(acp_v2::OtherContentBlock::new(
                 "_future",
-                std::collections::BTreeMap::from([
+                AcpIndexMap::from([
                     ("payload".to_string(), json!({"nested": [1, 2]})),
                     ("_meta".to_string(), json!({"source": "agent"})),
                 ]),
@@ -9983,7 +10080,7 @@ mod tests {
         cx.update(|cx| {
             let language_registry =
                 Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-            let raw_fields = std::collections::BTreeMap::from([
+            let raw_fields = AcpIndexMap::from([
                 (
                     "payload".to_string(),
                     json!({"nested": [1, {"value": "original"}]}),
@@ -10356,6 +10453,7 @@ mod tests {
             };
             let prepared = PreparedToolCallContent::prepare_v2(
                 vec![make_content("first", "first")],
+                ToolCallOrigin::AcpV2,
                 ToolTerminalResolver::registered(&HashMap::default()),
                 cx,
             )
@@ -10368,6 +10466,7 @@ mod tests {
             let original = content.markdown().expect("markdown").clone();
             let prepared = PreparedToolCallContent::prepare_v2(
                 vec![make_content("second", "second")],
+                ToolCallOrigin::AcpV2,
                 ToolTerminalResolver::registered(&HashMap::default()),
                 cx,
             )
@@ -10377,19 +10476,27 @@ mod tests {
                 &languages,
                 cx,
             );
-            let ToolCallContent::ContentBlock { block, meta } = &content else {
-                panic!("content block");
+            let ToolCallContent::Text {
+                markdown,
+                fragments,
+            } = &content
+            else {
+                panic!("text block");
             };
-            assert_eq!(block.markdown(), Some(&original));
+            let [fragment] = fragments.as_slice() else {
+                panic!("expected one fragment")
+            };
+            assert_eq!(markdown, &original);
             assert_eq!(
-                meta.as_ref().and_then(|meta| meta.get("outer")),
+                fragment.meta.as_ref().and_then(|meta| meta.get("outer")),
                 Some(&serde_json::json!("second"))
             );
-            let Some(acp_v2::ContentBlock::Text(source)) = block.source.as_ref() else {
-                panic!("retained text");
-            };
             assert_eq!(
-                source.meta.as_ref().and_then(|meta| meta.get("inner")),
+                fragment
+                    .content
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.get("inner")),
                 Some(&serde_json::json!("second"))
             );
         });
@@ -10674,7 +10781,8 @@ mod tests {
                 serde_json::from_value(serde_json::json!({"type":"future","payload":{"value":1}}))
                     .expect("unknown content");
             let prepared = PreparedToolCallContent::prepare_v2(
-                vec![acp_v2::ToolCallContent::Diff(diff.clone()), unknown.clone()],
+                vec![diff.clone().into(), unknown.clone()],
+                ToolCallOrigin::AcpV2,
                 ToolTerminalResolver::registered(&HashMap::default()),
                 cx,
             )
@@ -10736,6 +10844,7 @@ mod tests {
                     vec![acp_v2::ToolCallContent::Session(
                         acp_v2::SessionReference::new("from-v2"),
                     )],
+                    ToolCallOrigin::AcpV2,
                     ToolTerminalResolver::registered(&HashMap::default()),
                     cx,
                 )
@@ -11476,6 +11585,40 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_v2_terminal_output_starts_lines_at_column_zero(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let terminal_id = acp_v2::TerminalId::new("piped-terminal");
+        thread
+            .update(cx, |thread, cx| {
+                thread.upsert_display_terminal(
+                    terminal_id.clone(),
+                    DisplayTerminalPatch {
+                        output: MaybeUndefined::Value(DisplayTerminalOutput {
+                            data: b"snapshot one\nsnapshot two\n".to_vec(),
+                            meta: None,
+                        }),
+                        ..Default::default()
+                    },
+                    cx,
+                )?;
+                thread.append_display_terminal_output(terminal_id.clone(), b"chunk one\n", cx)?;
+                thread.append_display_terminal_output(terminal_id.clone(), b"split crlf\r", cx)?;
+                thread.append_display_terminal_output(terminal_id.clone(), b"\nlast", cx)
+            })
+            .expect("snapshot and chunks");
+        let terminal = thread.read_with(cx, |thread, _| {
+            thread.terminal(terminal_id.clone()).expect("terminal")
+        });
+        terminal.read_with(cx, |terminal, cx| {
+            assert_eq!(
+                terminal.inner().read(cx).get_content().trim_end(),
+                "snapshot one\nsnapshot two\nchunk one\nsplit crlf\nlast"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_v2_terminal_patch_tristate_metadata_and_output_ordering(cx: &mut TestAppContext) {
         init_test(cx);
         let thread = new_test_thread(cx).await;
@@ -12195,10 +12338,7 @@ mod tests {
 
         let source = vec![acp_v2::ContentBlock::Other(acp_v2::OtherContentBlock::new(
             "_future",
-            std::collections::BTreeMap::from([(
-                "payload".into(),
-                json!({"private": [null, true]}),
-            )]),
+            AcpIndexMap::from([("payload".into(), json!({"private": [null, true]}))]),
         ))];
         let rejected = thread.update(cx, |thread, cx| thread.send(source.clone(), cx));
         let rejected_id = rejected.id;
@@ -12310,6 +12450,37 @@ mod tests {
                 cx,
             )
             .expect("permission request")
+    }
+
+    #[gpui::test]
+    async fn repeated_child_idle_after_background_output_is_not_another_completion(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (child, _) = new_agent_owned_test_thread(cx).await;
+        child.update(cx, |child, cx| {
+            child
+                .update_v2_subagent_state(acp_v2::StateUpdate::Running(Default::default()), cx)
+                .expect("running");
+            child
+                .upsert_assistant_message(
+                    acp_v2::AgentMessage::new("foreground").content(vec!["finished".into()]),
+                    cx,
+                )
+                .expect("foreground output");
+            child
+                .update_v2_subagent_state(idle_with(acp_v2::StopReason::EndTurn), cx)
+                .expect("idle");
+            let boundary = child.entries().len();
+            child
+                .upsert_wire_tool_call(acp_v2::ToolCallUpdate::new("background"), cx)
+                .expect("background update");
+            child
+                .update_v2_subagent_state(acp_v2::StateUpdate::Idle(Default::default()), cx)
+                .expect("another idle snapshot");
+            assert!(child.subagent_outcome_after(boundary).is_none());
+            assert_eq!(child.subagent_outcomes.len(), 1);
+        });
     }
 
     #[gpui::test]
@@ -12732,7 +12903,10 @@ mod tests {
                         SubmissionState::Disconnected { receipt } if receipt == &expected_receipt)
                 );
                 assert!(!thread.has_unsettled_submissions());
-                assert_eq!(thread.foreground_activity(), ForegroundActivity::Running);
+                assert_eq!(
+                    thread.foreground_activity(),
+                    ForegroundActivity::Unconfirmed
+                );
             });
             cx.run_until_parked();
         }
@@ -13207,7 +13381,7 @@ mod tests {
             "outgoing".into(),
             acp_v2::ContentBlock::Other(acp_v2::OtherContentBlock::new(
                 "_future",
-                std::collections::BTreeMap::from([
+                AcpIndexMap::from([
                     ("payload".into(), json!({"nested": [null, true]})),
                     ("_meta".into(), json!({"origin": "outgoing"})),
                 ]),
@@ -13479,10 +13653,7 @@ mod tests {
                     stop_reason,
                     acp_v2::StopReason::Other(acp_v2::OtherStopReason::new(
                         "_custom",
-                        std::collections::BTreeMap::from([(
-                            "detail".into(),
-                            json!({"nested": [null, true]}),
-                        )]),
+                        AcpIndexMap::from([("detail".into(), json!({"nested": [null, true]}),)]),
                     )),
                 );
             }
@@ -14870,7 +15041,8 @@ mod tests {
                     Some(&snapshot_meta)
                 );
                 thread.upsert_context_compaction_update(
-                    acp_v2::CompactionUpdate::new("metadata", acp_v2::CompactionStatus::InProgress)
+                    acp_v2::CompactionUpdate::new("metadata")
+                        .status(acp_v2::CompactionStatus::InProgress)
                         .summary(vec![block.clone()])
                         .meta(metadata.clone()),
                     cx,
@@ -16727,7 +16899,7 @@ mod tests {
             )),
             acp_v2::ContentBlock::Other(acp_v2::OtherContentBlock::new(
                 "_future_summary",
-                std::collections::BTreeMap::from([(
+                AcpIndexMap::from([(
                     "payload".into(),
                     serde_json::json!({"nested": [1, {"value": "retained"}]}),
                 )]),
@@ -16741,16 +16913,15 @@ mod tests {
         expected_metadata.insert("original".into(), json!(true));
         thread.update(cx, |thread, cx| {
             thread.upsert_context_compaction_update(
-                acp_v2::CompactionUpdate::new("first", acp_v2::CompactionStatus::Completed)
+                acp_v2::CompactionUpdate::new("first")
+                    .status(acp_v2::CompactionStatus::Completed)
                     .summary(source.clone())
                     .meta(metadata.clone()),
                 cx,
             );
             thread.upsert_context_compaction_update(
-                acp_v2::CompactionUpdate::new(
-                    "first",
-                    acp_v2::CompactionStatus::Other("_future".into()),
-                ),
+                acp_v2::CompactionUpdate::new("first")
+                    .status(acp_v2::CompactionStatus::Other("_future".into())),
                 cx,
             );
             let late_text = acp_v2::ContentBlock::from("late text");
@@ -16787,18 +16958,17 @@ mod tests {
         );
         thread.update(cx, |thread, cx| {
             thread.upsert_context_compaction_update(
-                acp_v2::CompactionUpdate::new("first", acp_v2::CompactionStatus::Failed)
+                acp_v2::CompactionUpdate::new("first")
+                    .status(acp_v2::CompactionStatus::Failed)
                     .error("failure detail")
                     .meta(acp_v2::Meta::new()),
                 cx,
             );
-            thread.upsert_context_compaction_update(
-                acp_v2::CompactionUpdate::new("first", acp_v2::CompactionStatus::Failed),
-                cx,
-            );
+            thread.upsert_context_compaction_update(acp_v2::CompactionUpdate::new("first"), cx);
             let Some(AgentThreadEntry::ContextCompaction(first)) = thread.entries.first() else {
                 panic!("the original compaction must remain");
             };
+            assert_eq!(first.status, ContextCompactionStatus::Failed);
             assert_eq!(first.summary.source_blocks(), source);
             assert_eq!(first.meta, Some(expected_metadata.clone()));
             assert_eq!(
@@ -16811,7 +16981,8 @@ mod tests {
                 "failure detail"
             );
             thread.upsert_context_compaction_update(
-                acp_v2::CompactionUpdate::new("first", acp_v2::CompactionStatus::Failed)
+                acp_v2::CompactionUpdate::new("first")
+                    .status(MaybeUndefined::Null)
                     .summary(MaybeUndefined::Null)
                     .error(MaybeUndefined::Null)
                     .meta(MaybeUndefined::Null),
@@ -16820,6 +16991,7 @@ mod tests {
             let Some(AgentThreadEntry::ContextCompaction(first)) = thread.entries.first() else {
                 panic!("clearing details must not remove the compaction");
             };
+            assert!(first.is_in_progress());
             assert!(first.summary.source_blocks().is_empty());
             assert_eq!(first.summary.blocks().len(), 0);
             assert!(first.error.is_none());
@@ -16950,6 +17122,7 @@ mod tests {
                     None,
                     None,
                     None,
+                    util::get_default_system_shell_preferring_bash(),
                     cx,
                 )
             })
@@ -16979,6 +17152,7 @@ mod tests {
                     None,
                     None,
                     None,
+                    util::get_default_system_shell_preferring_bash(),
                     cx,
                 )
             })
@@ -17490,6 +17664,7 @@ mod tests {
             let empty = ToolCall::from_patch(
                 "fallback".into(),
                 ToolCallPatch::legacy(acp_v1::ToolCallUpdateFields::new(), None),
+                ToolCallOrigin::AcpV1,
                 languages,
                 ToolTerminalResolver::registered(&thread.terminals),
                 cx,
@@ -17561,19 +17736,28 @@ mod tests {
                 serde_json::to_value(&call.meta).expect("metadata"),
                 json!({"opaque": {"nested": [1, 2]}})
             );
-            let [ToolCallContent::ContentBlock { block, meta }] = call.content() else {
-                panic!("one protocol content block");
+            let [
+                ToolCallContent::Text {
+                    markdown,
+                    fragments,
+                },
+            ] = call.content()
+            else {
+                panic!("one text block");
+            };
+            let [fragment] = fragments.as_slice() else {
+                panic!("one protocol content item")
             };
             assert_eq!(
-                serde_json::to_value(&block.source).expect("source"),
-                json!({"type": "text", "text": "body", "_meta": {"block": true}})
+                serde_json::to_value(&fragment.content).expect("source"),
+                json!({"text": "body", "_meta": {"block": true}})
             );
             assert_eq!(
-                serde_json::to_value(meta).expect("envelope"),
+                serde_json::to_value(&fragment.meta).expect("envelope"),
                 json!({"envelope": true})
             );
             let label = call.label.clone();
-            let output = block.markdown().expect("body").clone();
+            let output = markdown.clone();
             let input = call.raw_input_markdown.clone().expect("input");
 
             for patch in [
@@ -17654,12 +17838,21 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_tool_text_chunks_merge_only_plain_adjacent_text(cx: &mut TestAppContext) {
+    async fn test_adjacent_tool_text_renders_together_across_snapshots_and_chunks(
+        cx: &mut TestAppContext,
+    ) {
         init_test(cx);
         let thread = new_test_thread(cx).await;
         thread.update(cx, |thread, cx| {
             let chunk =
                 |content: acp_v2::ContentBlock| acp_v2::ToolCallContentChunk::new("tool", content);
+            thread
+                .upsert_wire_tool_call(
+                    acp_v2::ToolCallUpdate::new("tool")
+                        .content(vec!["**First".into(), " item**: ".into()]),
+                    cx,
+                )
+                .expect("snapshot");
             for chunk in [
                 chunk("Str".into()),
                 chunk("eam".into()),
@@ -17685,13 +17878,31 @@ mod tests {
                     .expect("tool chunk");
             }
             let (_, call) = thread.tool_call(&"tool".into()).expect("tool");
-            // Plain text merges; a link, annotations or item metadata start a new block.
-            let content = call.content();
-            assert_eq!(content.len(), 6);
-            assert_eq!(content[0].to_markdown(cx), "Stream");
-            assert_eq!(content[2].to_markdown(cx), " after link");
-            assert_eq!(content[3].to_markdown(cx), " annotated");
-            assert_eq!(content[4].to_markdown(cx), " plain");
+            let [
+                before_link,
+                ToolCallContent::ContentBlock { block, .. },
+                ToolCallContent::Text {
+                    fragments,
+                    markdown,
+                },
+            ] = call.content()
+            else {
+                panic!("a resource link separates two text runs");
+            };
+            assert_eq!(before_link.to_markdown(cx), "**First item**: Stream");
+            assert!(block.as_view().resource_link().is_some());
+            assert_eq!(
+                markdown.read(cx).source(),
+                " after link annotated plain with meta"
+            );
+            let [_, annotated, _, with_meta] = fragments.as_slice() else {
+                panic!("four source fragments")
+            };
+            assert!(annotated.content.annotations.is_some());
+            assert_eq!(
+                with_meta.meta.as_ref().and_then(|meta| meta.get("item")),
+                Some(&json!(true))
+            );
         });
     }
 
@@ -18400,10 +18611,9 @@ mod tests {
         assert_eq!(absolute.path, respelled.path);
         thread.update(cx, |thread, cx| {
             let (index, call) = thread.tool_call(&id).expect("tool");
-            let (location, _) = thread.entries[index]
-                .location(0)
-                .expect("resolved location");
+            let (location, resolved) = thread.entries[index].location(0).expect("location");
             assert_eq!(location, absolute);
+            assert!(resolved.is_some());
             let resolved_locations = call.resolved_locations.clone();
             thread
                 .upsert_wire_tool_call(acp_v2::ToolCallUpdate::new("location-migration"), cx)
@@ -18427,15 +18637,17 @@ mod tests {
             let (index, call) = thread.tool_call(&id).expect("tool");
             assert_eq!(call.locations, vec![respelled.clone()]);
             assert!(call.resolved_locations.is_empty());
-            assert!(thread.entries[index].location(0).is_none());
+            assert_eq!(
+                thread.entries[index].location(0),
+                Some((respelled.clone(), None))
+            );
         });
         cx.run_until_parked();
         thread.update(cx, |thread, cx| {
             let (index, _) = thread.tool_call(&id).expect("tool");
-            let (location, _) = thread.entries[index]
-                .location(0)
-                .expect("refreshed projection");
+            let (location, resolved) = thread.entries[index].location(0).expect("location");
             assert_eq!(location, respelled);
+            assert!(resolved.is_some(), "refreshed projection");
             thread
                 .update_tool_call(
                     acp_v1::ToolCallUpdate::new(
@@ -18452,7 +18664,10 @@ mod tests {
             let (index, call) = thread.tool_call(&id).expect("tool");
             assert_eq!(call.locations, vec![relative.clone()]);
             assert!(call.resolved_locations.is_empty());
-            assert!(thread.entries[index].location(0).is_none());
+            assert_eq!(
+                thread.entries[index].location(0),
+                Some((relative.clone(), None))
+            );
         });
         cx.run_until_parked();
         thread.update(cx, |thread, cx| {
@@ -18590,6 +18805,42 @@ mod tests {
                         )
                     );
                 }
+            });
+        }
+    }
+
+    #[gpui::test]
+    async fn v2_tool_titles_remain_plain_text_on_create_and_update(cx: &mut TestAppContext) {
+        use markdown::parser::{MarkdownEvent, MarkdownTag};
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        for kind in [acp_v2::ToolKind::Read, acp_v2::ToolKind::Edit] {
+            thread.update(cx, |thread, cx| {
+                thread
+                    .upsert_wire_tool_call(
+                        acp_v2::ToolCallUpdate::new("tool")
+                            .kind(kind)
+                            .title("**literal**"),
+                        cx,
+                    )
+                    .expect("tool upsert");
+            });
+            cx.run_until_parked();
+            thread.read_with(cx, |thread, cx| {
+                let (_, tool) = thread.tool_call(&"tool".into()).expect("tool");
+                let label = tool.label.read(cx);
+                assert_eq!(label.source(), "**literal**");
+                assert!(
+                    !label
+                        .parsed_markdown()
+                        .events()
+                        .iter()
+                        .any(|(_, event)| matches!(
+                            event,
+                            MarkdownEvent::Start(MarkdownTag::Strong)
+                        ))
+                );
+                assert!(tool.to_markdown(cx).contains(r"\*\*literal\*\*"));
             });
         }
     }
@@ -19066,8 +19317,10 @@ mod tests {
         thread.read_with(cx, |thread, cx| {
             let (tool_call_location, agent_location) = thread.entries[0]
                 .location(0)
-                .expect("external tool-call location should resolve");
+                .expect("external tool-call location");
             assert_eq!(tool_call_location.path, skill_path);
+            let agent_location =
+                agent_location.expect("external tool-call location should resolve");
 
             let buffer = agent_location
                 .buffer
@@ -20269,7 +20522,7 @@ mod tests {
             elicitation_id
         });
 
-        let expected_content = std::collections::BTreeMap::from([(
+        let expected_content = AcpIndexMap::from([(
             "name".to_string(),
             acp_v2::ElicitationContentValue::from("Ada"),
         )]);
@@ -20646,7 +20899,7 @@ mod tests {
 
         let response = acp_v2::CreateElicitationResponse::new(acp_v2::OtherElicitationAction::new(
             "_defer",
-            std::collections::BTreeMap::from([(
+            AcpIndexMap::from([(
                 "reason".to_string(),
                 serde_json::json!({"opaque": [1, null]}),
             )]),
@@ -21543,7 +21796,7 @@ mod tests {
                     acp_v2::OtherElicitationMode::new(
                         "future",
                         acp_v2::ElicitationSessionScope::new(session_id),
-                        std::collections::BTreeMap::new(),
+                        AcpIndexMap::new(),
                     ),
                     "Use a future input mode",
                 ),
@@ -21569,7 +21822,7 @@ mod tests {
                     acp_v2::OtherElicitationMode::new(
                         "future",
                         acp_v2::ElicitationRequestScope::new(acp_v2::RequestId::Number(1)),
-                        std::collections::BTreeMap::new(),
+                        AcpIndexMap::new(),
                     ),
                     "Use a future input mode",
                 ),
@@ -23030,6 +23283,41 @@ mod tests {
                     .to_markdown(cx)
                     .contains("Optional integration failed")
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn usage_metadata_patches_only_its_own_record(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        thread.update(cx, |thread, cx| {
+            for (patch, expected) in [
+                (
+                    json!({"_meta": {"kept": true, "removed": 1, "nested": {"old": 1}}}),
+                    json!({"kept": true, "removed": 1, "nested": {"old": 1}}),
+                ),
+                (
+                    json!({"_meta": {"removed": null, "nested": {"new": 2}}}),
+                    json!({"kept": true, "nested": {"new": 2}}),
+                ),
+                (json!({}), json!({"kept": true, "nested": {"new": 2}})),
+                (json!({"_meta": null}), json!(null)),
+            ] {
+                let mut update = patch;
+                update["used"] = json!(4);
+                update["size"] = json!(10);
+                update["cost"] = json!({"amount": 1, "currency": "USD", "_meta": {"billed": true}});
+                thread.update_usage(serde_json::from_value(update).expect("usage update"), cx);
+                assert_eq!(
+                    serde_json::to_value(&thread.usage_meta).expect("usage metadata"),
+                    expected
+                );
+                assert_eq!(
+                    serde_json::to_value(&thread.cost().expect("cost").meta)
+                        .expect("cost metadata"),
+                    json!({"billed": true})
+                );
+            }
         });
     }
 

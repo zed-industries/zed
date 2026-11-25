@@ -159,6 +159,7 @@ pub struct InboundSessionNotification {
 
 #[derive(Debug)]
 pub enum InboundSessionUpdate {
+    ReplayComplete,
     UserMessage(acp_v2::UserMessage),
     AgentMessage(acp_v2::AgentMessage),
     AgentThought(acp_v2::AgentThought),
@@ -207,6 +208,7 @@ impl TryFrom<acp_v2::UpdateSessionNotification> for InboundSessionNotification {
 
     fn try_from(mut notification: acp_v2::UpdateSessionNotification) -> Result<Self, Self::Error> {
         let update = match notification.update {
+            acp_v2::SessionUpdate::ReplayComplete(_) => InboundSessionUpdate::ReplayComplete,
             acp_v2::SessionUpdate::UserMessage(message) => {
                 InboundSessionUpdate::UserMessage(message)
             }
@@ -306,6 +308,7 @@ impl InboundSessionNotification {
         );
         // Delivery metadata must not patch retained payload fields.
         match update {
+            InboundSessionUpdate::ReplayComplete => Ok(()),
             InboundSessionUpdate::UserMessage(message) => thread.upsert_user_message(message, cx),
             InboundSessionUpdate::AgentMessage(message) => {
                 thread.upsert_assistant_message(message, cx)

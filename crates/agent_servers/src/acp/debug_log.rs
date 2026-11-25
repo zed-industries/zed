@@ -69,7 +69,12 @@ impl AcpDebugMessage {
         match value {
             serde_json::Value::Array(entries) => entries
                 .into_iter()
-                .filter_map(|entry| Self::parse_value(direction, entry))
+                .filter_map(|entry| {
+                    let mut parsed = Self::parse_value(direction, entry)?;
+                    // A batch is useful in the log but isn't a valid ACP v2 initialize reply.
+                    parsed.valid_envelope = false;
+                    Some(parsed)
+                })
                 .collect(),
             value => Self::parse_value(direction, value).into_iter().collect(),
         }
@@ -287,12 +292,55 @@ mod tests {
     use super::*;
 
     #[test]
+    fn auth_status_debug_messages_preserve_the_wire_payload() {
+        use AcpDebugMessageDirection::{Incoming, Outgoing};
+        use serde_json::json;
+
+        let snapshot = json!({
+            "state": "authenticated",
+            "accounts": [{"label": "Work", "email": "user@example.test", "active": true}],
+            "_meta": {"source": "test"}
+        });
+        let legacy = json!({"authStatus": {"kind": "account", "label": "Work"}});
+        let log = AcpDebugLog::default();
+        let (_, live) = log.subscribe();
+        log.record_line(
+            Outgoing,
+            r#"{"jsonrpc":"2.0","id":1,"method":"auth/status","params":{}}"#,
+        );
+        for message in [
+            json!({"jsonrpc":"2.0", "id":1, "result":snapshot}),
+            json!({"jsonrpc":"2.0", "method":"auth/status_update", "params":snapshot}),
+            json!({"jsonrpc":"2.0", "method":"_auth/status_update", "params":legacy}),
+        ] {
+            log.record_line(Incoming, &message.to_string());
+        }
+        for messages in [
+            log.subscribe().0,
+            std::iter::from_fn(|| live.try_recv().ok()).collect(),
+        ] {
+            let payloads = messages
+                .iter()
+                .filter_map(|entry| match &entry.message {
+                    AcpDebugMessageContent::Response {
+                        result: Ok(value), ..
+                    } => value.as_ref(),
+                    AcpDebugMessageContent::Notification { params, .. } => params.as_ref(),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(payloads, [&snapshot, &snapshot, &legacy]);
+        }
+    }
+
+    #[test]
     fn malformed_initialization_envelopes_never_become_fallback_evidence() {
         for response in [
             r#"{"id":"initialize","result":{"protocolVersion":1}}"#,
             r#"{"jsonrpc":"1.0","id":"initialize","result":{"protocolVersion":1}}"#,
             r#"{"jsonrpc":"2.0","id":"initialize","result":{"protocolVersion":1},"error":{"code":-32022,"message":"Unsupported","data":{"requested":2,"supported":[1]}}}"#,
             r#"{"jsonrpc":"2.0","id":"initialize","method":null,"result":{"protocolVersion":1}}"#,
+            r#"[{"jsonrpc":"2.0","id":"initialize","result":{"protocolVersion":2,"agentCapabilities":{},"agentInfo":{"name":"agent","version":"1"}}}]"#,
         ] {
             let log = AcpDebugLog::default();
             log.record_line(

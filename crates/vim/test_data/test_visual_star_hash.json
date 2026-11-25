@@ -4,3 +4,7 @@
 {"Key":"l"}
 {"Key":"*"}
 {"Get":{"state":"a.c. abcd ˇa.c. abcd","mode":"Normal"}}
+{"Put":{"state":"foo ˇbar\nbaz\nfoo bar"}}
+{"Key":"shift-v"}
+{"Key":"*"}
+{"Get":{"state":"foo bar\nbaz\nˇfoo bar","mode":"Normal"}}

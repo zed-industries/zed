@@ -46,7 +46,6 @@ impl Connection {
             killed,
         );
 
-        #[allow(clippy::type_complexity)]
         fn channel(
             killed: Arc<AtomicBool>,
             executor: gpui::BackgroundExecutor,

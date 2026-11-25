@@ -44,14 +44,10 @@ struct RepoState {
 
 impl SynthesizeState {
     fn load() -> Self {
-        if SYNTHESIZE_STATE_FILE.exists() {
-            std::fs::read_to_string(&*SYNTHESIZE_STATE_FILE)
-                .ok()
-                .and_then(|s| serde_json::from_str(&s).ok())
-                .unwrap_or_default()
-        } else {
-            Self::default()
-        }
+        std::fs::read_to_string(&*SYNTHESIZE_STATE_FILE)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
     }
 
     fn save(&self) -> Result<()> {
@@ -300,7 +296,6 @@ fn is_non_code_commit(commit: &CommitInfo) -> bool {
     let diff_files: Vec<&str> = commit
         .diff
         .lines()
-        .filter(|l| l.starts_with("+++ b/") || l.starts_with("--- a/"))
         .filter_map(|l| {
             l.strip_prefix("+++ b/")
                 .or_else(|| l.strip_prefix("--- a/"))
@@ -528,6 +523,7 @@ async fn analyze_commit(
     let prompt = build_prompt(repo_url, commit);
     let messages = vec![Message {
         role: Role::User,
+        output_config: None,
         content: vec![RequestContent::Text {
             text: prompt,
             cache_control: None,
@@ -566,8 +562,8 @@ fn parse_claude_response(response: &str) -> Result<Option<ClaudeResponse>> {
     // Parse NAME
     let name = response
         .lines()
-        .find(|l| l.starts_with("NAME:"))
-        .map(|l| l.strip_prefix("NAME:").unwrap_or("").trim().to_string())
+        .find_map(|l| l.strip_prefix("NAME:"))
+        .map(|name| name.trim().to_string())
         .unwrap_or_else(|| "unnamed example".to_string());
 
     // Parse ANALYSIS section (Claude's planning) - this is the primary reasoning
@@ -852,8 +848,7 @@ fn extract_file_diff_from_combined(combined_diff: &str, target_file: &str) -> St
     let mut found_header = false;
 
     for line in combined_diff.lines() {
-        if line.starts_with("--- a/") {
-            let file = line.strip_prefix("--- a/").unwrap_or("");
+        if let Some(file) = line.strip_prefix("--- a/") {
             in_target_file = file == target_file;
             if in_target_file {
                 result.push_str(line);

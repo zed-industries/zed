@@ -285,9 +285,7 @@ impl DivInspector {
             ..
         } = &self.state
         {
-            if let Err(err) =
-                self.reset_style_editors(&rust_style_buffer.clone(), &json_style_buffer.clone(), cx)
-            {
+            if let Err(err) = self.reset_style_editors(rust_style_buffer, json_style_buffer, cx) {
                 self.json_style_error = Some(format!("{err}").into());
             } else {
                 self.json_style_error = None;

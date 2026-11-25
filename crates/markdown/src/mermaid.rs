@@ -473,8 +473,7 @@ pub(crate) fn extract_mermaid_diagrams(
         };
 
         let contents = source[metadata.content_range.clone()]
-            .strip_suffix('\n')
-            .unwrap_or(&source[metadata.content_range.clone()])
+            .trim_suffix('\n')
             .to_string();
         if !is_supported_diagram_type(&contents) {
             continue;

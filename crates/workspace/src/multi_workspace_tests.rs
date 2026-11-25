@@ -1041,6 +1041,7 @@ async fn test_close_workspace_prefers_workspace_in_same_project_group(cx: &mut T
     let project_a_2 = Project::test(fs.clone(), ["/project-a".as_ref()], cx).await;
     let project_b = Project::test(fs, ["/project-b".as_ref()], cx).await;
     let key_a = project_a_1.read_with(cx, |project, cx| project.project_group_key(cx));
+    let key_b = project_b.read_with(cx, |project, cx| project.project_group_key(cx));
     let (multi_workspace, cx) = setup_multi_workspace(&[project_a_1, project_a_2, project_b], cx);
 
     let (workspace_a_1, workspace_a_2) = multi_workspace.read_with(cx, |multi_workspace, cx| {
@@ -1094,6 +1095,7 @@ async fn test_close_workspace_prefers_workspace_in_same_project_group(cx: &mut T
             vec![workspace_a_2],
             "only the fallback workspace should remain in project group A"
         );
+        assert_eq!(multi_workspace.project_group_keys(), vec![key_b, key_a]);
     });
 }
 

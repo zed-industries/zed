@@ -3,7 +3,6 @@ pub mod agent_server_store;
 pub mod bookmark_store;
 pub mod buffer_store;
 pub mod color_extractor;
-pub mod connection_manager;
 pub mod context_server_store;
 pub mod debounced_delay;
 pub mod debugger;
@@ -47,14 +46,14 @@ use crate::{
 pub use agent_registry_store::{AgentRegistryStore, RegistryAgent};
 pub use agent_server_store::{AgentId, AgentServerStore, AgentServersUpdated, ExternalAgentSource};
 pub use git_store::{
-    ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
+    ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate, delta_checkout_short_name,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
     is_submodule_git_dir, linked_worktree_short_name, repo_identity_path,
     worktrees_directory_for_repo,
 };
 pub use manifest_tree::ManifestTree;
 pub use project_search::{Search, SearchResults};
-pub use worktree_store::WorktreePaths;
+pub use worktree_store::{DeltaClone, WorktreePaths};
 
 use anyhow::{Context as _, Result, anyhow};
 use buffer_store::{BufferStore, BufferStoreEvent};
@@ -63,10 +62,7 @@ use client::{
 };
 use clock::ReplicaId;
 
-use dap::{
-    VariableReference,
-    client::{DebugAdapterClient, SessionId},
-};
+use dap::{VariableReference, client::SessionId};
 
 use collections::{BTreeSet, HashMap, HashSet, IndexSet};
 use debounced_delay::DebouncedDelay;
@@ -129,6 +125,7 @@ use std::{
     collections::BTreeMap,
     ffi::OsString,
     future::Future,
+    mem,
     ops::{Not as _, Range},
     path::{Path, PathBuf},
     pin::pin,
@@ -142,7 +139,7 @@ use terminals::Terminals;
 use text::{Anchor, BufferId, Point, Rope};
 use toolchain_store::EmptyToolchainStore;
 use util::{
-    ResultExt as _, maybe,
+    ResultExt as _, canonical_float_bits, maybe,
     path_list::PathList,
     paths::{PathStyle, SanitizedPath},
     rel_path::RelPath,
@@ -203,13 +200,6 @@ pub trait ProjectItem: 'static {
     fn entry_id(&self, cx: &App) -> Option<ProjectEntryId>;
     fn project_path(&self, cx: &App) -> Option<ProjectPath>;
     fn is_dirty(&self) -> bool;
-}
-
-#[derive(Clone)]
-pub enum OpenedBufferEvent {
-    Disconnected,
-    Ok(BufferId),
-    Err(BufferId, Arc<anyhow::Error>),
 }
 
 #[derive(Debug, Clone)]
@@ -330,6 +320,7 @@ enum ProjectClientState {
     /// Multi-player mode but working on a remote project.
     Collab {
         sharing_has_stopped: bool,
+        host_reconnected: bool,
         capability: Capability,
         remote_id: u64,
         replica_id: ReplicaId,
@@ -447,17 +438,14 @@ pub enum Event {
     },
     WorkspaceEditApplied(ProjectTransaction),
     AgentLocationChanged,
+    /// The remote server's `~/.agents/skills` changed.
+    GlobalSkillsChanged,
     BufferEdited {
         source: BufferEditSource,
     },
 }
 
 pub struct AgentLocationChanged;
-
-pub enum DebugAdapterClientState {
-    Starting(Task<Option<Arc<DebugAdapterClient>>>),
-    Running(Arc<DebugAdapterClient>),
-}
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct ProjectPath {
@@ -1052,10 +1040,10 @@ impl Eq for DocumentColor {}
 impl std::hash::Hash for DocumentColor {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.lsp_range.hash(state);
-        self.color.red.to_bits().hash(state);
-        self.color.green.to_bits().hash(state);
-        self.color.blue.to_bits().hash(state);
-        self.color.alpha.to_bits().hash(state);
+        canonical_float_bits(self.color.red).hash(state);
+        canonical_float_bits(self.color.green).hash(state);
+        canonical_float_bits(self.color.blue).hash(state);
+        canonical_float_bits(self.color.alpha).hash(state);
         self.resolved.hash(state);
         self.color_presentations.hash(state);
     }
@@ -1184,9 +1172,9 @@ impl DirectoryLister {
 
     pub fn path_style(&self, cx: &App) -> PathStyle {
         match self {
-            Self::Local(project, ..) | Self::Project(project, ..) => {
-                project.read(cx).path_style(cx)
-            }
+            // A local lister browses this machine's file system, even for a remote project.
+            Self::Local(..) => PathStyle::local(),
+            Self::Project(project) => project.read(cx).path_style(cx),
         }
     }
 }
@@ -1265,8 +1253,6 @@ impl DisableAiSettings {
 
 impl Project {
     pub fn init(client: &Arc<Client>, cx: &mut App) {
-        connection_manager::init(client.clone(), cx);
-
         let client: AnyProtoClient = client.clone().into();
         client.add_entity_message_handler(Self::handle_add_collaborator);
         client.add_entity_message_handler(Self::handle_update_project_collaborator);
@@ -1763,6 +1749,7 @@ impl Project {
             remote_proto.add_entity_message_handler(Self::handle_update_worktree);
             remote_proto.add_entity_message_handler(Self::handle_update_project);
             remote_proto.add_entity_message_handler(Self::handle_toast);
+            remote_proto.add_entity_message_handler(Self::handle_global_skills_changed);
             remote_proto.add_entity_message_handler(Self::handle_telemetry_event);
             remote_proto.add_entity_request_handler(Self::handle_language_server_prompt_request);
             remote_proto
@@ -2011,6 +1998,7 @@ impl Project {
                 collab_client: client.clone(),
                 client_state: ProjectClientState::Collab {
                     sharing_has_stopped: false,
+                    host_reconnected: false,
                     capability: Capability::ReadWrite,
                     remote_id,
                     replica_id,
@@ -2251,6 +2239,7 @@ impl Project {
     pub fn mark_as_collab_for_testing(&mut self) {
         self.client_state = ProjectClientState::Collab {
             sharing_has_stopped: false,
+            host_reconnected: false,
             capability: Capability::ReadWrite,
             remote_id: 0,
             replica_id: clock::ReplicaId::new(1),
@@ -2982,6 +2971,9 @@ impl Project {
         if let Some(remote_id) = self.remote_id() {
             self.git_store.update(cx, |git_store, cx| {
                 git_store.shared(remote_id, self.collab_client.clone().into(), cx)
+            });
+            self.settings_observer.update(cx, |settings_observer, cx| {
+                settings_observer.shared(remote_id, self.collab_client.clone().into(), cx)
             });
         }
         cx.emit(Event::Reshared);
@@ -4816,14 +4808,14 @@ impl Project {
         })
     }
 
-    pub fn completions<T: ToOffset + ToPointUtf16>(
+    pub fn completions<T: ToOffset>(
         &self,
         buffer: &Entity<Buffer>,
         position: T,
         context: CompletionContext,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<CompletionResponse>>> {
-        let position = position.to_point_utf16(buffer.read(cx));
+        let position = buffer.read(cx).anchor_after(position);
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.completions(buffer, position, context, cx)
         })
@@ -5484,19 +5476,6 @@ impl Project {
         });
     }
 
-    pub fn remove_worktree_for_main_worktree_path(
-        &mut self,
-        path: impl AsRef<Path>,
-        cx: &mut Context<Self>,
-    ) {
-        let path = path.as_ref();
-        self.worktree_store.update(cx, |worktree_store, cx| {
-            if let Some(worktree) = worktree_store.worktree_for_main_worktree_path(path, cx) {
-                worktree_store.remove_worktree(worktree.read(cx).id(), cx);
-            }
-        });
-    }
-
     fn add_worktree(&mut self, worktree: &Entity<Worktree>, cx: &mut Context<Self>) {
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.add(worktree, cx);
@@ -5681,15 +5660,6 @@ impl Project {
             .project_path_for_absolute_path(abs_path, cx)
     }
 
-    pub fn get_workspace_root(&self, project_path: &ProjectPath, cx: &App) -> Option<PathBuf> {
-        Some(
-            self.worktree_for_id(project_path.worktree_id, cx)?
-                .read(cx)
-                .abs_path()
-                .to_path_buf(),
-        )
-    }
-
     pub fn blame_buffer(
         &self,
         buffer: &Entity<Buffer>,
@@ -5791,6 +5761,12 @@ impl Project {
             });
 
             if is_host {
+                if let ProjectClientState::Collab {
+                    host_reconnected, ..
+                } = &mut this.client_state
+                {
+                    *host_reconnected = true;
+                }
                 this.buffer_store
                     .update(cx, |buffer_store, _| buffer_store.discard_incomplete());
                 this.enqueue_buffer_ordered_message(BufferOrderedMessage::Resync)
@@ -5841,11 +5817,18 @@ impl Project {
         this.update(&mut cx, |this, cx| {
             // Don't handle messages that were sent before the response to us joining the project
             if envelope.message_id > this.join_project_response_message_id {
+                let host_reconnected = match &mut this.client_state {
+                    ProjectClientState::Collab {
+                        host_reconnected, ..
+                    } => mem::take(host_reconnected),
+                    ProjectClientState::Local | ProjectClientState::Shared { .. } => false,
+                };
                 cx.update_global::<SettingsStore, _>(|store, cx| {
                     for worktree_metadata in &envelope.payload.worktrees {
-                        store
-                            .clear_local_settings(WorktreeId::from_proto(worktree_metadata.id), cx)
-                            .log_err();
+                        let worktree_id = WorktreeId::from_proto(worktree_metadata.id);
+                        if host_reconnected || this.worktree_for_id(worktree_id, cx).is_none() {
+                            store.clear_local_settings(worktree_id, cx).log_err();
+                        }
                     }
                 });
 
@@ -5868,6 +5851,15 @@ impl Project {
             });
             Ok(())
         })
+    }
+
+    async fn handle_global_skills_changed(
+        this: Entity<Self>,
+        _: TypedEnvelope<proto::GlobalSkillsChanged>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        this.update(&mut cx, |_, cx| cx.emit(Event::GlobalSkillsChanged));
+        Ok(())
     }
 
     async fn handle_telemetry_event(
@@ -6868,20 +6860,12 @@ impl Project {
         self.worktree_store.read(cx).path_style()
     }
 
-    pub fn contains_local_settings_file(
-        &self,
-        worktree_id: WorktreeId,
-        rel_path: &RelPath,
-        cx: &App,
-    ) -> bool {
-        self.worktree_for_id(worktree_id, cx)
-            .map_or(false, |worktree| {
-                worktree.read(cx).entry_for_path(rel_path).is_some()
-            })
-    }
-
     pub fn worktree_paths(&self, cx: &App) -> WorktreePaths {
         self.worktree_store.read(cx).paths(cx)
+    }
+
+    pub fn git_worktree_paths(&self, cx: &App) -> WorktreePaths {
+        self.worktree_store.read(cx).git_paths(cx)
     }
 
     pub fn project_group_key(&self, cx: &App) -> ProjectGroupKey {
@@ -7336,7 +7320,7 @@ fn hovered_debug_identifier_expression(
 ) -> Option<(String, Range<Anchor>)> {
     let offset = snapshot.point_utf16_to_offset(position);
     let (range, _) = snapshot.surrounding_word(offset, None);
-    if range.is_empty() || !(range.start..range.end).contains(&offset) {
+    if range.is_empty() || !range.contains(&offset) {
         return None;
     }
     let node = snapshot.syntax_ancestor(offset..offset)?;
@@ -7495,4 +7479,46 @@ fn provide_inline_values(
     }
 
     variables
+}
+
+#[cfg(test)]
+mod tests {
+    use std::hash::{BuildHasher, RandomState};
+
+    use super::*;
+
+    #[test]
+    fn document_color_hash_agrees_with_equality_on_signed_zero() {
+        let color = DocumentColor {
+            lsp_range: lsp::Range::default(),
+            color: lsp::Color {
+                red: 0.0,
+                green: 0.0,
+                blue: 0.0,
+                alpha: 0.0,
+            },
+            resolved: false,
+            color_presentations: Vec::new(),
+        };
+        let hasher = RandomState::new();
+        for [red, green, blue, alpha] in [
+            [-0.0, 0.0, 0.0, 0.0],
+            [0.0, -0.0, 0.0, 0.0],
+            [0.0, 0.0, -0.0, 0.0],
+            [0.0, 0.0, 0.0, -0.0],
+            [-0.0; 4],
+        ] {
+            let negated = DocumentColor {
+                color: lsp::Color {
+                    red,
+                    green,
+                    blue,
+                    alpha,
+                },
+                ..color.clone()
+            };
+            assert_eq!(color, negated);
+            assert_eq!(hasher.hash_one(&color), hasher.hash_one(&negated));
+        }
+    }
 }

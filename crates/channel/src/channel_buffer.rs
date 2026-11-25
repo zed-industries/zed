@@ -188,8 +188,6 @@ impl ChannelBuffer {
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             this.replace_collaborators(message.payload.collaborators, cx);
-            cx.emit(ChannelBufferEvent::CollaboratorsChanged);
-            cx.notify();
         });
         Ok(())
     }

@@ -17,7 +17,7 @@
 //! stays exposed and only the individual command runs without a wrap. See
 //! `sandboxing_enabled_for_project` and `ThreadSandboxGrants`.
 //!
-//! macOS (Seatbelt), Linux (Bubblewrap), and Windows (Bubblewrap via WSL)
+//! macOS (Seatbelt), Linux (Bubblewrap), and Windows (Process Security Environment)
 //! have real sandbox integrations; on platforms without one the per-command
 //! wrap is a no-op, so commands run with the agent's ambient permissions even
 //! when the flag is on.
@@ -162,6 +162,8 @@ pub fn settings_sandbox_policy(persistent: &SandboxPermissions) -> SandboxPolicy
         SandboxFsPolicy::Unrestricted {
             protected_paths: Vec::new(),
             protected_file_names: Vec::new(),
+            paths_disallowing_reads: Vec::new(),
+            paths_allowing_reads: Vec::new(),
         }
     } else {
         SandboxFsPolicy::Restricted {
@@ -178,6 +180,8 @@ pub fn settings_sandbox_policy(persistent: &SandboxPermissions) -> SandboxPolicy
             ),
             protected_paths: Vec::new(),
             protected_file_names: Vec::new(),
+            paths_disallowing_reads: Vec::new(),
+            paths_allowing_reads: Vec::new(),
         }
     };
     let network = if persistent.allow_all_hosts {
@@ -187,9 +191,15 @@ pub fn settings_sandbox_policy(persistent: &SandboxPermissions) -> SandboxPolicy
     } else {
         SandboxNetPolicy::Restricted {
             allowed_domains: persistent.network_hosts.clone(),
+            allowed_tcp_ports: Vec::new(),
+            allow_system_network_services: true,
         }
     };
-    SandboxPolicy { fs, network }
+    SandboxPolicy {
+        fs,
+        network,
+        allowed_unix_sockets: Vec::new(),
+    }
 }
 
 /// Whether the sandboxed terminal can be exposed for this project.
@@ -207,6 +217,35 @@ pub(crate) fn sandboxing_enabled_for_project(project: &Project, cx: &App) -> boo
         && !AgentSettings::get_global(cx)
             .sandbox_permissions
             .allow_unsandboxed
+}
+
+pub(crate) fn terminal_shell(project: &Project, cx: &App) -> String {
+    #[cfg(target_os = "windows")]
+    if sandboxing_enabled_for_project(project, cx) {
+        // Git Bash is not yet compatible with the native Windows sandbox.
+        // Furthermore, packaged (MSIX) applications are not yet compatible either.
+        // So, we avoid selecting Git Bash or MSIX versions of PowerShell when the
+        // native Windows sandbox is enabled.
+        let shell = util::get_windows_system_shell();
+        if !shell.to_ascii_lowercase().contains(r"\windowsapps\") {
+            return shell;
+        }
+        let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
+        return format!(r"{system_root}\System32\WindowsPowerShell\v1.0\powershell.exe");
+    }
+    project
+        .remote_client()
+        .and_then(|remote| remote.read(cx).default_system_shell())
+        .unwrap_or_else(util::get_default_system_shell_preferring_bash)
+}
+
+/// The name of the shell [`terminal_shell`] picks, for the system prompt.
+pub(crate) fn terminal_shell_name(project: &Project, cx: &App) -> String {
+    util::shell::ShellKind::new(
+        &terminal_shell(project, cx),
+        project.path_style(cx).is_windows(),
+    )
+    .to_string()
 }
 
 /// Whether agent-run terminal commands should be wrapped in an OS-level
@@ -411,9 +450,9 @@ impl ThreadSandboxGrants {
     }
 
     /// Record that the user approved running commands unsandboxed for the rest
-    /// of the thread when the sandbox can't be created. Only the Bubblewrap
-    /// sandboxes (Linux directly, Windows via WSL) can fail to create a
-    /// sandbox, so this is gated to those platforms.
+    /// of the thread when the sandbox can't be created. Only the Linux and
+    /// Windows sandboxes can fail to create a sandbox, so this is gated to
+    /// those platforms.
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     pub fn record_fallback(&mut self) {
         self.sandbox_fallback = true;
@@ -442,6 +481,8 @@ impl ThreadSandboxGrants {
             SandboxFsPolicy::Unrestricted {
                 protected_paths: Vec::new(),
                 protected_file_names: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         } else {
             SandboxFsPolicy::Restricted {
@@ -458,6 +499,8 @@ impl ThreadSandboxGrants {
                 ),
                 protected_paths: Vec::new(),
                 protected_file_names: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         };
         let network = if self.network_any_host {
@@ -471,9 +514,15 @@ impl ThreadSandboxGrants {
                     .iter()
                     .map(|host| host.to_string())
                     .collect(),
+                allowed_tcp_ports: Vec::new(),
+                allow_system_network_services: true,
             }
         };
-        SandboxPolicy { fs, network }
+        SandboxPolicy {
+            fs,
+            network,
+            allowed_unix_sockets: Vec::new(),
+        }
     }
 
     /// Serialize these grants for persistence in the thread's database row.
@@ -704,14 +753,19 @@ mod tests {
                     .collect(),
                 protected_paths: Vec::new(),
                 protected_file_names: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             },
             network: if hosts.is_empty() {
                 SandboxNetPolicy::Blocked
             } else {
                 SandboxNetPolicy::Restricted {
                     allowed_domains: hosts.iter().map(|h| h.to_string()).collect(),
+                    allowed_tcp_ports: Vec::new(),
+                    allow_system_network_services: true,
                 }
             },
+            allowed_unix_sockets: Vec::new(),
         };
 
         // Unsandboxed on either side wins — the agent runs with ambient access.
@@ -819,12 +873,16 @@ mod tests {
                 ],
                 protected_paths: Vec::new(),
                 protected_file_names: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         );
         assert_eq!(
             policy.network,
             SandboxNetPolicy::Restricted {
-                allowed_domains: vec!["github.com".to_string()]
+                allowed_domains: vec!["github.com".to_string()],
+                allowed_tcp_ports: Vec::new(),
+                allow_system_network_services: true,
             }
         );
 
@@ -836,6 +894,8 @@ mod tests {
                 writable_paths: Vec::new(),
                 protected_paths: Vec::new(),
                 protected_file_names: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         );
         assert_eq!(empty.network, SandboxNetPolicy::Blocked);
@@ -849,6 +909,8 @@ mod tests {
             SandboxFsPolicy::Unrestricted {
                 protected_paths: Vec::new(),
                 protected_file_names: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         );
         assert_eq!(policy.network, SandboxNetPolicy::Unrestricted);
@@ -874,12 +936,16 @@ mod tests {
                 ],
                 protected_paths: Vec::new(),
                 protected_file_names: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         );
         assert_eq!(
             policy.network,
             SandboxNetPolicy::Restricted {
-                allowed_domains: vec!["*.npmjs.org".to_string()]
+                allowed_domains: vec!["*.npmjs.org".to_string()],
+                allowed_tcp_ports: Vec::new(),
+                allow_system_network_services: true,
             }
         );
 
@@ -894,6 +960,8 @@ mod tests {
             SandboxFsPolicy::Unrestricted {
                 protected_paths: Vec::new(),
                 protected_file_names: Vec::new(),
+                paths_disallowing_reads: Vec::new(),
+                paths_allowing_reads: Vec::new(),
             }
         );
         assert_eq!(policy.network, SandboxNetPolicy::Unrestricted);

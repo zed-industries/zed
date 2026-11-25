@@ -245,7 +245,10 @@ pub(crate) fn bundle_windows(
     }
 }
 
-fn set_release_channel(platform: Platform, release_channel: ReleaseChannel) -> Step<Run> {
+pub(crate) fn set_release_channel(
+    platform: Platform,
+    release_channel: ReleaseChannel,
+) -> Step<Run> {
     match release_channel {
         ReleaseChannel::Nightly => set_release_channel_to_nightly(platform),
     }

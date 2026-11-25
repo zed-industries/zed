@@ -13,7 +13,6 @@ pub struct TreeViewItem {
     selected: bool,
     disabled: bool,
     focused: bool,
-    default_expanded: bool,
     root_item: bool,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
@@ -34,7 +33,6 @@ impl TreeViewItem {
             selected: false,
             disabled: false,
             focused: false,
-            default_expanded: false,
             root_item: false,
             tooltip: None,
             on_click: None,
@@ -84,11 +82,6 @@ impl TreeViewItem {
 
     pub fn expanded(mut self, toggle: bool) -> Self {
         self.expanded = toggle;
-        self
-    }
-
-    pub fn default_expanded(mut self, default_expanded: bool) -> Self {
-        self.default_expanded = default_expanded;
         self
     }
 

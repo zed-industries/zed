@@ -1,9 +1,10 @@
 use super::tool_permissions::{
     authorize_symlink_access, canonicalize_worktree_roots, detect_symlink_escape,
-    resolve_creatable_global_skill_path, sensitive_settings_kind,
+    global_skill_settings_kind, sensitive_settings_kind,
 };
 use agent_client_protocol::v2::schema as acp;
 use agent_settings::AgentSettings;
+use agent_skills::GlobalSkillFileOperation;
 use futures::FutureExt as _;
 use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Task};
 use project::Project;
@@ -14,7 +15,7 @@ use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
 use crate::{
-    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
+    AgentTool, GlobalSkillFiles, ToolCallEventStream, ToolInput, ToolPermissionDecision,
     authorize_with_sensitive_settings, decide_permission_for_path,
 };
 use std::path::{Path, PathBuf};
@@ -117,8 +118,10 @@ impl AgentTool for CreateDirectoryTool {
             // Resolve where this directory lives. The global agent-skills dir is a
             // special case allowed outside the project; anything else outside the
             // project is handled as a narrow sandbox write grant below.
-            let global_skill_directory =
-                resolve_creatable_global_skill_path(Path::new(&input.path), fs.as_ref()).await;
+            let global_skill_files = cx.update(|cx| GlobalSkillFiles::for_project(&project, cx));
+            let global_skill_directory = global_skill_files
+                .resolve_creatable(Path::new(&input.path), cx)
+                .await;
             let in_project = project.read_with(cx, |project, cx| {
                 project.find_project_path(&input.path, cx).is_some()
             });
@@ -152,7 +155,8 @@ impl AgentTool for CreateDirectoryTool {
 
             let sensitive_kind =
                 sensitive_settings_kind(Path::new(&input.path), &canonical_roots, fs.as_ref())
-                    .await;
+                    .await
+                    .or(global_skill_settings_kind(global_skill_directory.as_ref()));
 
             let decision =
                 if matches!(decision, ToolPermissionDecision::Allow) && sensitive_kind.is_some() {
@@ -198,9 +202,12 @@ impl AgentTool for CreateDirectoryTool {
                 authorize.await.map_err(|e| e.to_string())?;
             }
 
-            if let Some(global_skill_directory) = global_skill_directory {
+            if global_skill_directory.is_some() {
+                let create_directory = GlobalSkillFileOperation::CreateDirectory {
+                    path: PathBuf::from(&input.path),
+                };
                 futures::select! {
-                    result = fs.create_dir(&global_skill_directory).fuse() => {
+                    result = global_skill_files.apply(create_directory, cx).fuse() => {
                         result.map_err(|e| format!("Creating directory {destination_path}: {e}"))?;
                     }
                     _ = event_stream.cancelled_by_user().fuse() => {
@@ -235,7 +242,7 @@ impl AgentTool for CreateDirectoryTool {
 /// Create a directory that lives **outside** the project by granting sandboxed
 /// terminal commands write access to exactly it.
 ///
-/// The directory is created (Linux: eagerly, pinning the inode; macOS: after
+/// The directory is created (Linux and Windows: eagerly; macOS: after
 /// approval) and the user is shown the real, canonicalized target in the sandbox
 /// approval prompt — which is what defends against a concurrent symlink swap: the
 /// grant is always against the inode/path the user actually saw. On denial, only
@@ -253,7 +260,11 @@ async fn create_out_of_project_directory(
     let sandboxing = project.read_with(cx, |project, cx| {
         crate::sandboxing::sandboxing_enabled_for_project(project, cx)
     });
-    let platform_supported = cfg!(any(target_os = "linux", target_os = "macos"));
+    let platform_supported = cfg!(any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "windows"
+    ));
     if !sandboxing || !platform_supported {
         return Err("Path to create was outside the project".to_string());
     }
@@ -731,7 +742,7 @@ mod tests {
 
     /// Out-of-project creation goes through the sandbox write-grant prompt and,
     /// on approval, creates the *specific* new directory (not its broad parent).
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     #[gpui::test]
     async fn test_create_directory_out_of_project_creates_and_grants(cx: &mut TestAppContext) {
         init_test(cx);
@@ -769,7 +780,9 @@ mod tests {
         .expect("out-of-project create should request a sandbox write grant");
         // The grant is for exactly the new directory, not its parent, and
         // carries the resolved canonical established when it was created.
-        let expected_canonical = scratch.path().canonicalize().unwrap().join("new_grant_dir");
+        let expected_canonical = dunce::canonicalize(scratch.path())
+            .unwrap()
+            .join("new_grant_dir");
         assert_eq!(details.write_paths.len(), 1);
         assert_eq!(
             details.write_paths[0].canonical_or_requested(),
@@ -793,7 +806,7 @@ mod tests {
 
     /// Denying the grant removes the directory we eagerly created, leaving no
     /// trace on the filesystem.
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     #[gpui::test]
     async fn test_create_directory_out_of_project_denied_cleans_up(cx: &mut TestAppContext) {
         init_test(cx);

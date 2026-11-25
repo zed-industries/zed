@@ -699,16 +699,6 @@ pub enum CompletionTotal {
     Unknown,
 }
 
-impl CompletionTotal {
-    pub fn from_options(has_more: Option<bool>, total: Option<u32>) -> Self {
-        match (has_more, total) {
-            (_, Some(count)) => CompletionTotal::Exact(count),
-            (Some(true), _) => CompletionTotal::HasMore,
-            _ => CompletionTotal::Unknown,
-        }
-    }
-}
-
 pub struct Completion {
     pub values: Vec<String>,
     pub total: CompletionTotal,

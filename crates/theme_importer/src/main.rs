@@ -94,7 +94,7 @@ fn main() -> Result<()> {
         Ok(_) => {}
         Err(err) => {
             log::info!("Failed to open file at path: {:?}", theme_file_path);
-            return Err(err)?;
+            Err(err)?;
         }
     };
 

@@ -1,3 +1,4 @@
+use collections::HashMap;
 use editor::{CursorLayout, EditorSettings, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     AbsoluteLength, AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Element,
@@ -161,7 +162,7 @@ impl BatchedTextRun {
         window
             .text_system()
             .shape_line(
-                self.text.clone().into(),
+                self.text.as_str().into(),
                 self.font_size.to_pixels(window.rem_size()),
                 std::slice::from_ref(&self.style),
                 Some(dimensions.cell_width),
@@ -449,6 +450,9 @@ impl TerminalElement {
     ) {
         let start_time = Instant::now();
         let theme = cx.theme();
+        // A grid repeats few color pairs, and each contrast check costs several `powf` calls
+        // (dozens when the color needs adjusting).
+        let mut contrast_cache = HashMap::default();
 
         // Pre-allocate with estimated capacity to reduce reallocations
         let estimated_cells = grid.size_hint().0;
@@ -528,6 +532,7 @@ impl TerminalElement {
                             text_style,
                             hyperlink,
                             minimum_contrast,
+                            &mut contrast_cache,
                         );
 
                         let cell_point = LayoutPoint::new(display_line, point.column as i32);
@@ -874,13 +879,19 @@ impl TerminalElement {
         text_style: &TextStyle,
         hyperlink: Option<(HighlightStyle, &Range)>,
         minimum_contrast: f32,
+        contrast_cache: &mut HashMap<(Hsla, Hsla), Hsla>,
     ) -> TextRun {
         let skip_contrast = Self::is_app_chosen_exact_color(&fg);
         let mut fg = convert_color(&fg, colors);
         let bg = convert_color(&bg, colors);
 
-        if !skip_contrast && !Self::is_decorative_character(cell.character()) {
-            fg = ensure_minimum_contrast(fg, bg, minimum_contrast);
+        if minimum_contrast > 0.0
+            && !skip_contrast
+            && !Self::is_decorative_character(cell.character())
+        {
+            fg = *contrast_cache
+                .entry((fg, bg))
+                .or_insert_with(|| ensure_minimum_contrast(fg, bg, minimum_contrast));
         }
 
         // Use a dim multiplier that stays close to the existing Alacritty look.
@@ -1330,9 +1341,10 @@ impl Element for TerminalElement {
 
                 let background_color = theme.colors().terminal_background;
 
+                let mouse_input_mode = self.terminal_view.read(cx).mouse_input_mode();
                 let (hover_tooltip, hover_match) = self.terminal.update(cx, |terminal, cx| {
                     terminal.set_size(dimensions);
-                    terminal.sync(window, cx);
+                    terminal.sync(mouse_input_mode, window, cx);
 
                     if window.modifiers().secondary(cx)
                         && bounds.contains(&window.mouse_position())
@@ -1640,7 +1652,12 @@ impl Element for TerminalElement {
                             }
 
                             this.update(cx, |term, cx| {
-                                term.try_modifiers_change(&event.modifiers, window, cx)
+                                term.try_modifiers_change(
+                                    &event.modifiers,
+                                    mouse_input_mode,
+                                    window,
+                                    cx,
+                                )
                             });
                         }
                     });
@@ -2376,6 +2393,67 @@ mod tests {
         assert!(!TerminalElement::is_decorative_character('1'));
         assert!(!TerminalElement::is_decorative_character('$'));
         assert!(!TerminalElement::is_decorative_character(' '));
+    }
+
+    #[gpui::test]
+    fn test_cell_style_caches_contrast_per_color_pair(cx: &mut TestAppContext) {
+        use terminal::{Color, NamedColor};
+
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+        cx.update(|cx| {
+            let theme = cx.theme();
+            let pairs = [
+                (
+                    Color::Named(NamedColor::BrightBlack),
+                    Color::Named(NamedColor::Background),
+                ),
+                (
+                    Color::Named(NamedColor::Foreground),
+                    Color::Named(NamedColor::Background),
+                ),
+                (
+                    Color::Named(NamedColor::BrightBlack),
+                    Color::Named(NamedColor::White),
+                ),
+                (Color::Indexed(8), Color::Named(NamedColor::Black)),
+            ];
+            let cell_color = |fg: &Color, bg: &Color, minimum_contrast, contrast_cache: &mut _| {
+                TerminalElement::cell_style(
+                    Point::new(0, 0),
+                    &Cell::default(),
+                    *fg,
+                    *bg,
+                    theme,
+                    &TextStyle::default(),
+                    None,
+                    minimum_contrast,
+                    contrast_cache,
+                )
+                .color
+            };
+            for minimum_contrast in [0.0, 45.0, 90.0] {
+                let mut contrast_cache = HashMap::default();
+                for (fg, bg) in pairs.iter().chain(pairs.iter().rev()) {
+                    let key = (convert_color(fg, theme), convert_color(bg, theme));
+                    let expected = ensure_minimum_contrast(key.0, key.1, minimum_contrast);
+                    assert_eq!(
+                        cell_color(fg, bg, minimum_contrast, &mut contrast_cache),
+                        expected,
+                        "{fg:?} on {bg:?} at {minimum_contrast}"
+                    );
+                    let cached = contrast_cache.get(&key);
+                    assert_eq!(cached, (minimum_contrast > 0.0).then_some(&expected));
+                }
+            }
+            let (fg, bg) = &pairs[0];
+            let key = (convert_color(fg, theme), convert_color(bg, theme));
+            let mut contrast_cache = HashMap::from_iter([(key, gpui::red())]);
+            assert_eq!(cell_color(fg, bg, 45.0, &mut contrast_cache), gpui::red());
+        });
     }
 
     #[test]

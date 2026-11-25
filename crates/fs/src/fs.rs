@@ -31,8 +31,8 @@ use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::mem::MaybeUninit;
 
 use async_tar::Archive;
-use futures::{AsyncRead, Stream, StreamExt, future::BoxFuture};
-use git::repository::{GitRepository, RealGitRepository};
+use futures::{AsyncRead, FutureExt as _, Stream, StreamExt, future::BoxFuture};
+use git::repository::{GitRepository, RealGitRepository, untrusted_git_command};
 #[cfg(windows)]
 use is_executable::IsExecutable;
 use rope::Rope;
@@ -133,6 +133,21 @@ pub trait Fs: Send + Sync {
     /// trash.
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()>;
 
+    /// Takes an advisory lock on the file at `path`, creating the file if it doesn't
+    /// exist, and waits for conflicting locks to be released first.
+    ///
+    /// The lock is honored by every process that locks the same file, and is released
+    /// when the returned [`FileLock`] is dropped or this process exits. Dropping the
+    /// returned future stops waiting for the lock.
+    ///
+    /// The lock is on the file that is at `path` when this is called, even if that file
+    /// is removed or replaced while waiting.
+    async fn lock_file(&self, path: &Path, kind: FileLockKind) -> Result<FileLock>;
+
+    /// Like [`Fs::lock_file`], but returns `None` instead of waiting when a conflicting
+    /// lock is held.
+    async fn try_lock_file(&self, path: &Path, kind: FileLockKind) -> Result<Option<FileLock>>;
+
     async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>>;
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn ReadSeek + Send + Sync>>;
     async fn load(&self, path: &Path) -> Result<String> {
@@ -190,6 +205,12 @@ pub trait Fs: Send + Sync {
     -> Result<()>;
     async fn git_clone(&self, abs_work_directory: &Path, repo_url: &str) -> Result<()>;
     async fn git_config(&self, abs_work_directory: &Path, args: Vec<String>) -> Result<String>;
+    async fn git_command(
+        &self,
+        git_binary_path: &Path,
+        abs_work_directory: &Path,
+        args: Vec<String>,
+    ) -> Result<String>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> bool;
     fn subscribe_to_jobs(&self) -> JobEventReceiver;
@@ -316,6 +337,35 @@ pub struct RenameOptions {
 pub struct RemoveOptions {
     pub recursive: bool,
     pub ignore_if_not_exists: bool,
+}
+
+/// Whether a lock taken with [`Fs::lock_file`] can be held at the same time as others.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum FileLockKind {
+    /// Can be held together with other shared locks on the same file.
+    Shared,
+    /// Can't be held together with any other lock on the same file.
+    Exclusive,
+}
+
+/// An advisory lock on a file, taken with [`Fs::lock_file`] or [`Fs::try_lock_file`]
+/// and released when dropped.
+pub struct FileLock {
+    _release_on_drop: Box<dyn std::any::Any + Send + Sync>,
+}
+
+impl FileLock {
+    fn new(release_on_drop: impl std::any::Any + Send + Sync) -> Self {
+        Self {
+            _release_on_drop: Box::new(release_on_drop),
+        }
+    }
+}
+
+impl std::fmt::Debug for FileLock {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("FileLock").finish_non_exhaustive()
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -563,6 +613,9 @@ impl FileHandle for std::fs::File {
 
 pub struct RealWatcher {}
 
+const FILE_LOCK_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(5);
+const FILE_LOCK_MAX_RETRY_DELAY: Duration = Duration::from_millis(250);
+
 impl RealFs {
     pub fn new(git_binary_path: Option<PathBuf>, executor: BackgroundExecutor) -> Arc<Self> {
         Arc::new_cyclic(|this| Self {
@@ -582,6 +635,48 @@ impl RealFs {
             trash: Arc::new(Mutex::new(SlotMap::with_key())),
             is_case_sensitive: Default::default(),
         })
+    }
+
+    async fn open_lock_file(&self, path: &Path) -> Result<Arc<std::fs::File>> {
+        let path = path.to_owned();
+        self.executor
+            .spawn(async move {
+                let file = std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create(true)
+                    .truncate(false)
+                    .open(&path)
+                    .with_context(|| format!("opening {path:?}"))?;
+                Ok(Arc::new(file))
+            })
+            .await
+    }
+
+    /// Returns whether the lock was taken.
+    async fn try_lock_open_file(
+        &self,
+        file: &Arc<std::fs::File>,
+        path: &Path,
+        kind: FileLockKind,
+    ) -> Result<bool> {
+        let file = file.clone();
+        let result = self
+            .executor
+            .spawn(async move {
+                match kind {
+                    FileLockKind::Shared => file.try_lock_shared(),
+                    FileLockKind::Exclusive => file.try_lock(),
+                }
+            })
+            .await;
+        match result {
+            Ok(()) => Ok(true),
+            Err(std::fs::TryLockError::WouldBlock) => Ok(false),
+            Err(std::fs::TryLockError::Error(error)) => {
+                Err(error).with_context(|| format!("locking {path:?}"))
+            }
+        }
     }
 
     #[cfg(target_os = "windows")]
@@ -925,6 +1020,27 @@ impl Fs for RealFs {
             }
             Err(err) => Err(err)?,
         }
+    }
+
+    async fn lock_file(&self, path: &Path, kind: FileLockKind) -> Result<FileLock> {
+        let file = self.open_lock_file(path).await?;
+        // Waiting for the lock inside the operating system would occupy a thread until
+        // the lock is granted, even after the caller stopped waiting. Enough of those
+        // waits would leave no thread for the file operations of the lock's holder.
+        let mut retry_delay = FILE_LOCK_INITIAL_RETRY_DELAY;
+        loop {
+            if self.try_lock_open_file(&file, path, kind).await? {
+                return Ok(FileLock::new(file));
+            }
+            self.executor.timer(retry_delay).await;
+            retry_delay = (retry_delay * 2).min(FILE_LOCK_MAX_RETRY_DELAY);
+        }
+    }
+
+    async fn try_lock_file(&self, path: &Path, kind: FileLockKind) -> Result<Option<FileLock>> {
+        let file = self.open_lock_file(path).await?;
+        let locked = self.try_lock_open_file(&file, path, kind).await?;
+        Ok(locked.then(|| FileLock::new(file)))
     }
 
     async fn trash(&self, path: &Path, _options: RemoveOptions) -> Result<TrashId> {
@@ -1328,6 +1444,35 @@ impl Fs for RealFs {
         String::from_utf8(output.stdout).map_err(Into::into)
     }
 
+    async fn git_command(
+        &self,
+        git_binary_path: &Path,
+        abs_work_directory: &Path,
+        args: Vec<String>,
+    ) -> Result<String> {
+        let mut command = untrusted_git_command(
+            git_binary_path,
+            abs_work_directory,
+            self.executor.clone(),
+            &args,
+        );
+        command.kill_on_drop(true);
+        let output = command.output().fuse();
+        let timeout = self.executor.timer(Duration::from_secs(5)).fuse();
+        futures::pin_mut!(output, timeout);
+        let output = futures::select_biased! {
+            output = output => output?,
+            _ = timeout => {
+                log::warn!("git command in {abs_work_directory:?} timed out");
+                anyhow::bail!("git command in {abs_work_directory:?} timed out");
+            }
+        };
+        if !output.status.success() {
+            anyhow::bail!(String::from_utf8(output.stderr)?);
+        }
+        String::from_utf8(output.stdout).map_err(Into::into)
+    }
+
     fn is_fake(&self) -> bool {
         false
     }
@@ -1459,7 +1604,6 @@ struct FakeFsState {
     root: FakeFsEntry,
     next_inode: u64,
     next_mtime: SystemTime,
-    git_event_tx: async_channel::Sender<PathBuf>,
     watch_roots: Vec<(PathBuf, std::sync::Weak<dyn Watcher>)>,
     watches: FakeWatches,
     events_paused: bool,
@@ -1472,6 +1616,31 @@ struct FakeFsState {
     trash: Mutex<SlotMap<TrashId, (TrashedEntry, FakeFsEntry)>>,
     remove_dir_errors: std::collections::HashMap<PathBuf, String>,
     case_sensitive: bool,
+    // Keyed by inode because, as on a real file system, a lock belongs to the file
+    // rather than its path: a file created in place of a removed one is unlocked.
+    file_locks: std::collections::HashMap<u64, FakeFileLockHolders>,
+    file_lock_waiters: Vec<futures::channel::oneshot::Sender<()>>,
+}
+
+#[cfg(feature = "test-support")]
+#[derive(Default)]
+struct FakeFileLockHolders {
+    shared: usize,
+    exclusive: bool,
+}
+
+#[cfg(feature = "test-support")]
+struct FakeFileLock {
+    state: Arc<Mutex<FakeFsState>>,
+    inode: u64,
+    kind: FileLockKind,
+}
+
+#[cfg(feature = "test-support")]
+impl Drop for FakeFileLock {
+    fn drop(&mut self) {
+        self.state.lock().release_file_lock(self.inode, self.kind);
+    }
 }
 
 /// The kernel's side of file watching, as far as the real watcher code above
@@ -1722,6 +1891,92 @@ impl FakeFsState {
         callback(new_entry)
     }
 
+    /// Returns the inode of the file that locking `path` locks, creating it if needed.
+    fn lock_file_inode(&mut self, path: &Path) -> Result<u64> {
+        if let Some((entry, _)) = self.try_entry(path, true) {
+            return match entry {
+                FakeFsEntry::File { inode, .. } => Ok(*inode),
+                _ => anyhow::bail!("cannot lock {path:?}: not a file"),
+            };
+        }
+
+        // Like opening one, locking a symlink whose target doesn't exist creates the target.
+        let mut file_path = path.to_path_buf();
+        while let Some((FakeFsEntry::Symlink { target }, symlink_path)) =
+            self.try_entry(&file_path, false)
+        {
+            file_path = match symlink_path.parent() {
+                Some(parent) => parent.join(target),
+                None => target.clone(),
+            };
+        }
+        // A `..` applies to the directory that the symlinks before it lead to, so the
+        // directory is resolved through them rather than by normalizing the path.
+        let file_name = file_path
+            .file_name()
+            .with_context(|| format!("cannot lock {path:?}: not a file"))?;
+        let directory = file_path
+            .parent()
+            .and_then(|parent| self.canonicalize(parent, true))
+            .with_context(|| format!("cannot lock {path:?}: its directory doesn't exist"))?;
+        let file_path = directory.join(file_name);
+
+        let inode = self.get_and_increment_inode();
+        let mtime = self.get_and_increment_mtime();
+        self.write_path(&file_path, |entry| match entry {
+            btree_map::Entry::Vacant(entry) => {
+                entry.insert(FakeFsEntry::File {
+                    inode,
+                    mtime,
+                    len: 0,
+                    content: Vec::new(),
+                    git_dir_path: None,
+                });
+                Ok(())
+            }
+            btree_map::Entry::Occupied(_) => anyhow::bail!("cannot lock {path:?}: not a file"),
+        })?;
+        self.emit_event([(file_path, Some(PathEventKind::Created))]);
+        Ok(inode)
+    }
+
+    /// Returns whether the lock was taken.
+    fn try_lock_inode(&mut self, inode: u64, kind: FileLockKind) -> bool {
+        let holders = self.file_locks.entry(inode).or_default();
+        let conflicts = match kind {
+            FileLockKind::Shared => holders.exclusive,
+            FileLockKind::Exclusive => holders.exclusive || holders.shared > 0,
+        };
+        if conflicts {
+            return false;
+        }
+        match kind {
+            FileLockKind::Shared => holders.shared += 1,
+            FileLockKind::Exclusive => holders.exclusive = true,
+        }
+        true
+    }
+
+    fn release_file_lock(&mut self, inode: u64, kind: FileLockKind) {
+        if let std::collections::hash_map::Entry::Occupied(mut holders) =
+            self.file_locks.entry(inode)
+        {
+            match kind {
+                FileLockKind::Shared => {
+                    holders.get_mut().shared = holders.get().shared.saturating_sub(1);
+                }
+                FileLockKind::Exclusive => holders.get_mut().exclusive = false,
+            }
+            if holders.get().shared == 0 && !holders.get().exclusive {
+                holders.remove();
+            }
+        }
+        for waiter in self.file_lock_waiters.drain(..) {
+            // A waiter that stopped waiting has dropped its receiver.
+            waiter.send(()).ok();
+        }
+    }
+
     fn emit_event<I, T>(&mut self, paths: I)
     where
         I: IntoIterator<Item = (T, Option<PathEventKind>)>,
@@ -1843,8 +2098,6 @@ impl FakeFs {
     const SYSTEMTIME_INTERVAL: Duration = Duration::from_nanos(100);
 
     pub fn new(executor: gpui::BackgroundExecutor) -> Arc<Self> {
-        let (tx, rx) = async_channel::bounded::<PathBuf>(10);
-
         let state = Arc::new(Mutex::new(FakeFsState {
             root: FakeFsEntry::Dir {
                 inode: 0,
@@ -1853,7 +2106,6 @@ impl FakeFs {
                 entries: Default::default(),
                 git_repo_state: None,
             },
-            git_event_tx: tx,
             next_mtime: UNIX_EPOCH + Self::SYSTEMTIME_INTERVAL,
             next_inode: 1,
             watch_roots: Vec::new(),
@@ -1868,6 +2120,8 @@ impl FakeFs {
             trash: Mutex::new(SlotMap::with_key()),
             remove_dir_errors: Default::default(),
             case_sensitive: true,
+            file_locks: Default::default(),
+            file_lock_waiters: Vec::new(),
         }));
         let native_watcher = fs_watcher::OsWatcher::with_backend(
             fs_watcher::OsWatcherKind::Native,
@@ -1880,28 +2134,13 @@ impl FakeFs {
         let poll_watcher =
             fs_watcher::OsWatcher::new(fs_watcher::OsWatcherKind::Poll, executor.clone());
 
-        let this = Arc::new_cyclic(|this| Self {
+        Arc::new_cyclic(|this| Self {
             this: this.clone(),
             executor: executor.clone(),
             state,
             native_watcher,
             poll_watcher,
-        });
-
-        executor.spawn({
-            let this = this.clone();
-            async move {
-                while let Ok(git_event) = rx.recv().await {
-                    if let Some(mut state) = this.state.try_lock() {
-                        state.emit_event([(git_event, Some(PathEventKind::Changed))]);
-                    } else {
-                        panic!("Failed to lock file system state, this execution would have caused a test hang");
-                    }
-                }
-            }
-        }).detach();
-
-        this
+        })
     }
 
     /// Configures whether the fake filesystem reports as case-sensitive.
@@ -2208,13 +2447,12 @@ impl FakeFs {
         F: FnOnce(&mut FakeGitRepositoryState, &Path, &Path) -> T,
     {
         let mut state = self.state.lock();
-        let git_event_tx = state.git_event_tx.clone();
         let entry = state.entry(dot_git).context("open .git")?;
 
         if let FakeFsEntry::Dir { git_repo_state, .. } = entry {
             let repo_state = git_repo_state.get_or_insert_with(|| {
                 log::debug!("insert git state for {dot_git:?}");
-                Arc::new(Mutex::new(FakeGitRepositoryState::new(git_event_tx)))
+                Arc::new(Mutex::new(FakeGitRepositoryState::new()))
             });
             let mut repo_state = repo_state.lock();
 
@@ -2271,9 +2509,8 @@ impl FakeFs {
             } else {
                 canonical_path.clone()
             };
-            let repo_state = git_repo_state.get_or_insert_with(|| {
-                Arc::new(Mutex::new(FakeGitRepositoryState::new(git_event_tx)))
-            });
+            let repo_state = git_repo_state
+                .get_or_insert_with(|| Arc::new(Mutex::new(FakeGitRepositoryState::new())));
             let mut repo_state = repo_state.lock();
 
             let result = f(&mut repo_state, &canonical_path, &common_dir);
@@ -2344,9 +2581,7 @@ impl FakeFs {
             .ref_name
             .as_ref()
             .expect("linked worktree must have a ref_name");
-        let branch_name = ref_name
-            .strip_prefix("refs/heads/")
-            .unwrap_or(ref_name.as_ref());
+        let branch_name = ref_name.trim_prefix("refs/heads/");
 
         // Create ref in git state.
         self.with_git_state(dot_git, false, |state| {
@@ -2403,7 +2638,7 @@ impl FakeFs {
         emit_git_event: bool,
         ref_name: &str,
     ) {
-        let branch_name = ref_name.strip_prefix("refs/heads/").unwrap_or(ref_name);
+        let branch_name = ref_name.trim_prefix("refs/heads/");
         let worktrees_entry_dir = dot_git.join("worktrees").join(branch_name);
 
         // Read gitdir to find the worktree checkout path.
@@ -2676,13 +2911,6 @@ impl FakeFs {
         .unwrap();
     }
 
-    pub fn set_create_worktree_error(&self, dot_git: &Path, message: Option<String>) {
-        self.with_git_state(dot_git, true, |state| {
-            state.simulated_create_worktree_error = message;
-        })
-        .unwrap();
-    }
-
     /// Makes subsequent `remove_dir` calls for `path` fail with `message`.
     pub fn set_remove_dir_error(&self, path: impl AsRef<Path>, message: String) {
         self.state
@@ -2832,6 +3060,14 @@ impl FakeFs {
 
     fn simulate_random_delay(&self) -> impl futures::Future<Output = ()> {
         self.executor.simulate_random_delay()
+    }
+
+    fn held_file_lock(&self, inode: u64, kind: FileLockKind) -> FileLock {
+        FileLock::new(FakeFileLock {
+            state: self.state.clone(),
+            inode,
+            kind,
+        })
     }
 
     async fn remove_dir_inner(
@@ -3037,7 +3273,7 @@ impl Fs for FakeFs {
         let mut state = self.state.lock();
         let inode = state.get_and_increment_inode();
         let mtime = state.get_and_increment_mtime();
-        let file = FakeFsEntry::File {
+        let mut file = FakeFsEntry::File {
             inode,
             mtime,
             len: 0,
@@ -3050,6 +3286,17 @@ impl Fs for FakeFs {
                 btree_map::Entry::Occupied(mut e) => {
                     if options.overwrite {
                         kind = Some(PathEventKind::Changed);
+                        // Truncating a file keeps its inode, and with it the locks on it.
+                        if let (
+                            FakeFsEntry::File { inode, .. },
+                            FakeFsEntry::File {
+                                inode: existing_inode,
+                                ..
+                            },
+                        ) = (&mut file, e.get())
+                        {
+                            *inode = *existing_inode;
+                        }
                         *e.get_mut() = file;
                     } else if !options.ignore_if_exists {
                         anyhow::bail!("path already exists: {path:?}");
@@ -3274,6 +3521,34 @@ impl Fs for FakeFs {
 
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
         self.remove_file_inner(path, options).await.map(|_| ())
+    }
+
+    async fn lock_file(&self, path: &Path, kind: FileLockKind) -> Result<FileLock> {
+        self.simulate_random_delay().await;
+        let inode = self.state.lock().lock_file_inode(path)?;
+        loop {
+            let released = {
+                let mut state = self.state.lock();
+                if state.try_lock_inode(inode, kind) {
+                    return Ok(self.held_file_lock(inode, kind));
+                }
+                let (released_sender, released_receiver) = futures::channel::oneshot::channel();
+                state.file_lock_waiters.push(released_sender);
+                released_receiver
+            };
+            // Whether or not a lock was released, the next attempt decides.
+            released.await.ok();
+        }
+    }
+
+    async fn try_lock_file(&self, path: &Path, kind: FileLockKind) -> Result<Option<FileLock>> {
+        self.simulate_random_delay().await;
+        let (inode, locked) = {
+            let mut state = self.state.lock();
+            let inode = state.lock_file_inode(path)?;
+            (inode, state.try_lock_inode(inode, kind))
+        };
+        Ok(locked.then(|| self.held_file_lock(inode, kind)))
     }
 
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn ReadSeek + Send + Sync>> {
@@ -3506,6 +3781,15 @@ impl Fs for FakeFs {
         anyhow::bail!("Git config is not supported in fake Fs")
     }
 
+    async fn git_command(
+        &self,
+        _git_binary_path: &Path,
+        _abs_work_directory: &Path,
+        _args: Vec<String>,
+    ) -> Result<String> {
+        anyhow::bail!("Git commands are not supported in fake Fs")
+    }
+
     fn record_watcher_diagnostics(&self) -> Option<fs_watcher::WatchRecording> {
         Some(fs_watcher::WatchRecording::new([
             self.native_watcher.clone(),
@@ -3725,5 +4009,93 @@ fn atomic_replace<P: AsRef<Path>>(
             None,
             None,
         )
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use gpui::BackgroundExecutor;
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    #[gpui::test]
+    async fn test_git_command_times_out_and_kills_git(executor: BackgroundExecutor) {
+        executor.allow_parking();
+        let fs = RealFs::new(None, executor.clone());
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let repository = temp_dir.path().join("repository");
+        let fifo_path = repository.join(".git/included");
+        fs.git_command(
+            Path::new("git"),
+            temp_dir.path(),
+            ["init", "--quiet", "repository"].map(String::from).to_vec(),
+        )
+        .await
+        .unwrap();
+        let fifo_c_string =
+            std::ffi::CString::new(fifo_path.as_os_str().as_encoded_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo_c_string.as_ptr(), 0o600) }, 0);
+        fs.git_command(
+            Path::new("git"),
+            &repository,
+            ["config", "include.path", "included"]
+                .map(String::from)
+                .to_vec(),
+        )
+        .await
+        .unwrap();
+
+        let git_command = executor.spawn({
+            let fs = fs.clone();
+            let repository = repository.clone();
+            async move {
+                fs.git_command(
+                    Path::new("git"),
+                    &repository,
+                    ["rev-parse", "--git-dir"].map(String::from).to_vec(),
+                )
+                .await
+            }
+        });
+        let open_writer = || {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&fifo_path)
+        };
+        executor.run_until_parked();
+        let mut writers = Vec::new();
+        for _ in 0..50 {
+            if let Ok(writer) = open_writer() {
+                writers.push(writer);
+                break;
+            }
+            executor.timer(Duration::from_millis(10)).await;
+        }
+        assert_eq!(writers.len(), 1, "git never opened the included config");
+        executor.advance_clock(Duration::from_secs(5));
+        executor.run_until_parked();
+        let error = git_command
+            .now_or_never()
+            .expect("git command is still running")
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!("git command in {repository:?} timed out")
+        );
+
+        let mut has_reader = true;
+        for _ in 0..50 {
+            match open_writer() {
+                Ok(writer) => writers.push(writer),
+                Err(_) => {
+                    has_reader = false;
+                    break;
+                }
+            }
+            executor.timer(Duration::from_millis(10)).await;
+        }
+        drop(writers);
+        assert!(!has_reader, "the timed out git process is still running");
     }
 }

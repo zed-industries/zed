@@ -412,7 +412,7 @@ pub fn into_deepseek(
                     );
                 }
                 MessageContent::Image(_) => {}
-                MessageContent::Compaction(_) => {}
+                MessageContent::Compaction(_) | MessageContent::ReasoningEffort { .. } => {}
                 MessageContent::ToolUse(tool_use) => {
                     let input = tool_use
                         .input

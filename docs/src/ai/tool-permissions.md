@@ -90,6 +90,9 @@ For model-invoked [Skills](./skills.md), use the `skill` tool. A user-invoked `/
 | `always_deny`    | Patterns that block immediately—highest priority, cannot be overridden         |
 | `always_confirm` | Patterns that always prompt, even when `tool_permissions.default` is `"allow"` |
 
+For `edit_file` and `write_file`, a `"confirm"` default does not prompt for files inside the project.
+See [File Edits Inside the Project](#file-edits-inside-the-project).
+
 ### Pattern Syntax
 
 ```json [settings]
@@ -140,6 +143,41 @@ To auto-approve all tool actions:
 ```
 
 This bypasses confirmation prompts for most tools, but `always_deny`, `always_confirm`, built-in security rules, and paths inside Zed settings directories still prompt or block.
+
+## File Edits Inside the Project {#file-edits-inside-the-project}
+
+`edit_file` and `write_file` handle a `"confirm"` default differently from other tools.
+When no pattern matches and the fallback is `"confirm"`, the agent edits files inside your project without prompting.
+This applies to both the global `default` and the tool's own `default`.
+You [review the changes](./agent-panel.md#reviewing-changes) after the agent makes them.
+
+A `"confirm"` default still prompts before the agent edits:
+
+- Files inside Zed settings folders (`.zed/` and the global config folder)
+- Agent skill files (`.agents/skills/`)
+- Files that a symlink places outside the project
+
+To get a prompt before the agent edits specific project files, add `always_confirm` patterns for them.
+A pattern that matches every path, such as `.*`, prompts before every edit.
+
+```json [settings]
+{
+  "agent": {
+    "tool_permissions": {
+      "tools": {
+        "edit_file": {
+          "always_confirm": [{ "pattern": "\\.github/workflows/" }]
+        },
+        "write_file": {
+          "always_confirm": [{ "pattern": "\\.github/workflows/" }]
+        }
+      }
+    }
+  }
+}
+```
+
+The prompt shows the file path, not the proposed change.
 
 ## Shell Compatibility
 
@@ -230,11 +268,7 @@ MCP tools only support the tool-level option.
     "tool_permissions": {
       "tools": {
         "edit_file": {
-          "default": "confirm",
-          "always_allow": [
-            { "pattern": "\\.(md|txt|json)$" },
-            { "pattern": "^src/" }
-          ],
+          "always_confirm": [{ "pattern": "\\.github/workflows/" }],
           "always_deny": [
             { "pattern": "\\.env" },
             { "pattern": "secrets?/" },

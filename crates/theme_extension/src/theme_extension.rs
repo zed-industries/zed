@@ -6,7 +6,6 @@ use extension::{ExtensionHostProxy, ExtensionThemeProxy};
 use fs::Fs;
 use gpui::{App, BackgroundExecutor, SharedString, Task};
 use theme::ThemeRegistry;
-use theme_settings;
 
 pub fn init(
     extension_host_proxy: Arc<ExtensionHostProxy>,

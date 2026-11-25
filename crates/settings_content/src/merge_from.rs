@@ -13,7 +13,6 @@
 /// * For other types (including Vec), a merge overwrites the current value.
 ///
 /// If you want to break the rules you can (e.g. ExtendingVec, or SaturatingBool).
-#[allow(unused)]
 pub trait MergeFrom {
     /// Merge from a source of the same type.
     fn merge_from(&mut self, other: &Self);

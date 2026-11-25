@@ -102,8 +102,8 @@ impl<T: AsRef<Path>> PathExt for T {
     fn extension_or_hidden_file_name(&self) -> Option<&str> {
         let path = self.as_ref();
         let file_name = path.file_name()?.to_str()?;
-        if file_name.starts_with('.') {
-            return file_name.strip_prefix('.');
+        if let Some(hidden_file_name) = file_name.strip_prefix('.') {
+            return Some(hidden_file_name);
         }
 
         path.extension()
@@ -170,10 +170,6 @@ impl<T: AsRef<Path>> PathExt for T {
             .map(ToOwned::to_owned)
             .context("Failed to quote path")
     }
-}
-
-pub fn path_ends_with(base: &Path, suffix: &Path) -> bool {
-    strip_path_suffix(base, suffix).is_some()
 }
 
 /// Case-insensitive ASCII comparison of a path component to a literal
@@ -1055,6 +1051,10 @@ where
 /// 4. For non-numeric characters, using case-insensitive comparison
 /// 5. If everything is equal case-insensitively, using case-sensitive comparison as final tie-breaker
 pub fn natural_sort(a: &str, b: &str) -> Ordering {
+    if a == b {
+        return Ordering::Equal;
+    }
+
     let mut a_iter = a.chars().peekable();
     let mut b_iter = b.chars().peekable();
 
@@ -1096,6 +1096,16 @@ fn natural_sort_no_tiebreak(a: &str, b: &str) -> Ordering {
         Ordering::Equal
     } else {
         natural_sort(a, b)
+    }
+}
+
+fn compare_lowercase(a: &str, b: &str) -> Ordering {
+    if a.is_ascii() && b.is_ascii() {
+        a.bytes()
+            .map(|byte| byte.to_ascii_lowercase())
+            .cmp(b.bytes().map(|byte| byte.to_ascii_lowercase()))
+    } else {
+        a.to_lowercase().cmp(&b.to_lowercase())
     }
 }
 
@@ -1196,18 +1206,6 @@ fn compare_strings_no_tiebreak(a: &str, b: &str, order: SortOrder) -> Ordering {
     }
 }
 
-pub fn compare_rel_paths(
-    (path_a, a_is_file): (&RelPath, bool),
-    (path_b, b_is_file): (&RelPath, bool),
-) -> Ordering {
-    compare_rel_paths_by(
-        (path_a, a_is_file),
-        (path_b, b_is_file),
-        SortMode::DirectoriesFirst,
-        SortOrder::Default,
-    )
-}
-
 pub fn compare_rel_paths_by(
     (path_a, a_is_file): (&RelPath, bool),
     (path_b, b_is_file): (&RelPath, bool),
@@ -1245,10 +1243,8 @@ pub fn compare_rel_paths_by(
                 if order == SortOrder::Extension {
                     // Directories have no extension and must take part in this comparison too,
                     // otherwise mixed mode would produce an inconsistent (non-transitive) ordering.
-                    let extension_ordering = a_ext
-                        .unwrap_or_default()
-                        .to_lowercase()
-                        .cmp(&b_ext.unwrap_or_default().to_lowercase());
+                    let extension_ordering =
+                        compare_lowercase(a_ext.unwrap_or_default(), b_ext.unwrap_or_default());
                     if !extension_ordering.is_eq() {
                         return extension_ordering;
                     }

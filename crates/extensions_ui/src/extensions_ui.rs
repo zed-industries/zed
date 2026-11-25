@@ -251,7 +251,7 @@ pub fn init(cx: &mut App) {
                     } else {
                         workspace.show_error(
                             DevExtensionNotInstalledError {
-                                extension_id: Some(SharedString::from(target_id.to_owned())),
+                                extension_id: Some(SharedString::from(target_id)),
                             },
                             cx,
                         );

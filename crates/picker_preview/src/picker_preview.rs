@@ -13,7 +13,6 @@ use rope::Point;
 use settings::Settings;
 use ui::{ActiveTheme, Color, div, prelude::*, v_flex};
 use util::ResultExt as _;
-use util::rel_path::RelPath;
 
 use editor::{Editor, EditorSettings, RowHighlightOptions, display_map::HighlightKey};
 use multi_buffer::{
@@ -58,7 +57,6 @@ struct SearchMatchLineHighlight;
 
 struct EditorPreview {
     project: Entity<Project>,
-    current_path: Option<Arc<RelPath>>,
     _worktree: Option<Entity<Worktree>>,
     /// When set show a text message instead of a preview
     message: Option<HighlightedText>,
@@ -112,7 +110,6 @@ impl EditorPreview {
         let mut this = Self {
             project,
             preview_editor,
-            current_path: None,
             _worktree: None,
             message: None,
             single_row_highlight_anchor: None,
@@ -242,7 +239,6 @@ impl EditorPreview {
         cx: &mut Context<Self>,
     ) {
         self.message = None; // show the preview editor
-        self.current_path = buffer.read(cx).file().map(|file| file.path().clone());
 
         const MIN_LINE_HEIGHT_PX: Pixels = px(6.0);
         const MARGIN: u32 = 2; // scrolling can offset things;
