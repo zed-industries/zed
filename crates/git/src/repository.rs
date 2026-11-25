@@ -826,6 +826,8 @@ pub trait GitRepository: Send + Sync {
 
     fn load_textconv_revision(&self, revision: String) -> BoxFuture<'_, Result<Vec<u8>>>;
 
+    fn has_filter_or_ident_attribute(&self, path: RepoPath) -> BoxFuture<'_, Result<bool>>;
+
     fn head_sha(&self) -> BoxFuture<'_, Option<String>> {
         async move {
             self.revparse_batch(vec!["HEAD".into()])
@@ -1822,6 +1824,32 @@ impl GitRepository for RealGitRepository {
                     String::from_utf8_lossy(&output.stderr)
                 );
                 Ok(output.stdout)
+            })
+            .boxed()
+    }
+
+    fn has_filter_or_ident_attribute(&self, path: RepoPath) -> BoxFuture<'_, Result<bool>> {
+        let git = self.git_binary_in_worktree();
+        self.executor
+            .spawn(async move {
+                let output = git?
+                    .build_command(&["check-attr", "-z", "-a", "--"])
+                    .arg(path.as_unix_str())
+                    .kill_on_drop(true)
+                    .output()
+                    .await?;
+                anyhow::ensure!(
+                    output.status.success(),
+                    "git check-attr failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                let fields = output.stdout.split(|byte| *byte == 0).collect::<Vec<_>>();
+                let has_conversion = fields.chunks_exact(3).any(|field| match field[1] {
+                    b"filter" => true,
+                    b"ident" => field[2] == b"set",
+                    _ => false,
+                });
+                Ok(has_conversion)
             })
             .boxed()
     }

@@ -650,40 +650,27 @@ impl GitBlame {
                             let snapshot = buffer.read(cx).snapshot();
                             let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
 
-                            let git_store = project.read(cx).git_store().clone();
-                            let repository =
-                                git_store.read(cx).repository_and_path_for_buffer_id(id, cx);
+                            let repository = project
+                                .read(cx)
+                                .git_store()
+                                .read(cx)
+                                .repository_and_path_for_buffer_id(id, cx);
 
                             let remote_url = repository
                                 .as_ref()
                                 .and_then(|(repo, _)| repo.read(cx).default_remote_url());
 
-                            let head_blame = repository.is_some().then(|| {
-                                git_store.update(cx, |git_store, cx| {
-                                    git_store.blame_buffer_at_head(&buffer, cx)
+                            let blame_buffer = if repository.is_some() {
+                                project.update(cx, |project, cx| {
+                                    project.blame_buffer(&buffer, None, cx)
                                 })
-                            });
+                            } else {
+                                Task::ready(Ok(None))
+                            };
 
-                            Ok(cx.spawn(async move |cx| {
-                                let Some(head_blame) = head_blame else {
-                                    return (id, snapshot, buffer_edits, Ok(None), remote_url);
-                                };
-                                match head_blame.await {
-                                    Ok(None) => {
-                                        let (snapshot, buffer_edits, blame) = cx.update(|cx| {
-                                            (
-                                                buffer.read(cx).snapshot(),
-                                                buffer.update(cx, |buffer, _| buffer.subscribe()),
-                                                project.update(cx, |project, cx| {
-                                                    project.blame_buffer(&buffer, None, cx)
-                                                }),
-                                            )
-                                        });
-                                        (id, snapshot, buffer_edits, blame.await, remote_url)
-                                    }
-                                    blame => (id, snapshot, buffer_edits, blame, remote_url),
-                                }
-                            }))
+                            Ok(async move {
+                                (id, snapshot, buffer_edits, blame_buffer.await, remote_url)
+                            })
                         })
                         .collect::<Result<Vec<_>>>()
                 })?;
@@ -1546,7 +1533,7 @@ mod tests {
         while git_blame.read_with(cx, |blame, _| blame.buffers.is_empty()) {
             assert!(cx.executor().tick());
         }
-        assert_eq!(head_content_loads(), [[format!("{head_sha}:file.txt")]]);
+        assert!(head_content_loads().is_empty());
 
         git_blame.update(cx, |blame, cx| {
             assert_blame_rows(

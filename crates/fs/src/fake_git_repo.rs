@@ -68,6 +68,7 @@ pub struct FakeGitRepositoryState {
     pub oids: HashMap<Oid, Vec<u8>>,
     pub blames: HashMap<RepoPath, Blame>,
     pub blames_at_revision: HashMap<(RepoPath, Oid), Blame>,
+    pub paths_with_filter_or_ident: HashSet<RepoPath>,
     pub current_branch_name: Option<String>,
     pub default_branch_ref: Option<String>,
     pub branches: HashSet<String>,
@@ -102,6 +103,7 @@ impl FakeGitRepositoryState {
             unmerged_paths: Default::default(),
             blames: Default::default(),
             blames_at_revision: Default::default(),
+            paths_with_filter_or_ident: Default::default(),
             current_branch_name: Default::default(),
             default_branch_ref: Some("refs/remotes/origin/main".into()),
             branches: Default::default(),
@@ -436,6 +438,12 @@ impl GitRepository for FakeGitRepository {
                 .context("revision not found")
         }
         .boxed()
+    }
+
+    fn has_filter_or_ident_attribute(&self, path: RepoPath) -> BoxFuture<'_, Result<bool>> {
+        self.with_state_async(false, move |state| {
+            Ok(state.paths_with_filter_or_ident.contains(&path))
+        })
     }
 
     fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>> {

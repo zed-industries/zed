@@ -5291,6 +5291,175 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
     assert_eq!(forwarded_blame, blame_at_revision);
 }
 
+#[gpui::test(iterations = 10)]
+async fn test_git_blame_for_requested_version(
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    cx_a.update(editor::init);
+    cx_b.update(editor::init);
+
+    let shift_jis_text = "一行目の日本語\n二行目の日本語\n三行目の日本語\n";
+    let shift_jis_bytes = b"\x88\xea\x8d\x73\x96\xda\x82\xcc\x93\xfa\x96\x7b\x8c\xea\n\x93\xf1\x8d\x73\x96\xda\x82\xcc\x93\xfa\x96\x7b\x8c\xea\n\x8e\x4f\x8d\x73\x96\xda\x82\xcc\x93\xfa\x96\x7b\x8c\xea\n".to_vec();
+    let fs = client_a.fs();
+    fs.insert_tree(
+        path!("/my-repo"),
+        json!({ ".git": {}, "filtered.txt": "one\ntwo\n" }),
+    )
+    .await;
+    fs.insert_file(path!("/my-repo/shift_jis.txt"), shift_jis_bytes.clone())
+        .await;
+    let dot_git = Path::new(path!("/my-repo/.git"));
+    let head_sha = "a".repeat(40);
+    fs.with_git_state(dot_git, true, |state| {
+        state
+            .head_contents
+            .insert(repo_path("shift_jis.txt"), shift_jis_bytes);
+        state
+            .head_contents
+            .insert(repo_path("filtered.txt"), b"one\ntwo\n".to_vec());
+        state.index_contents = state.head_contents.clone();
+        state.refs.insert("HEAD".into(), head_sha.clone());
+        state.blames_at_revision.insert(
+            (repo_path("shift_jis.txt"), head_sha.parse().unwrap()),
+            git::blame::Blame {
+                entries: vec![blame_entry("1b1b1b", 0..2), blame_entry("0d0d0d", 2..3)],
+                ..Default::default()
+            },
+        );
+        state
+            .paths_with_filter_or_ident
+            .insert(repo_path("filtered.txt"));
+    })
+    .unwrap();
+    fs.set_blame_for_repo(
+        dot_git,
+        vec![(
+            repo_path("filtered.txt"),
+            git::blame::Blame {
+                entries: vec![blame_entry("3a3a3a", 0..2)],
+                ..Default::default()
+            },
+        )],
+    );
+
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/my-repo"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let buffer_a = project_a
+        .update(cx_a, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("shift_jis.txt")), cx)
+        })
+        .await
+        .unwrap();
+    buffer_a.read_with(cx_a, |buffer, _| assert_eq!(buffer.text(), shift_jis_text));
+
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let editor_b = workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, rel_path("shift_jis.txt")),
+                None,
+                true,
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    let buffer_b = editor_b.update(cx_b, |editor, cx| {
+        editor.buffer().read(cx).as_singleton().unwrap()
+    });
+    let buffer_id_b = buffer_b.read_with(cx_b, |buffer, _| buffer.remote_id());
+
+    buffer_b.update(cx_b, |buffer, cx| {
+        let second_row = Point::new(1, 0)..Point::new(1, buffer.line_len(1));
+        buffer.edit([(second_row, "changed")], None, cx);
+    });
+    cx_a.executor().run_until_parked();
+
+    // The host moves past the version that the guest asks for.
+    buffer_a.update(cx_a, |buffer, cx| {
+        buffer.edit([(Point::zero()..Point::zero(), "later\n")], None, cx);
+    });
+    let blame = project_b.update(cx_b, |project, cx| {
+        project.blame_buffer(&buffer_b, None, cx)
+    });
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        editor.toggle_git_blame(&git::Blame {}, window, cx);
+    });
+    cx_a.executor().run_until_parked();
+
+    let commit_rows = |blame: git::blame::Blame| {
+        blame
+            .entries
+            .into_iter()
+            .map(|entry| (entry.sha, entry.range))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        commit_rows(blame.await.unwrap().unwrap()),
+        [
+            ("1b1b1b".parse().unwrap(), 0..1),
+            ("0d0d0d".parse().unwrap(), 2..3)
+        ]
+    );
+    buffer_b.read_with(cx_b, |buffer, _| {
+        assert!(buffer.text().starts_with("later\n"))
+    });
+    editor_b.update(cx_b, |editor, cx| {
+        let rows = (0..4)
+            .map(|row| RowInfo {
+                buffer_row: Some(row),
+                buffer_id: Some(buffer_id_b),
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+        let commits = editor.blame().unwrap().update(cx, |blame, cx| {
+            blame
+                .blame_for_rows(&rows, cx)
+                .map(|entry| entry.map(|(_, entry)| entry.sha))
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            commits,
+            [
+                None,
+                Some("1b1b1b".parse().unwrap()),
+                None,
+                Some("0d0d0d".parse().unwrap())
+            ]
+        );
+    });
+
+    let filtered_buffer_b = project_b
+        .update(cx_b, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("filtered.txt")), cx)
+        })
+        .await
+        .unwrap();
+    let blame = project_b
+        .update(cx_b, |project, cx| {
+            project.blame_buffer(&filtered_buffer_b, None, cx)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(commit_rows(blame), [("3a3a3a".parse().unwrap(), 0..2)]);
+}
+
 #[gpui::test(iterations = 30)]
 async fn test_collaborating_with_editorconfig(
     cx_a: &mut TestAppContext,

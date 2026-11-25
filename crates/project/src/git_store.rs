@@ -23,7 +23,7 @@ use client::ProjectId;
 use collections::HashMap;
 pub use conflict_set::{ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate};
 use encoding_rs::{ISO_2022_JP, UTF_16BE, UTF_16LE};
-use file_content::{ByteContent, decode_byte_header, decode_text, encode_text};
+use file_content::{decode_text, encode_text};
 use fs::{Fs, RemoveOptions};
 use futures::{
     FutureExt, SinkExt, Stream, StreamExt,
@@ -2348,9 +2348,13 @@ impl GitStore {
         let line_ending = buffer.line_ending();
         let version = version.unwrap_or(buffer.version());
         let buffer_id = buffer.remote_id();
+        let head_blame = blame_at_head(repo.read(cx), repo_path.clone(), content.clone(), cx);
 
         let repo = repo.downgrade();
         cx.spawn(async move |_, cx| {
+            if let Some(blame) = head_blame.await? {
+                return Ok(Some(blame));
+            }
             let repository_state = repo
                 .update(cx, |repo, _| repo.repository_state.clone())?
                 .await
@@ -2375,95 +2379,19 @@ impl GitStore {
         })
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn blame_buffer_at_head(
         &self,
         buffer: &Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Blame>>> {
-        let buffer_snapshot = buffer.read(cx).text_snapshot();
+        let buffer = buffer.read(cx);
         let Some((repo, repo_path)) =
-            self.repository_and_path_for_buffer_id(buffer_snapshot.remote_id(), cx)
+            self.repository_and_path_for_buffer_id(buffer.remote_id(), cx)
         else {
             return Task::ready(Err(anyhow!("failed to find a git repository for buffer")));
         };
-        let repo = repo.read(cx);
-        let is_untracked = repo
-            .status_for_path(&repo_path)
-            .is_some_and(|entry| entry.status.is_untracked());
-        let Some(head_sha) = repo
-            .head_commit
-            .as_ref()
-            .map(|commit| commit.sha.clone())
-            .filter(|_| !is_untracked && !repo_path.as_unix_str().contains('\n'))
-        else {
-            return Task::ready(Ok(None));
-        };
-        let repository_state = repo.repository_state.clone();
-
-        cx.spawn(async move |_, cx| {
-            let revision: Oid = head_sha.parse()?;
-            let RepositoryState::Local(LocalRepositoryState { backend, .. }) =
-                repository_state.await.map_err(|err| anyhow!(err))?
-            else {
-                return Ok(None);
-            };
-            let head_path = format!("{revision}:{}", repo_path.as_unix_str());
-            let (contents, blame) = futures::join!(
-                backend.load_revisions(vec![head_path.clone()]),
-                backend.blame_at_revision(repo_path.clone(), revision),
-            );
-            let Some(content) = contents?.pop().flatten() else {
-                return Ok(None);
-            };
-            let Blame {
-                entries,
-                messages,
-                tag_names,
-            } = blame.with_context(|| format!("Failed to blame {:?}", repo_path.as_ref()))?;
-
-            let head = cx
-                .background_spawn(async move {
-                    if decode_byte_header(&content).1 == ByteContent::Binary {
-                        return Ok(None);
-                    }
-                    if backend.load_textconv_revision(head_path).await? != content {
-                        return Ok(None);
-                    }
-                    let mut decoded = decode_text(content)?;
-                    if is_binary_content(decoded.text.as_bytes())
-                        || [ISO_2022_JP, UTF_16LE, UTF_16BE].contains(&decoded.encoding)
-                    {
-                        return Ok(None);
-                    }
-                    let Some(head_row_count) = entries.iter().map(|entry| entry.range.end).max()
-                    else {
-                        return Ok(None);
-                    };
-                    text::LineEnding::normalize(&mut decoded.text);
-                    anyhow::Ok(Some((decoded.text, entries, head_row_count)))
-                })
-                .await?;
-            let Some((head_text, entries, head_row_count)) = head else {
-                return Ok(None);
-            };
-
-            let diff = cx.new(|cx| BufferDiff::new(&buffer_snapshot, None, None, cx));
-            diff.update(cx, |diff, cx| {
-                diff.set_base_text(Some(head_text.into()), buffer_snapshot, cx)
-            })
-            .await;
-            let diff = diff.read_with(cx, |diff, cx| diff.snapshot(cx));
-            let entries = cx
-                .background_spawn(async move {
-                    map_head_blame_through_diff(&entries, head_row_count, &diff)
-                })
-                .await;
-            Ok(entries.map(|entries| Blame {
-                entries,
-                messages,
-                tag_names,
-            }))
-        })
+        blame_at_head(repo.read(cx), repo_path, buffer.as_rope().clone(), cx)
     }
 
     pub fn get_permalink_to_line(
@@ -11739,54 +11667,106 @@ impl Repository {
     }
 }
 
+fn blame_at_head(
+    repo: &Repository,
+    repo_path: RepoPath,
+    content: Rope,
+    cx: &App,
+) -> Task<Result<Option<Blame>>> {
+    let is_untracked = repo
+        .status_for_path(&repo_path)
+        .is_some_and(|entry| entry.status.is_untracked());
+    let Some(head_sha) = repo
+        .head_commit
+        .as_ref()
+        .map(|commit| commit.sha.clone())
+        .filter(|_| !is_untracked && !repo_path.as_unix_str().contains('\n'))
+    else {
+        return Task::ready(Ok(None));
+    };
+    let repository_state = repo.repository_state.clone();
+
+    cx.background_spawn(async move {
+        let revision: Oid = head_sha.parse()?;
+        let RepositoryState::Local(LocalRepositoryState { backend, .. }) =
+            repository_state.await.map_err(|err| anyhow!(err))?
+        else {
+            return Ok(None);
+        };
+        let (has_filter_or_ident, head_content) = futures::join!(
+            backend.has_filter_or_ident_attribute(repo_path.clone()),
+            backend.load_textconv_revision(format!("{revision}:{}", repo_path.as_unix_str())),
+        );
+        if has_filter_or_ident.unwrap_or(true) {
+            return Ok(None);
+        }
+        let Some(mut head) = head_content
+            .ok()
+            .and_then(|content| decode_text(content).ok())
+        else {
+            return Ok(None);
+        };
+        if is_binary_content(head.text.as_bytes())
+            || [ISO_2022_JP, UTF_16LE, UTF_16BE].contains(&head.encoding)
+        {
+            return Ok(None);
+        }
+        text::LineEnding::normalize(&mut head.text);
+
+        let Blame {
+            entries,
+            messages,
+            tag_names,
+        } = backend
+            .blame_at_revision(repo_path.clone(), revision)
+            .await
+            .with_context(|| format!("Failed to blame {:?}", repo_path.as_ref()))?;
+        let entries = map_head_blame_through_diff(&entries, &head.text, &content.to_string());
+        Ok(entries.map(|entries| Blame {
+            entries,
+            messages,
+            tag_names,
+        }))
+    })
+}
+
 fn map_head_blame_through_diff(
     head_entries: &[git::blame::BlameEntry],
-    head_row_count: u32,
-    diff: &buffer_diff::BufferDiffSnapshot,
+    head_text: &str,
+    buffer_text: &str,
 ) -> Option<Vec<git::blame::BlameEntry>> {
-    if !diff.base_text_exists() {
-        return None;
-    }
-    let end_row = |point: text::Point| point.row + (point.column > 0) as u32;
-    let base_text = diff.base_text();
-    let buffer = diff.buffer_snapshot();
-    let base_row_count = end_row(base_text.max_point());
-    if head_row_count != base_row_count {
+    let head_row_count = head_text.split_inclusive('\n').count() as u32;
+    if head_entries.iter().map(|entry| entry.range.end).max() != Some(head_row_count) {
         return None;
     }
 
     let mut mapped = Vec::new();
     let mut entry_ix = 0;
-    let mut base_row = 0;
+    let mut head_row = 0;
     let mut buffer_row = 0;
-    let mut keep_rows = |base_rows: Range<u32>, buffer_start: u32| {
+    let mut keep_rows = |head_rows: Range<u32>, buffer_start: u32| {
         while let Some(entry) = head_entries.get(entry_ix) {
-            let start = entry.range.start.max(base_rows.start);
-            let end = entry.range.end.min(base_rows.end);
+            let start = entry.range.start.max(head_rows.start);
+            let end = entry.range.end.min(head_rows.end);
             if start < end {
                 mapped.push(git::blame::BlameEntry {
-                    range: start - base_rows.start + buffer_start
-                        ..end - base_rows.start + buffer_start,
+                    range: start - head_rows.start + buffer_start
+                        ..end - head_rows.start + buffer_start,
                     ..entry.clone()
                 });
             }
-            if entry.range.end > base_rows.end {
+            if entry.range.end > head_rows.end {
                 break;
             }
             entry_ix += 1;
         }
     };
-    for hunk in diff.hunks(buffer) {
-        let base_start = base_text.offset_to_point(hunk.diff_base_byte_range.start);
-        let base_end = base_text.offset_to_point(hunk.diff_base_byte_range.end);
-        if base_start.row.checked_sub(base_row)? != hunk.range.start.row.checked_sub(buffer_row)? {
-            return None;
-        }
-        keep_rows(base_row..base_start.row, buffer_row);
-        base_row = end_row(base_end);
-        buffer_row = end_row(hunk.range.end);
+    for (head_rows, buffer_rows) in buffer_diff::changed_row_ranges(head_text, buffer_text) {
+        keep_rows(head_row..head_rows.start, buffer_row);
+        head_row = head_rows.end;
+        buffer_row = buffer_rows.end;
     }
-    keep_rows(base_row..base_row_count, buffer_row);
+    keep_rows(head_row..head_row_count, buffer_row);
     Some(mapped)
 }
 
@@ -11837,18 +11817,8 @@ mod tests {
         head_text: &str,
         buffer_text: &str,
         blame: &[(u8, std::ops::Range<u32>)],
-        cx: &mut TestAppContext,
     ) -> Option<Vec<(u8, std::ops::Range<u32>)>> {
-        let buffer = text::Buffer::new(
-            text::ReplicaId::LOCAL,
-            BufferId::new(1).unwrap(),
-            buffer_text.to_string(),
-        );
-        let diff = cx.new(|cx| BufferDiff::new_with_base_text(head_text, &buffer.snapshot(), cx));
-        let diff = diff.update(cx, |diff, cx| diff.snapshot(cx));
-        let head_blame = head_blame(blame);
-        let head_row_count = head_blame.iter().map(|entry| entry.range.end).max()?;
-        map_head_blame_through_diff(&head_blame, head_row_count, &diff).map(commit_rows)
+        map_head_blame_through_diff(&head_blame(blame), head_text, buffer_text).map(commit_rows)
     }
 
     fn commit_rows(entries: Vec<git::blame::BlameEntry>) -> Vec<(u8, std::ops::Range<u32>)> {
@@ -11858,69 +11828,69 @@ mod tests {
             .collect()
     }
 
-    #[gpui::test]
-    fn test_map_head_blame_through_diff(cx: &mut TestAppContext) {
+    #[test]
+    fn test_map_head_blame_through_diff() {
         let head = "a\nb\nc\nd\n";
         let blame = [(1, 0..2), (2, 2..3), (3, 3..4)];
 
         assert_eq!(
-            map_blame(head, head, &blame, cx),
+            map_blame(head, head, &blame),
             Some(vec![(1, 0..2), (2, 2..3), (3, 3..4)])
         );
         assert_eq!(
-            map_blame(head, "a\nB\nc\nd\n", &blame, cx),
+            map_blame(head, "a\nB\nc\nd\n", &blame),
             Some(vec![(1, 0..1), (2, 2..3), (3, 3..4)])
         );
         assert_eq!(
-            map_blame(head, "a\nb\nx\ny\nc\nd\n", &blame, cx),
+            map_blame(head, "a\nb\nx\ny\nc\nd\n", &blame),
             Some(vec![(1, 0..2), (2, 4..5), (3, 5..6)])
         );
         assert_eq!(
-            map_blame(head, "a\nd\n", &blame, cx),
+            map_blame(head, "a\nd\n", &blame),
             Some(vec![(1, 0..1), (3, 1..2)])
         );
         assert_eq!(
-            map_blame(head, "A\nb\nc\nd\n", &blame, cx),
+            map_blame(head, "A\nb\nc\nd\n", &blame),
             Some(vec![(1, 1..2), (2, 2..3), (3, 3..4)])
         );
         assert_eq!(
-            map_blame(head, "x\na\nb\nc\nd\n", &blame, cx),
+            map_blame(head, "x\na\nb\nc\nd\n", &blame),
             Some(vec![(1, 1..3), (2, 3..4), (3, 4..5)])
         );
         assert_eq!(
-            map_blame(head, "a\nb\nc\nD\n", &blame, cx),
+            map_blame(head, "a\nb\nc\nD\n", &blame),
             Some(vec![(1, 0..2), (2, 2..3)])
         );
         assert_eq!(
-            map_blame(head, "a\nb\nc\n", &blame, cx),
+            map_blame(head, "a\nb\nc\n", &blame),
             Some(vec![(1, 0..2), (2, 2..3)])
         );
         assert_eq!(
-            map_blame(head, "a\nb\nc\nd\ne\n", &blame, cx),
+            map_blame(head, "a\nb\nc\nd\ne\n", &blame),
             Some(vec![(1, 0..2), (2, 2..3), (3, 3..4)])
         );
         assert_eq!(
-            map_blame(head, "a\nb\nc\nd", &blame, cx),
+            map_blame(head, "a\nb\nc\nd", &blame),
             Some(vec![(1, 0..2), (2, 2..3)])
         );
         assert_eq!(
-            map_blame("a\nb\nc\nd", head, &blame, cx),
+            map_blame("a\nb\nc\nd", head, &blame),
             Some(vec![(1, 0..2), (2, 2..3)])
         );
         assert_eq!(
-            map_blame("a\nb\nc\nd", "a\nb\nc\nd", &blame, cx),
+            map_blame("a\nb\nc\nd", "a\nb\nc\nd", &blame),
             Some(vec![(1, 0..2), (2, 2..3), (3, 3..4)])
         );
         assert_eq!(
-            map_blame("a\nb\nc\nd", "a\nb\nc\nd\ne", &blame, cx),
+            map_blame("a\nb\nc\nd", "a\nb\nc\nd\ne", &blame),
             Some(vec![(1, 0..2), (2, 2..3)])
         );
-        assert_eq!(map_blame(head, "\n", &blame, cx), Some(vec![]));
-        assert_eq!(map_blame(head, "", &blame, cx), Some(vec![]));
+        assert_eq!(map_blame(head, "\n", &blame), Some(vec![]));
+        assert_eq!(map_blame(head, "", &blame), Some(vec![]));
 
-        assert_eq!(map_blame(head, head, &[(1, 0..5)], cx), None);
-        assert_eq!(map_blame(head, head, &[(1, 0..3)], cx), None);
-        assert_eq!(map_blame(head, head, &[], cx), None);
+        assert_eq!(map_blame(head, head, &[(1, 0..5)]), None);
+        assert_eq!(map_blame(head, head, &[(1, 0..3)]), None);
+        assert_eq!(map_blame(head, head, &[]), None);
     }
 
     #[gpui::test]

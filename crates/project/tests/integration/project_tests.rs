@@ -17084,9 +17084,7 @@ async fn test_staging_non_utf8_hunk_preserves_index_encoding(cx: &mut gpui::Test
 
 #[gpui::test]
 async fn test_blame_buffer_at_head(cx: &mut gpui::TestAppContext) {
-    if rerun_without_git_global_config("test_blame_buffer_at_head") {
-        return;
-    }
+    disable_git_global_config();
     init_test(cx);
     cx.executor().allow_parking();
 
@@ -17139,20 +17137,23 @@ async fn test_blame_buffer_at_head(cx: &mut gpui::TestAppContext) {
             Some(encode(latin_second, encoding_rs::UTF_8, true)),
         ),
         Case {
-            first: encode(
-                "a\n上の行\nb\nc\nplain\n最後の行\nd\n",
-                encoding_rs::UTF_16LE,
-                true,
-            ),
-            second: encode(
-                "a\n上の行\nb\nC\nplain\n最後の行\nd\n",
-                encoding_rs::UTF_16LE,
-                true,
-            ),
-            edited_row: 4,
-            mapped_from_head: false,
-            row_commits: &[],
-            ..utf_8("utf_16le.txt", None)
+            first: encode("a\nb\nc\nd\n", encoding_rs::UTF_8, true),
+            second: encode("a\nb\nC\nd\n", encoding_rs::UTF_8, true),
+            row_commits: &[1, 0, 2, 1],
+            ..utf_8("bom_committed.py", None)
+        },
+        Case {
+            first: b"a\r\nb\r\nc\nd\r\n".to_vec(),
+            second: b"a\r\nb\r\nc\nD\r\n".to_vec(),
+            row_commits: &[1, 0, 1, 2],
+            ..utf_8("mixed_line_endings.txt", None)
+        },
+        Case {
+            first: encode("keep\nP上Q\nnext\n", encoding_rs::UTF_16LE, true),
+            second: encode("keep\nQ\nnext\n", encoding_rs::UTF_16LE, true),
+            edited_row: 2,
+            row_commits: &[1, 2],
+            ..utf_8("working_tree_encoding.txt", None)
         },
         Case {
             first: encode("keep\nP上Q\nnext\n", encoding_rs::UTF_16BE, true),
@@ -17174,7 +17175,6 @@ async fn test_blame_buffer_at_head(cx: &mut gpui::TestAppContext) {
             first: encode("a\n上の行\nb\nc\nd\n", encoding_rs::UTF_16LE, true),
             second: encode("a\n上の行\nB\nc\nd\n", encoding_rs::UTF_16LE, true),
             edited_row: 3,
-            mapped_from_head: false,
             row_commits: &[1, 1, 2, 0, 1],
             ..utf_8("utf_16le_textconv.txt", None)
         },
@@ -17189,14 +17189,12 @@ async fn test_blame_buffer_at_head(cx: &mut gpui::TestAppContext) {
                 encoding_rs::UTF_16LE,
                 false,
             ),
-            mapped_from_head: false,
             row_commits: &[1, 0, 2, 1],
             ..utf_8("utf_16le_header_textconv.txt", None)
         },
         Case {
             first: b"a\nb\nc\nd\n".to_vec(),
             second: b"a\nb\nc\nD\n".to_vec(),
-            mapped_from_head: false,
             row_commits: &[0, 0, 1, 2],
             ..utf_8("drop_first_line.txt", None)
         },
@@ -17204,7 +17202,6 @@ async fn test_blame_buffer_at_head(cx: &mut gpui::TestAppContext) {
             first: b"a\nb\nc\nd\ne\n".to_vec(),
             second: b"a\nB\nc\nd\ne\n".to_vec(),
             edited_row: 3,
-            mapped_from_head: false,
             row_commits: &[0, 2, 1, 0, 1],
             ..utf_8("first_line_last.txt", None)
         },
@@ -17240,7 +17237,7 @@ async fn test_blame_buffer_at_head(cx: &mut gpui::TestAppContext) {
     let root = TempTree::new(json!({
         "project": {
             ".gitattributes":
-                "drop_first_line.txt diff=drop_first_line\nfirst_line_last.txt diff=first_line_last\nidentity_textconv.py diff=identity\nutf_16le_textconv.txt diff=utf_16\nutf_16le_header_textconv.txt diff=utf_16_header\n"
+                "drop_first_line.txt diff=drop_first_line\nfirst_line_last.txt diff=first_line_last\nidentity_textconv.py diff=identity\nutf_16le_textconv.txt diff=utf_16\nutf_16le_header_textconv.txt diff=utf_16_header\nworking_tree_encoding.txt working-tree-encoding=UTF-16LE-BOM\n"
         }
     }));
     let work_dir = root.path().join("project");
@@ -17317,14 +17314,11 @@ async fn test_blame_buffer_at_head(cx: &mut gpui::TestAppContext) {
             case.mapped_from_head,
             "source of the blame of {file_name}"
         );
-        let blame = match head_blame {
-            Some(blame) => blame,
-            None => project
-                .update(cx, |project, cx| project.blame_buffer(&buffer, None, cx))
-                .await
-                .unwrap()
-                .unwrap(),
-        };
+        let blame = project
+            .update(cx, |project, cx| project.blame_buffer(&buffer, None, cx))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(
             blame_row_commits(&blame, &commits),
             case.row_commits,
@@ -17335,9 +17329,7 @@ async fn test_blame_buffer_at_head(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_blame_buffer_at_head_ignores_stale_diff_base(cx: &mut gpui::TestAppContext) {
-    if rerun_without_git_global_config("test_blame_buffer_at_head_ignores_stale_diff_base") {
-        return;
-    }
+    disable_git_global_config();
     init_test(cx);
     cx.executor().allow_parking();
 
@@ -17432,9 +17424,7 @@ async fn test_blame_buffer_at_head_ignores_stale_diff_base(cx: &mut gpui::TestAp
 #[cfg(not(windows))]
 #[gpui::test]
 async fn test_blame_buffer_at_head_with_newline_in_path(cx: &mut gpui::TestAppContext) {
-    if rerun_without_git_global_config("test_blame_buffer_at_head_with_newline_in_path") {
-        return;
-    }
+    disable_git_global_config();
     init_test(cx);
     cx.executor().allow_parking();
 
@@ -17484,6 +17474,169 @@ async fn test_blame_buffer_at_head_with_newline_in_path(cx: &mut gpui::TestAppCo
     assert_eq!(blame_row_commits(&blame, &commits), [1, 0, 2]);
 }
 
+#[gpui::test]
+async fn test_blame_buffer_at_head_with_filter_or_ident(cx: &mut gpui::TestAppContext) {
+    disable_git_global_config();
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    struct Case {
+        file_name: &'static str,
+        first: &'static str,
+        second: &'static str,
+        edited_row: Option<u32>,
+        mapped_from_head: bool,
+        row_commits: &'static [u8],
+    }
+
+    let plain = |file_name, mapped_from_head| Case {
+        file_name,
+        first: "a\nb\nc\n",
+        second: "a\nb\nC\n",
+        edited_row: Some(1),
+        mapped_from_head,
+        row_commits: &[1, 0, 2],
+    };
+    let ident = |edited_row, row_commits| Case {
+        file_name: "ident.txt",
+        first: "$Id$\nkeep\nlast\n",
+        second: "$Id$\nkeep\nlast\n",
+        edited_row,
+        mapped_from_head: false,
+        row_commits,
+    };
+    let rot13 = |file_name| Case {
+        file_name,
+        first: "nycun\nbyq\n123\n",
+        second: "nycun\nalpha\n123\n",
+        edited_row: Some(1),
+        mapped_from_head: false,
+        row_commits: &[1, 0, 1],
+    };
+    let cases = [
+        rot13("rot13.txt"),
+        rot13("driver_named_unset.txt"),
+        rot13("driver_named_unspecified.txt"),
+        ident(None, &[1, 1, 1]),
+        ident(Some(1), &[1, 0, 1]),
+        plain("missing_driver.txt", false),
+        plain("disabled.txt", false),
+        plain("reset.txt", true),
+        plain("unspecified.txt", true),
+    ];
+
+    let root = TempTree::new(json!({
+        "project": {
+            ".gitattributes":
+                "rot13.txt filter=rot13\ndriver_named_unset.txt filter=unset\ndriver_named_unspecified.txt filter=unspecified\nident.txt ident\nmissing_driver.txt filter=missing\ndisabled.* filter=rot13 ident\ndisabled.txt -filter -ident\nreset.* filter=rot13 ident\nreset.txt !filter !ident\n"
+        }
+    }));
+    let work_dir = root.path().join("project");
+    git_init(&work_dir);
+    let rot13_command = "tr A-Za-z N-ZA-Mn-za-m";
+    for driver in ["rot13", "unset", "unspecified"] {
+        git_config(&format!("filter.{driver}.clean"), rot13_command, &work_dir);
+        git_config(&format!("filter.{driver}.smudge"), rot13_command, &work_dir);
+    }
+    git_add(".gitattributes", &work_dir);
+    let mut commits = Vec::new();
+    for is_first in [true, false] {
+        for case in &cases {
+            let contents = if is_first { case.first } else { case.second };
+            std::fs::write(work_dir.join(case.file_name), contents).unwrap();
+            git_add(case.file_name, &work_dir);
+        }
+        git_commit("commit", &work_dir);
+        commits.push(git_rev_parse("HEAD", &work_dir));
+    }
+    for case in &cases {
+        if work_dir.join(case.file_name).exists() {
+            std::fs::remove_file(work_dir.join(case.file_name)).unwrap();
+        }
+    }
+    git_output(&["checkout", "--", "."], &work_dir);
+    assert_eq!(git_output(&["status", "--porcelain"], &work_dir), "");
+    assert_eq!(
+        std::fs::read_to_string(work_dir.join("rot13.txt")).unwrap(),
+        "nycun\nalpha\n123\n"
+    );
+    assert_eq!(
+        git_output(&["cat-file", "blob", "HEAD:rot13.txt"], &work_dir),
+        "alpha\nnycun\n123\n"
+    );
+    assert!(
+        std::fs::read_to_string(work_dir.join("ident.txt"))
+            .unwrap()
+            .starts_with("$Id: ")
+    );
+
+    let project = Project::test(RealFs::new(None, cx.executor()), [root.path()], cx).await;
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.executor().run_until_parked();
+
+    for case in cases {
+        let file_name = case.file_name;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(work_dir.join(file_name), cx)
+            })
+            .await
+            .unwrap();
+        if let Some(row) = case.edited_row {
+            buffer.update(cx, |buffer, cx| {
+                let edited_line = Point::new(row, 0)..Point::new(row, buffer.line_len(row));
+                buffer.edit([(edited_line, "changed")], None, cx);
+            });
+        }
+
+        let git_store = project.read_with(cx, |project, _| project.git_store().clone());
+        let head_blame = git_store
+            .update(cx, |git_store, cx| {
+                git_store.blame_buffer_at_head(&buffer, cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            head_blame.is_some(),
+            case.mapped_from_head,
+            "source of the blame of {file_name}"
+        );
+        let blame = project
+            .update(cx, |project, cx| project.blame_buffer(&buffer, None, cx))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            blame_row_commits(&blame, &commits),
+            case.row_commits,
+            "blame of {file_name} edited at {:?}",
+            case.edited_row
+        );
+    }
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(work_dir.join("rot13.txt"), cx)
+        })
+        .await
+        .unwrap();
+    let blame = project.update(cx, |project, cx| {
+        let blame = project.blame_buffer(&buffer, None, cx);
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(Point::zero()..Point::zero(), "later\n")], None, cx);
+        });
+        blame
+    });
+    assert_eq!(
+        blame_row_commits(&blame.await.unwrap().unwrap(), &commits),
+        [1, 2, 1]
+    );
+}
+
 fn blame_row_commits(blame: &git::blame::Blame, commits: &[String]) -> Vec<u8> {
     let mut row_commits = Vec::new();
     for entry in &blame.entries {
@@ -17497,28 +17650,11 @@ fn blame_row_commits(blame: &git::blame::Blame, commits: &[String]) -> Vec<u8> {
     row_commits
 }
 
-#[allow(clippy::disallowed_methods)]
-#[track_caller]
-fn rerun_without_git_global_config(test_name: &str) -> bool {
-    let variables = ["GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"];
-    if variables
-        .iter()
-        .all(|variable| env::var_os(variable).is_some_and(|value| value.is_empty()))
-    {
-        return false;
+fn disable_git_global_config() {
+    unsafe {
+        env::set_var("GIT_CONFIG_GLOBAL", "");
+        env::set_var("GIT_CONFIG_SYSTEM", "");
     }
-    let output = Command::new(env::current_exe().expect("Failed to find the test binary"))
-        .args([test_name, "--exact", "--nocapture", "--test-threads=1"])
-        .envs(variables.map(|variable| (variable, "")))
-        .output()
-        .expect("Failed to rerun the test");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        output.status.success() && stdout.contains("1 passed"),
-        "{test_name} failed without global git config: {stdout}{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    true
 }
 
 #[gpui::test(iterations = 25)]
@@ -22206,6 +22342,21 @@ fn git_checkout(name: &str, work_dir: &Path) {
         "git checkout failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[allow(clippy::disallowed_methods)]
+#[track_caller]
+fn git_output(args: &[&str], work_dir: &Path) -> String {
+    let output = git_cmd(work_dir)
+        .args(args)
+        .output()
+        .expect("Failed to run git");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
 }
 
 #[allow(clippy::disallowed_methods)]

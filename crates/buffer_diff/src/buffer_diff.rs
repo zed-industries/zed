@@ -1239,15 +1239,7 @@ fn compute_hunks(
             return tree;
         }
 
-        let input = InternedInput::new(lines(diff_base.as_ref()), lines(buffer_text.as_str()));
-        let mut diff = Diff::compute(Algorithm::Histogram, &input);
-        // Canonicalize the placement of ambiguous hunks (git's slider/indent
-        // heuristic). Without this, diffs of the same buffer against different
-        // base texts (e.g. HEAD vs index) can anchor the same logical change at
-        // different rows, and code that correlates hunks across those diffs
-        // misbehaves: hunks render as staged when they aren't, and staging or
-        // unstaging them corrupts the index.
-        diff.postprocess_lines(&input);
+        let diff = diff_lines(diff_base.as_ref(), buffer_text.as_str());
         let mut sink = HunkSink::new(&diff_base, &diff_base_rope, buffer, diff_options.as_ref());
         for hunk in diff.hunks() {
             sink.process_change(hunk.before, hunk.after);
@@ -1270,6 +1262,28 @@ fn compute_hunks(
 
     tree
 }
+
+fn diff_lines(base_text: &str, buffer_text: &str) -> Diff {
+    let input = InternedInput::new(lines(base_text), lines(buffer_text));
+    let mut diff = Diff::compute(Algorithm::Histogram, &input);
+    // Canonicalize the placement of ambiguous hunks (git's slider/indent
+    // heuristic). Without this, diffs of the same buffer against different
+    // base texts (e.g. HEAD vs index) can anchor the same logical change at
+    // different rows, and code that correlates hunks across those diffs
+    // misbehaves: hunks render as staged when they aren't, and staging or
+    // unstaging them corrupts the index.
+    diff.postprocess_lines(&input);
+    diff
+}
+
+/// Returns the changed rows of `base_text` and `buffer_text`, with the same hunks as a [`BufferDiff`].
+pub fn changed_row_ranges(base_text: &str, buffer_text: &str) -> Vec<(Range<u32>, Range<u32>)> {
+    diff_lines(base_text, buffer_text)
+        .hunks()
+        .map(|hunk| (hunk.before, hunk.after))
+        .collect()
+}
+
 struct HunkSink<'a> {
     diff_base_rope: &'a Rope,
     buffer: &'a text::BufferSnapshot,
