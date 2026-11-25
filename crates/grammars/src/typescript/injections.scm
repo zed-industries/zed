@@ -229,3 +229,42 @@
   ])
   (#match? @_ecma_comment "^\\/\\*\\s*wgsl\\s*\\*\\/")
   (#set! injection.language "WGSL/WESL"))
+
+; ArkType definitions (https://arktype.io): the arguments of type(...),
+; scope(...) and the other entrypoints and chained methods, and regex(...)'s
+; pattern. The language comes from the ArkType extension.
+((call_expression
+  function: (identifier) @_name
+  .
+  arguments: (arguments) @injection.content)
+  (#match? @_name "^([A-Za-z0-9_$]*[$])?(type|generic|scope|define|match|fn|module|[aA]rk[a-zA-Z]*)$")
+  (#set! injection.language "arktype")
+  (#set! injection.include-children))
+
+; $.type(...), ark.scope(...), and chained methods: T.or(...), T.merge(...)
+((call_expression
+  function: (member_expression
+    property: (property_identifier) @_name)
+  .
+  arguments: (arguments) @injection.content)
+  (#match? @_name "^(([A-Za-z0-9_$]*[$])?(type|generic|scope|define|match|fn|module|[aA]rk[a-zA-Z]*)|and|or|case|in|extends|ifExtends|intersect|merge|exclude|extract|overlaps|subsumes|to|satisfies)$")
+  (#set! injection.language "arktype")
+  (#set! injection.include-children))
+
+; regex(...): its first argument, when a string, is the pattern
+((call_expression
+  function: [
+    (identifier) @_name
+    (member_expression
+      property: (property_identifier) @_name)
+  ]
+  .
+  arguments: (arguments
+    .
+    [
+      (string)
+      (template_string)
+    ] @injection.content))
+  (#eq? @_name "regex")
+  (#set! injection.language "arktype")
+  (#set! injection.include-children))
