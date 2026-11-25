@@ -742,6 +742,8 @@ pub struct CitationSource {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CitationMetadata {
+    /// Omitted by the API when empty.
+    #[serde(default)]
     pub citation_sources: Vec<CitationSource>,
 }
 
@@ -1133,6 +1135,27 @@ mod tests {
             LanguageModelCompletionError::DeserializeResponse { provider, .. }
                 if provider == GOOGLE_PROVIDER_NAME
         ));
+    }
+
+    #[test]
+    fn citation_metadata_without_sources_deserializes() {
+        let response: GenerateContentResponse = serde_json::from_value(json!({
+            "candidates": [{
+                "content": {"role": "model", "parts": [{"text": "Done"}]},
+                "finishReason": "STOP",
+                "citationMetadata": {}
+            }]
+        }))
+        .unwrap();
+        let candidate = &response.candidates.unwrap()[0];
+        assert!(
+            candidate
+                .citation_metadata
+                .as_ref()
+                .unwrap()
+                .citation_sources
+                .is_empty()
+        );
     }
 
     fn completion_error(read_error: Option<ErrorKind>) -> LanguageModelCompletionError {
