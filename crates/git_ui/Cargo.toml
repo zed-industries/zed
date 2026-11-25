@@ -11,6 +11,7 @@ workspace = true
 [lib]
 name = "git_ui"
 path = "src/git_ui.rs"
+doctest = false
 
 [features]
 test-support = ["multi_buffer/test-support", "remote_connection/test-support"]
@@ -38,12 +39,12 @@ gpui.workspace = true
 itertools.workspace = true
 language.workspace = true
 language_model.workspace = true
+language_model_selector.workspace = true
 log.workspace = true
 markdown.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
 notifications.workspace = true
-panel.workspace = true
 picker.workspace = true
 project.workspace = true
 prompt_store.workspace = true
@@ -67,15 +68,14 @@ time_format.workspace = true
 tracing.workspace = true
 ui.workspace = true
 ui_input.workspace = true
+unicode-width.workspace = true
+url.workspace = true
 util.workspace = true
 watch.workspace = true
 workspace.workspace = true
 git_ui_core.workspace = true
 zed_actions.workspace = true
 ztracing.workspace = true
-
-[target.'cfg(windows)'.dependencies]
-windows.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true
@@ -85,6 +85,8 @@ fs = { workspace = true, features = ["test-support"] }
 git = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
+language = { workspace = true, features = ["test-support"] }
+language_model = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 rand.workspace = true
@@ -92,9 +94,10 @@ remote_connection = { workspace = true, features = ["test-support"] }
 search.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 task.workspace = true
+tree-sitter-md.workspace = true
 unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
 
-[package.metadata.cargo-machete]
-ignored = ["remote_connection", "tracing"]
+[package.metadata.cargo-shear]
+ignored = ["component", "remote_connection", "tracing"]

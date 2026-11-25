@@ -449,23 +449,24 @@ impl MarksState {
         buffer: &Entity<Buffer>,
         cx: &mut Context<Self>,
     ) {
-        let new_points: HashMap<String, Vec<Point>> =
-            if let Some(anchors) = self.buffer_marks.get(&buffer.read(cx).remote_id()) {
-                anchors
-                    .iter()
-                    .map(|(name, anchors)| {
-                        (
-                            name.clone(),
-                            buffer
-                                .read(cx)
-                                .summaries_for_anchors::<Point, _>(anchors.iter().copied())
-                                .collect(),
-                        )
-                    })
-                    .collect()
-            } else {
-                HashMap::default()
-            };
+        let new_points: HashMap<String, Vec<Point>> = if let Some(anchors) =
+            self.buffer_marks.get(&buffer.read(cx).remote_id())
+        {
+            anchors
+                .iter()
+                .map(|(name, anchors)| {
+                    let snapshot = buffer.read(cx);
+                    (
+                        name.clone(),
+                        snapshot
+                            .summaries_for_anchors_unordered::<Point, _>(anchors.iter().copied())
+                            .collect(),
+                    )
+                })
+                .collect()
+        } else {
+            HashMap::default()
+        };
         let old_points = self.serialized_marks.get(&path);
         if old_points == Some(&new_points) {
             return;
@@ -580,7 +581,7 @@ impl MarksState {
                 let buffer_id = buffer.read(cx).remote_id();
                 if let Some(old_path) = this
                     .watched_buffers
-                    .get(&buffer_id.clone())
+                    .get(&buffer_id)
                     .map(|(path, _, _)| path.clone())
                     && let Some(new_path) = this.path_for_buffer(&buffer, cx)
                 {
@@ -698,7 +699,7 @@ impl MarksState {
         multi_buffer: &Entity<MultiBuffer>,
         cx: &mut Context<Self>,
     ) {
-        let path = if let Some(target) = self.global_marks.get(&mark_name.clone()) {
+        let path = if let Some(target) = self.global_marks.get(&mark_name) {
             let name = mark_name.clone();
             if let Some(workspace_id) = self.workspace_id(cx) {
                 let db = VimDb::global(cx);
@@ -708,14 +709,14 @@ impl MarksState {
                 .detach_and_log_err(cx);
             }
             self.buffer_marks.iter_mut().for_each(|(_, m)| {
-                m.remove(&mark_name.clone());
+                m.remove(&mark_name);
             });
 
             match target {
                 MarkLocation::Buffer(entity_id) => {
                     self.multibuffer_marks
                         .get_mut(entity_id)
-                        .map(|m| m.remove(&mark_name.clone()));
+                        .map(|m| m.remove(&mark_name));
                     return;
                 }
                 MarkLocation::Path(path) => path.clone(),
@@ -723,13 +724,13 @@ impl MarksState {
         } else {
             self.multibuffer_marks
                 .get_mut(&multi_buffer.entity_id())
-                .map(|m| m.remove(&mark_name.clone()));
+                .map(|m| m.remove(&mark_name));
 
             if let Some(singleton) = multi_buffer.read(cx).as_singleton() {
                 let buffer_id = singleton.read(cx).remote_id();
                 self.buffer_marks
                     .get_mut(&buffer_id)
-                    .map(|m| m.remove(&mark_name.clone()));
+                    .map(|m| m.remove(&mark_name));
                 let Some(path) = self.path_for_buffer(&singleton, cx) else {
                     return;
                 };
@@ -741,7 +742,7 @@ impl MarksState {
         self.global_marks.remove(&mark_name);
         self.serialized_marks
             .get_mut(&path)
-            .map(|m| m.remove(&mark_name.clone()));
+            .map(|m| m.remove(&mark_name));
         if let Some(workspace_id) = self.workspace_id(cx) {
             let db = VimDb::global(cx);
             cx.background_spawn(async move { db.delete_mark(workspace_id, path, mark_name).await })
@@ -1402,7 +1403,7 @@ impl RegistersView {
                 if let Some(register) = globals.read_register(Some(name), None, cx) {
                     matches.push(RegisterMatch {
                         name,
-                        contents: register.text.clone(),
+                        contents: register.text,
                     })
                 }
             }
@@ -1512,7 +1513,7 @@ impl PickerDelegate for MarksViewDelegate {
         };
         cx.spawn(async move |picker, cx| {
             let mut matches = Vec::new();
-            let _ = workspace.update(cx, |workspace, cx| {
+            workspace.update(cx, |workspace, cx| {
                 let entity_id = cx.entity_id();
                 let Some(editor) = workspace
                     .active_item(cx)

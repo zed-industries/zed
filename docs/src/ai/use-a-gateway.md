@@ -7,12 +7,12 @@ description: Configure OpenRouter, Vercel AI Gateway, Amazon Bedrock, and other 
 
 Use a gateway when you route model requests through a platform such as OpenRouter, Vercel AI Gateway, Amazon Bedrock, or another OpenAI-compatible service.
 
-| Gateway                   | Zed AI features | External Agents | Terminal Threads | Notes                                        |
-| ------------------------- | --------------- | --------------- | ---------------- | -------------------------------------------- |
-| OpenRouter                | Yes             | Separate config | Separate config  | Uses OpenRouter API access                   |
-| Vercel AI Gateway         | Yes             | Separate config | Separate config  | Uses Vercel AI Gateway API access            |
-| Amazon Bedrock            | Yes             | Separate config | Separate config  | Uses AWS credentials or Bedrock bearer token |
-| OpenAI-compatible gateway | Yes             | Separate config | Separate config  | Configure base URL, model, and key           |
+| Gateway                   | Zed AI features | [External Agents](./external-agents.md) | Terminal Threads | Notes                                        |
+| ------------------------- | --------------- | --------------------------------------- | ---------------- | -------------------------------------------- |
+| OpenRouter                | Yes             | Separate config                         | Separate config  | Uses OpenRouter API access                   |
+| Vercel AI Gateway         | Yes             | Separate config                         | Separate config  | Uses Vercel AI Gateway API access            |
+| Amazon Bedrock            | Yes             | Separate config                         | Separate config  | Uses AWS credentials or Bedrock bearer token |
+| OpenAI-compatible gateway | Yes             | Separate config                         | Separate config  | Configure base URL, model, and key           |
 
 ## OpenRouter {#openrouter}
 
@@ -123,7 +123,7 @@ You can set a custom endpoint for Vercel AI Gateway in settings:
 
 ## Amazon Bedrock {#amazon-bedrock}
 
-Use Amazon Bedrock when you want model access through AWS.
+Use Amazon Bedrock when you want model access through AWS. Zed lists the models that have an [inference profile](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles.html) in your Region.
 
 Bedrock supports models that support streaming tool use. See [Amazon Bedrock's Tool Use documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-supported-models-features.html).
 
@@ -131,15 +131,17 @@ Your AWS credentials need these permissions:
 
 - `bedrock:InvokeModelWithResponseStream`
 - `bedrock:InvokeModel`
+- `bedrock:ListInferenceProfiles`
+- `bedrock:ListFoundationModels`
+
+Without the two `List` permissions, Zed offers the models that [models.dev](https://models.dev) lists for your Region.
 
 Bedrock supports Zed-prefixed AWS environment variables so Zed does not override or consume your normal AWS credentials:
 
 - `ZED_ACCESS_KEY_ID`
 - `ZED_SECRET_ACCESS_KEY`
 - `ZED_SESSION_TOKEN`
-- `ZED_AWS_PROFILE`
 - `ZED_AWS_REGION`
-- `ZED_AWS_ENDPOINT`
 - `ZED_BEDROCK_BEARER_TOKEN`
 
 ### Bedrock Authentication {#bedrock-authentication}
@@ -160,7 +162,7 @@ For a named profile, configure Bedrock in settings:
 }
 ```
 
-For static credentials, open Agent Settings with {#action agent::OpenSettings}, go to the Amazon Bedrock section, and enter the access key ID, secret access key, and region.
+For static credentials, open [Agent Settings](./agent-settings.md) with {#action agent::OpenSettings}, go to the Amazon Bedrock section, and enter the access key ID, secret access key, and region.
 
 For a Bedrock API key, choose API key authentication:
 
@@ -213,9 +215,90 @@ Some AWS environments require a guardrail on every Bedrock API call. Add `guardr
 }
 ```
 
+### Custom Bedrock Models {#bedrock-custom-models}
+
+Add models that Zed does not list with `available_models`. Use the Bedrock model ID as `name`, including a region prefix when you want a specific inference profile:
+
+```json [settings]
+{
+  "language_models": {
+    "bedrock": {
+      "available_models": [
+        {
+          "name": "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/abcdef123456",
+          "display_name": "Grok 4.3 (ARN)",
+          "max_tokens": 500000,
+          "max_output_tokens": 131072,
+          "supports_tools": true,
+          "supports_images": true,
+          "thinking": true
+        },
+        {
+          "name": "us.moonshotai.kimi-k3",
+          "display_name": "Kimi K3",
+          "max_tokens": 1000000,
+          "max_output_tokens": 64000,
+          "supports_tools": true,
+          "supports_images": true,
+          "thinking": {
+            "adaptive": true,
+            "has_xhigh": true,
+            "budget_tokens": 5000
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+`name` is sent to Bedrock as the model ID. Use the full ID, including a geo prefix or ARN when the model requires one (for example `us.anthropic.claude-sonnet-4-7` or `us.xai.grok-4.6`). Set `supports_tools` and `supports_images` for models that support those features. Set `thinking` to `true` to enable thinking, or to an object with `"adaptive": true`, optional `"has_xhigh": true`, and optional `budget_tokens`. Leave `default_temperature` unset for models that reject the temperature field, such as xAI and MoonshotAI models.
+
+### Bedrock Custom Endpoints {#bedrock-custom-endpoints}
+
+To send Bedrock Converse requests to a proxy or gateway instead of AWS, set `endpoint_url`:
+
+```json [settings]
+{
+  "language_models": {
+    "bedrock": {
+      "endpoint_url": "https://gateway.example.com/bedrock",
+      "region": "us-east-1",
+      "authentication_method": "api_key"
+    }
+  }
+}
+```
+
+[Mantle models](#bedrock-mantle-models) are called through a different service with a different request shape, so they ignore `endpoint_url` and go to AWS.
+
+If your gateway serves one of those models over the Converse API, add it as a [custom Bedrock model](#bedrock-custom-models) so Zed calls it through `endpoint_url`. Use the model ID your gateway expects as `name`:
+
+```json [settings]
+{
+  "language_models": {
+    "bedrock": {
+      "endpoint_url": "https://gateway.example.com/bedrock",
+      "available_models": [
+        {
+          "name": "us.openai.gpt-5.6-luna",
+          "display_name": "GPT-5.6 Luna (Gateway)",
+          "max_tokens": 1000000,
+          "max_output_tokens": 128000,
+          "supports_tools": true,
+          "supports_images": true
+        }
+      ]
+    }
+  }
+}
+```
+
+Don't use an ID that a model in `mantle_available_models` already uses as `name`. A Mantle model with the same ID replaces the custom model, so requests go to AWS instead of your gateway.
+
 ### Bedrock Mantle Models {#bedrock-mantle-models}
 
-Some models, such as the GPT-5.6 family (Sol, Terra, and Luna), GPT-5.5, GPT-5.4, and Grok 4.3, aren't available through Bedrock's Converse API and are only reachable through `bedrock-mantle`, AWS's OpenAI-compatible inference endpoint. Zed routes these models through `bedrock-mantle` automatically; they appear alongside the rest of the Bedrock models in the model picker once you're authenticated, with no extra configuration required.
+`bedrock-mantle` is AWS's OpenAI-compatible inference endpoint. Zed has no built-in Mantle models.
 
 Mantle models require IAM permissions for the `bedrock-mantle` endpoint (for example via the `AmazonBedrockMantleInferenceAccess` managed policy) in addition to whatever permissions your existing Bedrock credentials already have, and `bedrock-mantle` is only available in [some AWS Regions](https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-mantle.html#regions). Zed surfaces an error naming the current Region and the supported ones if you try to use a Mantle model outside of them.
 

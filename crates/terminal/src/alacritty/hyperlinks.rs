@@ -49,18 +49,19 @@ impl From<(String, bool, Match)> for HyperlinkMatch {
 
 impl Default for RegexSearches {
     fn default() -> Self {
-        Self::new(Vec::<String>::new(), 0)
+        Self::new(Vec::<String>::new(), Duration::ZERO)
     }
 }
+
 impl RegexSearches {
     pub(crate) fn new(
         path_hyperlink_regexes: impl IntoIterator<Item: AsRef<str>>,
-        path_hyperlink_timeout_ms: u64,
+        path_hyperlink_timeout: Duration,
     ) -> Self {
         Self {
             url_regex: RegexSearch::new(URL_REGEX).ok(),
             path_hyperlink_regexes: Self::path_hyperlink_regexes(path_hyperlink_regexes),
-            path_hyperlink_timeout: Duration::from_millis(path_hyperlink_timeout_ms),
+            path_hyperlink_timeout,
         }
     }
 
@@ -193,9 +194,7 @@ fn normalize_hyperlink_match(
                 }
             }
             // Fallback: strip file:// prefix if URL parsing fails
-            let path = maybe_url_or_path
-                .strip_prefix("file://")
-                .unwrap_or(&maybe_url_or_path);
+            let path = maybe_url_or_path.trim_prefix("file://");
             HyperlinkMatch {
                 text: path.to_string(),
                 is_url: false,
@@ -505,6 +504,36 @@ mod tests {
             .map(|m| m.as_str())
             .collect();
         assert_eq!(results, expected);
+    }
+
+    #[test]
+    fn test_default_path_hyperlink_regexes() -> anyhow::Result<()> {
+        let content = settings::parse_json_with_comments(&settings::default_settings())?;
+        let settings = TerminalSettings::from_settings(&content);
+        let searches = RegexSearches::new(
+            &settings.path_hyperlink_regexes,
+            Duration::from_millis(settings.path_hyperlink_timeout_ms),
+        );
+        let examples = [
+            (r#"File "src/main.py", line 42"#, "src/main.py", Some("42")),
+            ("src/main.rs:42", "src/main.rs:42", None),
+        ];
+        assert_eq!(searches.path_hyperlink_regexes.len(), examples.len());
+        assert_eq!(
+            searches.path_hyperlink_regexes.len(),
+            settings.path_hyperlink_regexes.len()
+        );
+        for (regex, (input, path, line)) in searches.path_hyperlink_regexes.iter().zip(examples) {
+            let captures = regex
+                .captures(input)
+                .ok_or_else(|| anyhow::anyhow!("Default regex does not match {input}"))?;
+            assert_eq!(
+                captures.name("path").map(|capture| capture.as_str()),
+                Some(path)
+            );
+            assert_eq!(captures.name("line").map(|capture| capture.as_str()), line);
+        }
+        Ok(())
     }
 
     #[test]
@@ -1322,7 +1351,7 @@ mod tests {
                 term: &Term<VoidListener>,
                 point: AlacPoint,
             ) -> Option<HyperlinkMatch> {
-                const PATH_HYPERLINK_TIMEOUT_MS: u64 = 1000;
+                const PATH_HYPERLINK_TIMEOUT: Duration = Duration::from_millis(1000);
 
                 thread_local! {
                     static TEST_REGEX_SEARCHES: RefCell<RegexSearches> =
@@ -1335,7 +1364,7 @@ mod tests {
 
                             RegexSearches::new(
                                 &default_terminal_settings.path_hyperlink_regexes,
-                                PATH_HYPERLINK_TIMEOUT_MS
+                                PATH_HYPERLINK_TIMEOUT
                             )
                         });
                 }
@@ -1585,7 +1614,7 @@ mod tests {
         fn process_input(term: &mut Term<VoidListener>, c: char) {
             match c {
                 '\t' => term.put_tab(1),
-                c @ _ => term.input(c),
+                c => term.input(c),
             }
         }
 
@@ -1772,7 +1801,7 @@ mod tests {
             let format_path_with_position_and_match =
                 |path_with_position: &PathWithPosition, hyperlink_match: &Match| {
                     let mut result =
-                        format!("Path = «{}»", &path_with_position.path.to_string_lossy());
+                        format!("Path = «{}»", path_with_position.path.to_string_lossy());
                     if let Some(row) = path_with_position.row {
                         result += &format!(", line = {row}");
                         if let Some(column) = path_with_position.column {
@@ -1895,7 +1924,7 @@ mod tests {
 
                 match cell.c {
                     '\t' => result.push(' '),
-                    c @ _ => result.push(c),
+                    c => result.push(c),
                 }
             }
 
@@ -1917,7 +1946,7 @@ mod tests {
             r#"[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2} (?<link>(?<path>.+))"#;
         const MULTIPLE_SAME_LINE_REGEX: &str =
             r#"(?<link>(?<path>🦀 multiple_same_line 🦀) 🚣(?<line>[0-9]+) 🏛(?<column>[0-9]+)):"#;
-        const PATH_HYPERLINK_TIMEOUT_MS: u64 = 1000;
+        const PATH_HYPERLINK_TIMEOUT: Duration = Duration::from_millis(1000);
 
         thread_local! {
             static TEST_REGEX_SEARCHES: RefCell<RegexSearches> =
@@ -1936,7 +1965,7 @@ mod tests {
                         .chain(default_terminal_settings.path_hyperlink_regexes
                             .iter()
                             .map(AsRef::as_ref)),
-                    PATH_HYPERLINK_TIMEOUT_MS)
+                    PATH_HYPERLINK_TIMEOUT)
                 });
         }
 

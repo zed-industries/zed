@@ -1,5 +1,5 @@
 use acp_thread::{AgentConnection, StubAgentConnection};
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::v2::schema as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
@@ -33,15 +33,6 @@ pub fn set_stub_agent_connection(connection: StubAgentConnection) -> StubAgentCo
     connection
 }
 
-/// Returns the shared `StubAgentConnection` used by `Agent::Stub`,
-/// creating a default one if none was registered.
-pub fn stub_agent_connection() -> StubAgentConnection {
-    STUB_AGENT_CONNECTION.with(|cell| {
-        let mut borrow = cell.borrow_mut();
-        borrow.get_or_insert_with(StubAgentConnection::new).clone()
-    })
-}
-
 pub struct StubAgentServer<C> {
     connection: C,
     agent_id: AgentId,
@@ -67,9 +58,12 @@ where
 impl StubAgentServer<StubAgentConnection> {
     pub fn default_response() -> Self {
         let conn = StubAgentConnection::new();
-        conn.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-            acp::ContentChunk::new("Default response".into()),
-        )]);
+        conn.set_next_prompt_action(|thread, cx| {
+            thread.upsert_assistant_message(
+                acp::AgentMessage::new("default-response").content(vec!["Default response".into()]),
+                cx,
+            )
+        });
         Self::new(conn)
     }
 }

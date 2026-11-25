@@ -368,7 +368,6 @@ mod tests {
         fn meta(&self) -> ToolchainMetadata {
             ToolchainMetadata {
                 term: SharedString::new_static("Python"),
-                new_toolchain_placeholder: SharedString::default(),
                 manifest_name: ManifestName::from(SharedString::new_static("pyproject.toml")),
             }
         }
@@ -399,7 +398,7 @@ mod tests {
                 LanguageConfig {
                     name: "Python".into(),
                     matcher: (LanguageMatcher {
-                        path_suffixes: vec!["py".to_string()],
+                        path_suffixes: vec!["py".into()],
                         ..Default::default()
                     })
                     .into(),

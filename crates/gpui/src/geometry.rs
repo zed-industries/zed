@@ -5,6 +5,7 @@
 use anyhow::{Context as _, anyhow};
 use core::fmt::Debug;
 use derive_more::{Add, AddAssign, Div, DivAssign, Mul, Neg, Sub, SubAssign};
+use gpui_util::canonical_float_bits;
 use refineable::Refineable;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -48,7 +49,7 @@ pub trait Along {
     fn along(&self, axis: Axis) -> Self::Unit;
 
     /// Applies the given function to the unit along the given axis and returns a new value.
-    fn apply_along(&self, axis: Axis, f: impl FnOnce(Self::Unit) -> Self::Unit) -> Self;
+    fn apply_along(&self, axis: Axis, f: impl Fn(Self::Unit) -> Self::Unit) -> Self;
 }
 
 /// Describes a location in a 2D cartesian space.
@@ -169,7 +170,7 @@ impl<T: Clone + Debug + Default + PartialEq> Along for Point<T> {
         }
     }
 
-    fn apply_along(&self, axis: Axis, f: impl FnOnce(T) -> T) -> Point<T> {
+    fn apply_along(&self, axis: Axis, f: impl Fn(T) -> T) -> Point<T> {
         match axis {
             Axis::Horizontal => Point {
                 x: f(self.x.clone()),
@@ -516,7 +517,7 @@ where
     }
 
     /// Returns the value of this size along the given axis.
-    fn apply_along(&self, axis: Axis, f: impl FnOnce(T) -> T) -> Self {
+    fn apply_along(&self, axis: Axis, f: impl Fn(T) -> T) -> Self {
         match axis {
             Axis::Horizontal => Size {
                 width: f(self.width.clone()),
@@ -743,7 +744,10 @@ impl Bounds<Pixels> {
             .or_else(|| cx.primary_display());
 
         display
-            .map(|display| Bounds::centered_at(display.bounds().center(), size))
+            .map(|display| {
+                let visible_bounds = display.visible_bounds();
+                Bounds::centered_at(visible_bounds.center(), size.min(&visible_bounds.size))
+            })
             .unwrap_or_else(|| Bounds {
                 origin: point(px(0.), px(0.)),
                 size,
@@ -1183,6 +1187,37 @@ impl<T: PartialOrd + Add<T, Output = T> + Sub<Output = T> + Clone + Debug + Defa
         let top_left = self.origin.min(&other.origin);
         let bottom_right = self.bottom_right().max(&other.bottom_right());
         Bounds::from_corners(top_left, bottom_right)
+    }
+
+    /// Computes the smallest `Bounds` that covers the area of both `Bounds`.
+    ///
+    /// Unlike [`Bounds::union`], an empty `Bounds` covers nothing, so joining with it returns
+    /// the other `Bounds` unchanged.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use gpui::{Bounds, Point, Size};
+    /// let bounds = Bounds {
+    ///     origin: Point { x: 5, y: 5 },
+    ///     size: Size { width: 10, height: 10 },
+    /// };
+    /// let empty = Bounds {
+    ///     origin: Point { x: 0, y: 0 },
+    ///     size: Size { width: 0, height: 10 },
+    /// };
+    ///
+    /// assert_eq!(bounds.join(&empty), bounds);
+    /// assert_eq!(empty.join(&bounds), bounds);
+    /// ```
+    pub fn join(&self, other: &Self) -> Self {
+        if self.is_empty() {
+            other.clone()
+        } else if other.is_empty() {
+            self.clone()
+        } else {
+            self.union(other)
+        }
     }
 }
 
@@ -1758,6 +1793,22 @@ pub struct Edges<T: Clone + Debug + Default + PartialEq> {
     pub left: T,
 }
 
+impl<T> Add for Edges<T>
+where
+    T: Add<Output = T> + Clone + Debug + Default + PartialEq,
+{
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self {
+            top: self.top + rhs.top,
+            right: self.right + rhs.right,
+            bottom: self.bottom + rhs.bottom,
+            left: self.left + rhs.left,
+        }
+    }
+}
+
 impl<T> Mul for Edges<T>
 where
     T: Mul<Output = T> + Clone + Debug + Default + PartialEq,
@@ -1766,9 +1817,9 @@ where
 
     fn mul(self, rhs: Self) -> Self::Output {
         Self {
-            top: self.top.clone() * rhs.top,
-            right: self.right.clone() * rhs.right,
-            bottom: self.bottom.clone() * rhs.bottom,
+            top: self.top * rhs.top,
+            right: self.right * rhs.right,
+            bottom: self.bottom * rhs.bottom,
             left: self.left * rhs.left,
         }
     }
@@ -2142,6 +2193,37 @@ impl Edges<Pixels> {
     }
 }
 
+impl<T> Along for Edges<T>
+where
+    T: Clone + Debug + Default + PartialEq + Add<Output = T>,
+{
+    type Unit = T;
+
+    fn along(&self, axis: Axis) -> Self::Unit {
+        match axis {
+            Axis::Horizontal => self.left.clone() + self.right.clone(),
+            Axis::Vertical => self.top.clone() + self.bottom.clone(),
+        }
+    }
+
+    fn apply_along(&self, axis: Axis, f: impl Fn(Self::Unit) -> Self::Unit) -> Self {
+        match axis {
+            Axis::Horizontal => Edges {
+                top: self.top.clone(),
+                bottom: self.bottom.clone(),
+                right: f(self.right.clone()),
+                left: f(self.left.clone()),
+            },
+            Axis::Vertical => Edges {
+                top: f(self.top.clone()),
+                bottom: f(self.bottom.clone()),
+                right: self.right.clone(),
+                left: self.left.clone(),
+            },
+        }
+    }
+}
+
 impl From<f32> for Edges<Pixels> {
     fn from(val: f32) -> Self {
         let val: Pixels = val.into();
@@ -2239,12 +2321,21 @@ impl Anchor {
         }
     }
 
-    /// Returns true if at the center.
+    /// Returns whether the anchor is center-positioned.
     #[inline]
     pub fn is_center(&self) -> bool {
         matches!(
             self,
             Self::TopCenter | Self::BottomCenter | Self::LeftCenter | Self::RightCenter
+        )
+    }
+
+    /// Returns whether the anchor is bottom-positioned.
+    #[inline]
+    pub fn is_bottom(&self) -> bool {
+        matches!(
+            self,
+            Self::BottomCenter | Self::BottomLeft | Self::BottomRight
         )
     }
 }
@@ -2791,6 +2882,12 @@ impl Pixels {
         self.0
     }
 
+    /// Converts to `i32`, truncating toward zero.
+    /// Out-of-range values saturate, and NaN becomes zero.
+    pub fn to_i32(self) -> i32 {
+        self.0 as i32
+    }
+
     /// Floors the `Pixels` value to the nearest whole number.
     ///
     /// # Returns
@@ -2884,13 +2981,15 @@ impl PartialOrd for Pixels {
 
 impl Ord for Pixels {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
-        self.0.total_cmp(&other.0)
+        self.0
+            .partial_cmp(&other.0)
+            .unwrap_or_else(|| self.0.total_cmp(&other.0))
     }
 }
 
 impl std::hash::Hash for Pixels {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.0.to_bits().hash(state);
+        canonical_float_bits(self.0).hash(state);
     }
 }
 
@@ -3070,7 +3169,7 @@ impl From<usize> for DevicePixels {
 /// a single logical pixel may correspond to multiple physical pixels. By using `ScaledPixels`,
 /// dimensions and positions can be specified in a way that scales appropriately across different
 /// display resolutions.
-#[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, DivAssign, PartialEq)]
+#[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Neg, Div, DivAssign, PartialEq)]
 #[repr(transparent)]
 pub struct ScaledPixels(pub f32);
 
@@ -3221,6 +3320,18 @@ impl Mul<ScaledPixels> for usize {
 impl MulAssign<f32> for ScaledPixels {
     fn mul_assign(&mut self, rhs: f32) {
         self.0 *= rhs;
+    }
+}
+
+impl std::iter::Sum for ScaledPixels {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(Self::default(), |a, b| a + b)
+    }
+}
+
+impl<'a> std::iter::Sum<&'a ScaledPixels> for ScaledPixels {
+    fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
+        iter.fold(Self::default(), |a, b| a + *b)
     }
 }
 
@@ -3708,7 +3819,7 @@ pub const fn relative(fraction: f32) -> DefiniteLength {
 
 /// Returns the Golden Ratio, i.e. `~(1.0 + sqrt(5.0)) / 2.0`.
 pub const fn phi() -> DefiniteLength {
-    relative(1.618_034)
+    relative(std::f32::consts::GOLDEN_RATIO)
 }
 
 /// Constructs a `Rems` value representing a length in rems.
@@ -3971,6 +4082,52 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_pixels_to_i32() {
+        for (value, expected) in [
+            (12.9, 12),
+            (-12.9, -12),
+            (f32::MAX, i32::MAX),
+            (f32::MIN, i32::MIN),
+            (f32::INFINITY, i32::MAX),
+            (f32::NEG_INFINITY, i32::MIN),
+            (f32::NAN, 0),
+        ] {
+            assert_eq!(px(value).to_i32(), expected);
+        }
+    }
+
+    #[test]
+    fn test_bounds_join() {
+        let bounds = Bounds {
+            origin: Point { x: 5.0, y: 5.0 },
+            size: Size {
+                width: 5.0,
+                height: 5.0,
+            },
+        };
+        let other = Bounds {
+            origin: Point { x: 20.0, y: 0.0 },
+            size: Size {
+                width: 5.0,
+                height: 5.0,
+            },
+        };
+        assert_eq!(bounds.join(&other), bounds.union(&other));
+
+        let empty = Bounds {
+            origin: Point { x: 0.0, y: 0.0 },
+            size: Size {
+                width: 0.0,
+                height: 10.0,
+            },
+        };
+        assert_eq!(bounds.join(&empty), bounds);
+        assert_eq!(empty.join(&bounds), bounds);
+        assert_eq!(Bounds::default().join(&bounds), bounds);
+        assert_ne!(bounds.union(&empty), bounds);
+    }
 
     #[test]
     fn test_bounds_intersects() {

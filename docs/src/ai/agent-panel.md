@@ -1,6 +1,6 @@
 ---
 title: AI Coding Agent - Zed Agent Panel
-description: Use Zed's AI coding agent to generate, refactor, and debug code with tool calling, checkpoints, and multi-model support.
+description: Use Zed's AI coding agent to generate, refactor, and debug code with tool calling and multi-model support.
 ---
 
 # Agent Panel
@@ -26,7 +26,7 @@ Expand the editor with {#kb agent::ExpandMessageEditor} if you need more room.
 Responses stream in with indicators showing [which tools](./tools.md) the model is using.
 The sections below cover what you can do from here.
 
-> Note that some Agent Panel features may not be available for every External Agent. Restoring threads from history, checkpoints, token usage display, and similar features depend on the agent integration.
+> Note that some Agent Panel features may not be available for every External Agent. Restoring threads from history, token usage display, and similar features depend on the agent integration.
 > Their availability varies depending on the agent.
 
 ### Creating New Threads {#new-thread}
@@ -69,17 +69,12 @@ By default, queued messages get sent once the agent finishes generating. If you 
 You can edit or remove (an individual or all) queued messages.
 You can also still interrupt the agent immediately if you want by either clicking on the stop button or by clicking the "Send Now" (double-enter) on a queued message.
 
-### Checkpoints {#checkpoints}
-
-Every time the model performs an edit, you should see a "Restore Checkpoint" button at the top of your message, allowing you to return your code base to the state it was in prior to that message.
-
-The checkpoint button appears even if you interrupt the thread midway through an edit, as this is likely a moment when you've identified that the agent is not heading in the right direction and you want to revert back.
-
 ### Context Menu {#context-menu}
 
 Right-click on any agent response in the thread view to access a context menu with the following actions:
 
-- **Copy Selection**: Copies the currently selected text as Markdown (available when text is selected).
+- **Copy**: Copies the currently selected text as plain text (available when text is selected).
+- **Copy as Markdown**: Copies the currently selected text as Markdown (available when text is selected).
 - **Copy This Agent Response**: Copies the full text of the agent response you right-clicked on.
 - **Scroll to Top / Scroll to Bottom**: Scrolls to the beginning or end of the thread, depending on your current position.
 - **Open Thread as Markdown**: Opens the entire thread as a Markdown file in a new tab.
@@ -94,6 +89,7 @@ When focus is in the message editor, you can also use {#kb agent::ScrollOutputPa
 
 Thread titles are auto-generated based on the content of the conversation.
 But you can also edit them manually by clicking the title and typing, or regenerate them by clicking the "Regenerate Thread Title" button in the ellipsis menu in the top right of the panel.
+To stop Zed Agent thread titles from being generated automatically, set `agent.auto_generate_thread_titles` to `false`. Threads then use the first line of your first message as their title.
 
 ### Following the Agent {#following-the-agent}
 
@@ -101,6 +97,14 @@ Follow the agent as it reads and edits files by clicking the crosshair icon at t
 Your editor will jump to each file the agent touches.
 
 You can also hold `cmd`/`ctrl` when submitting a message to automatically follow.
+
+### Keeping the System Awake {#prevent-idle-sleep}
+
+While an agent thread is running, Zed asks the operating system not to idle-sleep, so long-running turns are not interrupted when you step away.
+The display can still turn off and the screen can still lock; only system sleep is held back, and only while a thread is generating, not while it waits for your confirmation.
+
+Turn this off with the `agent.prevent_idle_sleep` setting.
+If the operating system rejects the request, Zed logs the reason and continues without it.
 
 ### Get Notified {#get-notified}
 
@@ -131,7 +135,7 @@ The Agent Panel can host Terminal Threads alongside your agent threads. For open
 The agent can search your codebase to find relevant context, but providing it explicitly improves response quality and reduces latency.
 
 Add context by typing `@` in the message editor.
-You can mention files, directories, symbols, previous threads, skills, diagnostics, branch diffs, and URLs to fetch.
+You can mention files, directories, symbols, previous threads, [skills](./skills.md), diagnostics, branch diffs, and URLs to fetch.
 
 When you paste multi-line code selections copied from a buffer, Zed automatically formats them as @-mentions with the file context.
 To paste content without this automatic formatting, use {#kb agent::PasteRaw} to paste raw text directly.
@@ -162,6 +166,10 @@ Configure automatic compaction with `agent.auto_compact`. See [Agent Settings](.
 
 After you've configured your LLM providers—either via [API access](./use-api-access.md) or through [Zed-hosted models](../account/zed-hosted-models.md)—you can switch between their models by clicking on the model selector on the message editor or by using the {#kb agent::ToggleModelSelector} keybinding.
 
+Picking a model in the Zed Agent also saves it as `agent.default_model`, so new threads start with it. Thinking, effort, and fast mode changes are saved too when the thread is on your default model.
+
+To change the model, profile, or thinking effort for the current thread only, pick it with {#kb menu::SecondaryConfirm} instead of `Enter`, or hold `Cmd` on macOS (`Ctrl` on Linux and Windows) while you click it. The thread is then thread-only: nothing you change in it is saved as a default, and a dot appears next to the selectors. To leave thread-only mode, click the dot and choose Reset to Defaults ({#action agent::ResetThreadToDefaults}) to go back to your defaults, or Save as Default ({#action agent::SaveThreadAsDefaults}) to make what the thread is on your new defaults.
+
 > The same model can be offered via multiple providers - for example, Claude Sonnet 4.5 is available via Zed Pro, OpenRouter, Anthropic directly, and more.
 > Make sure you've selected the correct model **_provider_** for the model you'd like to use, delineated by the logo to the left of the model in the model selector.
 
@@ -169,7 +177,7 @@ After you've configured your LLM providers—either via [API access](./use-api-a
 
 You can mark specific models as favorites either through the model selector, by clicking on the star icon button that appears as you hover the model, or through your settings via the `agent.favorite_models` settings key.
 
-Cycle through your favorites with {#kb agent::CycleFavoriteModels} without opening the model selector.
+Cycle through your favorites with {#kb agent::CycleFavoriteModels} without opening the model selector. This also saves the model as your default, unless the thread is thread-only.
 
 ## Using Tools and Profiles {#using-tools}
 

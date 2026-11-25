@@ -50,6 +50,18 @@ pub struct Request {
 }
 
 impl Request {
+    pub fn into_count_tokens_request(self) -> CountTokensRequest {
+        CountTokensRequest {
+            model: self.model,
+            instructions: self.instructions,
+            input: self.input,
+            tools: self.tools,
+            tool_choice: self.tool_choice,
+            parallel_tool_calls: self.parallel_tool_calls,
+            reasoning: self.reasoning,
+        }
+    }
+
     pub fn into_compact_request(self) -> CompactRequest {
         CompactRequest {
             model: self.model,
@@ -59,6 +71,23 @@ impl Request {
             service_tier: self.service_tier,
         }
     }
+}
+
+/// Structured input for counting, including images and tool definitions.
+#[derive(Serialize, Debug)]
+pub struct CountTokensRequest {
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
+    pub input: ResponseInput,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<ToolDefinition>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parallel_tool_calls: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<ReasoningConfig>,
 }
 
 #[derive(Serialize, Debug)]
@@ -75,10 +104,14 @@ pub struct CompactRequest {
 
 #[derive(Deserialize, Debug)]
 pub struct CompactedResponse {
+    #[serde(default)]
     pub id: String,
+    #[serde(default)]
     pub created_at: u64,
+    #[serde(default)]
     pub object: String,
     pub output: Vec<Value>,
+    #[serde(default)]
     pub usage: ResponseUsage,
 }
 
@@ -145,10 +178,21 @@ fn validate_compaction_items(items: &[Value]) -> Result<()> {
     if !items.iter().any(|item| {
         item.get("type")
             .and_then(Value::as_str)
-            .is_some_and(|item_type| item_type == "compaction")
+            .is_some_and(|item_type| {
+                matches!(
+                    item_type,
+                    "compaction" | "compaction_summary" | "context_compaction"
+                )
+            })
     }) {
+        let item_types = items
+            .iter()
+            .filter_map(|item| item.get("type").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join(", ");
         return Err(anyhow!(
-            "OpenAI compaction output did not contain a compaction item"
+            "OpenAI compaction output did not contain a recognized compaction item \
+             (output types: {item_types})"
         ));
     }
     Ok(())
@@ -156,6 +200,7 @@ fn validate_compaction_items(items: &[Value]) -> Result<()> {
 
 #[derive(Debug, Default)]
 pub struct ResponseInput {
+    leading_item: Option<ResponseInputItem>,
     provider_items: Vec<Value>,
     generated_items: Vec<ResponseInputItem>,
 }
@@ -163,24 +208,25 @@ pub struct ResponseInput {
 impl ResponseInput {
     pub fn new(provider_items: Vec<Value>, generated_items: Vec<ResponseInputItem>) -> Self {
         Self {
+            leading_item: None,
             provider_items,
             generated_items,
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.provider_items.is_empty() && self.generated_items.is_empty()
+        self.leading_item.is_none()
+            && self.provider_items.is_empty()
+            && self.generated_items.is_empty()
     }
 
-    /// Filters only the items this crate generated from the request.
-    ///
-    /// Provider items are a canonical replacement window that must be replayed
-    /// verbatim, so they are exempt from filtering. Callers that rewrite the
-    /// input to satisfy backend-specific requirements (and therefore can't
-    /// tolerate arbitrary items inside a replayed window) should not accept
-    /// provider-native compaction state in the first place.
-    pub fn retain(&mut self, predicate: impl FnMut(&ResponseInputItem) -> bool) {
-        self.generated_items.retain(predicate);
+    pub(crate) fn with_leading_item(mut self, item: ResponseInputItem) -> Self {
+        self.leading_item = Some(item);
+        self
+    }
+
+    pub fn push(&mut self, item: ResponseInputItem) {
+        self.generated_items.push(item);
     }
 }
 
@@ -189,8 +235,14 @@ impl Serialize for ResponseInput {
     where
         S: serde::Serializer,
     {
-        let mut sequence = serializer
-            .serialize_seq(Some(self.provider_items.len() + self.generated_items.len()))?;
+        let mut sequence = serializer.serialize_seq(Some(
+            usize::from(self.leading_item.is_some())
+                + self.provider_items.len()
+                + self.generated_items.len(),
+        ))?;
+        if let Some(item) = &self.leading_item {
+            sequence.serialize_element(item)?;
+        }
         for item in &self.provider_items {
             sequence.serialize_element(item)?;
         }
@@ -227,6 +279,7 @@ pub enum ResponseInputItem {
     CustomToolCallOutput(ResponseCustomToolCallOutputItem),
     Reasoning(ResponseReasoningInputItem),
     Compaction(ResponseCompactionItem),
+    CompactionTrigger,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -279,7 +332,7 @@ pub struct ResponseReasoningInputItem {
     #[serde(default)]
     pub summary: Vec<ResponseReasoningSummaryPart>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub content: Vec<Value>,
+    pub content: Vec<ReasoningContentPart>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub encrypted_content: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -373,6 +426,8 @@ pub enum CustomToolGrammarSyntax {
 pub struct ResponseError {
     #[serde(default)]
     pub code: Option<String>,
+    #[serde(default, rename = "type")]
+    pub error_type: Option<String>,
     pub message: String,
     #[serde(default)]
     pub param: Option<Value>,
@@ -394,6 +449,8 @@ pub struct GenericStreamErrorPayload {
 struct PartialResponseError {
     #[serde(default)]
     code: Option<String>,
+    #[serde(default, rename = "type")]
+    error_type: Option<String>,
     #[serde(default)]
     message: Option<String>,
     #[serde(default)]
@@ -405,6 +462,7 @@ impl GenericStreamErrorPayload {
         let nested = self.error.unwrap_or_default();
         ResponseError {
             code: self.top_level.code.or(nested.code),
+            error_type: self.top_level.error_type.or(nested.error_type),
             message: self
                 .top_level
                 .message
@@ -494,12 +552,27 @@ pub enum StreamEvent {
     ReasoningSummaryTextDelta {
         item_id: String,
         output_index: usize,
+        summary_index: usize,
         delta: String,
     },
     #[serde(rename = "response.reasoning_summary_text.done")]
     ReasoningSummaryTextDone {
         item_id: String,
         output_index: usize,
+        text: String,
+    },
+    #[serde(rename = "response.reasoning_text.delta")]
+    ReasoningTextDelta {
+        item_id: String,
+        output_index: usize,
+        content_index: usize,
+        delta: String,
+    },
+    #[serde(rename = "response.reasoning_text.done")]
+    ReasoningTextDone {
+        item_id: String,
+        output_index: usize,
+        content_index: usize,
         text: String,
     },
     #[serde(rename = "response.reasoning_summary_part.done")]
@@ -644,11 +717,21 @@ pub struct ResponseReasoningItem {
     #[serde(default)]
     pub summary: Vec<ReasoningSummaryPart>,
     #[serde(default)]
-    pub content: Vec<Value>,
+    pub content: Vec<ReasoningContentPart>,
     #[serde(default)]
     pub encrypted_content: Option<String>,
     #[serde(default)]
     pub status: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ReasoningContentPart {
+    ReasoningText {
+        text: String,
+    },
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -711,9 +794,56 @@ pub async fn compact_response(
     request: CompactRequest,
     extra_headers: &CustomHeaders,
 ) -> Result<CompactedResponse, RequestError> {
+    send_response_request(
+        client,
+        provider_name,
+        api_url,
+        api_key,
+        "/responses/compact",
+        request,
+        extra_headers,
+    )
+    .await
+}
+
+/// Counts structured input, including images and tools, without generating output.
+pub async fn count_input_tokens(
+    client: &dyn HttpClient,
+    provider_name: &str,
+    api_url: &str,
+    api_key: &str,
+    request: CountTokensRequest,
+    extra_headers: &CustomHeaders,
+) -> Result<u64, RequestError> {
+    #[derive(Deserialize)]
+    struct CountTokensResponse {
+        input_tokens: u64,
+    }
+    let response: CountTokensResponse = send_response_request(
+        client,
+        provider_name,
+        api_url,
+        api_key,
+        "/responses/input_tokens",
+        request,
+        extra_headers,
+    )
+    .await?;
+    Ok(response.input_tokens)
+}
+
+async fn send_response_request<T: serde::de::DeserializeOwned>(
+    client: &dyn HttpClient,
+    provider_name: &str,
+    api_url: &str,
+    api_key: &str,
+    route: &str,
+    request: impl Serialize,
+    extra_headers: &CustomHeaders,
+) -> Result<T, RequestError> {
     let request = HttpRequest::builder()
         .method(Method::POST)
-        .uri(format!("{api_url}/responses/compact"))
+        .uri(format!("{api_url}{route}"))
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key.trim()))
         .extra_headers(extra_headers)
@@ -722,7 +852,15 @@ pub async fn compact_response(
         ))
         .map_err(|error| RequestError::Other(error.into()))?;
 
-    let mut response = client.send(request).await?;
+    let host = request.uri().host().unwrap_or(api_url).to_owned();
+    let mut response = client
+        .send(request)
+        .await
+        .map_err(|error| RequestError::HttpSend {
+            provider: provider_name.to_owned(),
+            host,
+            error,
+        })?;
     let mut body = String::new();
     response
         .body_mut()
@@ -737,7 +875,7 @@ pub async fn compact_response(
             provider: provider_name.to_owned(),
             status_code: response.status(),
             body,
-            headers: response.headers().clone(),
+            headers: Box::new(response.headers().clone()),
         })
     }
 }
@@ -749,7 +887,7 @@ pub async fn stream_response(
     api_key: &str,
     request: Request,
     extra_headers: &CustomHeaders,
-) -> Result<BoxStream<'static, Result<StreamEvent>>, RequestError> {
+) -> Result<BoxStream<'static, Result<StreamEvent, RequestError>>, RequestError> {
     let uri = format!("{api_url}/responses");
     let is_streaming = request.stream;
     let request = HttpRequest::builder()
@@ -763,35 +901,53 @@ pub async fn stream_response(
         ))
         .map_err(|e| RequestError::Other(e.into()))?;
 
-    let mut response = client.send(request).await?;
+    let host = request.uri().host().unwrap_or(api_url).to_owned();
+    let mut response = client
+        .send(request)
+        .await
+        .map_err(|error| RequestError::HttpSend {
+            provider: provider_name.to_owned(),
+            host,
+            error,
+        })?;
     if response.status().is_success() {
         if is_streaming {
             let reader = BufReader::new(response.into_body());
+            let provider_name = provider_name.to_owned();
             Ok(reader
                 .lines()
-                .filter_map(|line| async move {
-                    match line {
-                        Ok(line) => {
-                            let line = line
-                                .strip_prefix("data: ")
-                                .or_else(|| line.strip_prefix("data:"))?;
-                            if line == "[DONE]" || line.is_empty() {
-                                None
-                            } else {
-                                match serde_json::from_str::<StreamEvent>(line) {
-                                    Ok(event) => Some(Ok(event)),
-                                    Err(error) => {
-                                        log::error!(
-                                            "Failed to parse OpenAI responses stream event: `{}`\nResponse: `{}`",
-                                            error,
-                                            line,
-                                        );
-                                        Some(Err(anyhow!(error)))
+                .filter_map(move |line| {
+                    let provider_name = provider_name.clone();
+                    async move {
+                        match line {
+                            Ok(line) => {
+                                let line = line
+                                    .strip_prefix("data: ")
+                                    .or_else(|| line.strip_prefix("data:"))?;
+                                if line == "[DONE]" || line.is_empty() {
+                                    None
+                                } else {
+                                    match decode_stream_event(line) {
+                                        Ok(event) => Some(Ok(event)),
+                                        Err(error) => {
+                                            log::error!(
+                                                "Failed to parse OpenAI responses stream event: `{}`\nResponse: `{}`",
+                                                error,
+                                                line,
+                                            );
+                                            Some(Err(RequestError::DeserializeResponse {
+                                                provider: provider_name,
+                                                error,
+                                            }))
+                                        }
                                     }
                                 }
                             }
+                            Err(error) => Some(Err(RequestError::ReadResponse {
+                                provider: provider_name,
+                                error,
+                            })),
                         }
-                        Err(error) => Some(Err(anyhow!(error))),
                     }
                 })
                 .boxed())
@@ -861,15 +1017,30 @@ pub async fn stream_response(
                             }
                             ResponseOutputItem::Reasoning(reasoning) => {
                                 if let Some(ref item_id) = reasoning.id {
-                                    for part in &reasoning.summary {
+                                    for (summary_index, part) in
+                                        reasoning.summary.iter().enumerate()
+                                    {
                                         if let ReasoningSummaryPart::SummaryText { text } = part {
                                             all_events.push(
                                                 StreamEvent::ReasoningSummaryTextDelta {
                                                     item_id: item_id.clone(),
                                                     output_index,
+                                                    summary_index,
                                                     delta: text.clone(),
                                                 },
                                             );
+                                        }
+                                    }
+                                    for (content_index, part) in
+                                        reasoning.content.iter().enumerate()
+                                    {
+                                        if let ReasoningContentPart::ReasoningText { text } = part {
+                                            all_events.push(StreamEvent::ReasoningTextDelta {
+                                                item_id: item_id.clone(),
+                                                output_index,
+                                                content_index,
+                                                delta: text.to_owned(),
+                                            });
                                         }
                                     }
                                 }
@@ -924,19 +1095,308 @@ pub async fn stream_response(
             provider: provider_name.to_owned(),
             status_code: response.status(),
             body,
-            headers: response.headers().clone(),
+            headers: Box::new(response.headers().clone()),
         })
     }
+}
+
+#[inline(never)]
+fn decode_stream_event(line: &str) -> serde_json::Result<StreamEvent> {
+    serde_json::from_str(line)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::completion::OpenAiResponseEventMapper;
     use futures::executor::block_on;
+    use futures::{TryStreamExt, stream};
     use http_client::FakeHttpClient;
-    use language_model_core::OPEN_AI_PROVIDER_ID;
+    use language_model_core::{
+        LanguageModelCompletionError, LanguageModelCompletionEvent, OPEN_AI_PROVIDER_ID,
+    };
     use serde_json::json;
+    use std::io::{Error, ErrorKind};
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn stream_body_failures_remain_retryable() {
+        for kind in [ErrorKind::TimedOut, ErrorKind::ConnectionReset] {
+            let error = stream_completion_error(Some(kind));
+            assert!(error.is_transient());
+            assert!(matches!(
+                error,
+                LanguageModelCompletionError::ApiReadResponseError { provider, error }
+                    if provider.0.as_ref() == "Custom Responses" && error.kind() == kind
+            ));
+        }
+    }
+
+    #[test]
+    fn reasoning_content_accepts_unknown_parts() {
+        let content = json!([
+            {"type": "reasoning_text", "text": "Thinking"},
+            {"type": "future_reasoning", "payload": {"opaque": true}}
+        ]);
+        let item: ResponseReasoningItem = serde_json::from_value(json!({
+            "content": content
+        }))
+        .expect("reasoning item");
+        assert_eq!(
+            item.content,
+            vec![
+                ReasoningContentPart::ReasoningText {
+                    text: "Thinking".into(),
+                },
+                ReasoningContentPart::Other,
+            ]
+        );
+    }
+
+    #[test]
+    fn reasoning_text_maps_to_thinking_in_streaming_and_json_responses() {
+        use crate::completion::OpenAiResponseEventMapper;
+        use language_model_core::LanguageModelCompletionEvent;
+
+        for streaming in [true, false] {
+            let reasoning = json!({
+                "type": "reasoning",
+                "id": "rs_123",
+                "summary": [],
+                "content": [{"type": "reasoning_text", "text": "Let me think."}],
+                "status": "completed"
+            });
+            let response = json!({
+                "id": "resp_123",
+                "status": "completed",
+                "output": [reasoning]
+            });
+            let body = if streaming {
+                let events = [
+                    json!({
+                        "type": "response.reasoning_text.delta",
+                        "item_id": "rs_123", "output_index": 0, "content_index": 0,
+                        "delta": ""
+                    }),
+                    json!({
+                        "type": "response.reasoning_text.delta",
+                        "item_id": "rs_123", "output_index": 0, "content_index": 0,
+                        "delta": "Let me "
+                    }),
+                    json!({
+                        "type": "response.reasoning_text.delta",
+                        "item_id": "rs_123", "output_index": 0, "content_index": 0,
+                        "delta": "think."
+                    }),
+                    json!({
+                        "type": "response.reasoning_text.done",
+                        "item_id": "rs_123", "output_index": 0, "content_index": 0,
+                        "text": "Let me think."
+                    }),
+                    json!({"type": "response.output_item.done", "output_index": 0, "item": reasoning}),
+                    json!({"type": "response.completed", "response": response}),
+                ];
+                events
+                    .iter()
+                    .map(|event| format!("data: {event}\n\n"))
+                    .collect::<String>()
+            } else {
+                response.to_string()
+            };
+            let client = FakeHttpClient::create(move |_| {
+                let body = body.clone();
+                async move {
+                    Ok(http_client::Response::builder()
+                        .status(200)
+                        .body(AsyncBody::from(body))?)
+                }
+            });
+            let mut request = response_test_request();
+            request.stream = streaming;
+            let events = block_on(async {
+                stream_response(
+                    client.as_ref(),
+                    "Custom",
+                    "https://example.com/v1",
+                    "test-key",
+                    request,
+                    &CustomHeaders::default(),
+                )
+                .await
+                .expect("response stream")
+                .collect::<Vec<_>>()
+                .await
+            });
+            let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
+            let mut thinking = Vec::new();
+            for event in events {
+                for event in mapper.map_event(event.expect("decoded event")) {
+                    if let LanguageModelCompletionEvent::Thinking { text, .. } =
+                        event.expect("mapped event")
+                    {
+                        thinking.push(text);
+                    }
+                }
+            }
+            assert_eq!(thinking.concat(), "Let me think.");
+            assert!(thinking.iter().all(|text| !text.is_empty()));
+        }
+    }
+
+    #[test]
+    fn malformed_stream_data_remains_non_retryable() {
+        let error = stream_completion_error(None);
+        assert!(!error.is_transient());
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::DeserializeResponse { provider, .. }
+                if provider.0.as_ref() == "Custom Responses"
+        ));
+    }
+
+    fn stream_completion_error(read_error: Option<ErrorKind>) -> LanguageModelCompletionError {
+        block_on(async {
+            let client = FakeHttpClient::create(move |_| async move {
+                let chunks = vec![
+                    Ok(b"data: {\"type\":\"response.output_text.delta\",\"item_id\":\"message\",\"output_index\":0,\"delta\":\"Partial answer\"}\n\n".to_vec()),
+                    match read_error {
+                        Some(kind) => Err(Error::new(kind, "stream read failed")),
+                        None => Ok(b"data: not json\n\n".to_vec()),
+                    },
+                ];
+                Ok(
+                    http_client::Response::builder().body(AsyncBody::from_reader(
+                        stream::iter(chunks).into_async_read(),
+                    ))?,
+                )
+            });
+            let responses = stream_response(
+                client.as_ref(),
+                "Custom Responses",
+                "https://example.com/v1",
+                "test-key",
+                response_test_request(),
+                &CustomHeaders::default(),
+            )
+            .await
+            .unwrap();
+            let mut events = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID)
+                .map_stream(responses)
+                .boxed();
+            assert!(matches!(
+                events.next().await,
+                Some(Ok(LanguageModelCompletionEvent::Text(text))) if text == "Partial answer"
+            ));
+            let error = events.next().await.unwrap().unwrap_err();
+            assert!(events.next().await.is_none());
+            error
+        })
+    }
+
+    #[test]
+    fn count_input_tokens_preserves_structured_input_without_generation_fields() {
+        let input = json!([{
+            "type": "message",
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "Describe this"},
+                {"type": "input_image", "image_url": "data:image/png;base64,aW1hZ2U=", "detail": "auto"}
+            ]
+        }]);
+        let mut request = response_test_request();
+        request.input =
+            ResponseInput::new(input.as_array().expect("input array").clone(), Vec::new());
+        request.instructions = Some("Be precise".into());
+        request.max_output_tokens = Some(1234);
+        request.service_tier = Some(ServiceTier::Priority);
+        request.prompt_cache_key = Some("thread-id".into());
+        request.store = Some(false);
+        let generation = serde_json::to_value(&request).expect("generation request");
+        assert_eq!(generation["stream"], true);
+        assert_eq!(generation["max_output_tokens"], 1234);
+        assert_eq!(generation["service_tier"], "priority");
+
+        let client = FakeHttpClient::create(move |mut request| {
+            let input = input.clone();
+            async move {
+                assert_eq!(request.method(), Method::POST);
+                assert_eq!(
+                    request.uri(),
+                    "https://api.openai.com/v1/responses/input_tokens"
+                );
+                assert!(
+                    request
+                        .headers()
+                        .get("Authorization")
+                        .is_some_and(|value| value == "Bearer test-key")
+                );
+                assert_eq!(request.headers()["Content-Type"], "application/json");
+                let mut body = String::new();
+                request.body_mut().read_to_string(&mut body).await?;
+                assert_eq!(
+                    serde_json::from_str::<Value>(&body)?,
+                    json!({
+                        "model": "gpt-5.4",
+                        "instructions": "Be precise",
+                        "input": input
+                    })
+                );
+                Ok(http_client::Response::builder()
+                    .status(200)
+                    .body(AsyncBody::from(
+                        r#"{"object":"response.input_tokens","input_tokens":321}"#,
+                    ))?)
+            }
+        });
+        let count = block_on(count_input_tokens(
+            client.as_ref(),
+            "OpenAI",
+            "https://api.openai.com/v1",
+            " test-key ",
+            request.into_count_tokens_request(),
+            &CustomHeaders::default(),
+        ))
+        .expect("count succeeds");
+        assert_eq!(count, 321);
+    }
+
+    #[test]
+    fn count_input_tokens_preserves_transport_errors() {
+        let client = FakeHttpClient::create(|_| async {
+            Ok(http_client::Response::builder().status(401).body(AsyncBody::from(
+                r#"{"error":{"message":"Invalid API key","type":"invalid_request_error","code":"invalid_api_key"}}"#
+            ))?)
+        });
+        let error = block_on(count_input_tokens(
+            client.as_ref(),
+            "OpenAI",
+            "https://api.openai.com/v1",
+            "test-key",
+            response_test_request().into_count_tokens_request(),
+            &CustomHeaders::default(),
+        ))
+        .expect_err("authentication fails");
+        assert!(
+            matches!(error, RequestError::HttpResponseError { status_code, .. } if status_code.as_u16() == 401)
+        );
+
+        let client = FakeHttpClient::create(|_| async {
+            Ok(http_client::Response::builder()
+                .status(200)
+                .body(AsyncBody::from("{}"))?)
+        });
+        assert!(
+            block_on(count_input_tokens(
+                client.as_ref(),
+                "OpenAI",
+                "https://api.openai.com/v1",
+                "test-key",
+                response_test_request().into_count_tokens_request(),
+                &CustomHeaders::default(),
+            ))
+            .is_err()
+        );
+    }
 
     #[test]
     fn compact_response_posts_supported_request_fields() {
@@ -1088,6 +1548,96 @@ mod tests {
     }
 
     #[test]
+    fn stream_response_reports_http_send_errors() {
+        let http_client =
+            FakeHttpClient::create(|_| async move { Err(anyhow::anyhow!("DNS lookup failed")) });
+
+        let error = block_on(stream_response(
+            http_client.as_ref(),
+            "ChatGPT Subscription",
+            "https://chatgpt.com/backend-api/codex",
+            "secret",
+            response_test_request(),
+            &CustomHeaders::default(),
+        ));
+        let error = match error {
+            Ok(_) => panic!("expected request to fail"),
+            Err(error) => language_model_core::LanguageModelCompletionError::from(error),
+        };
+
+        match error {
+            language_model_core::LanguageModelCompletionError::HttpSend {
+                provider,
+                host,
+                error,
+            } => {
+                assert_eq!(provider.0.as_ref(), "ChatGPT Subscription");
+                assert_eq!(host, "chatgpt.com");
+                assert_eq!(error.to_string(), "DNS lookup failed");
+            }
+            error => panic!("expected an HTTP send error, got {error:?}"),
+        }
+    }
+
+    #[test]
+    fn completion_event_decodes_priority_and_fast_service_tiers() -> anyhow::Result<()> {
+        for response_service_tier in ["priority", "fast"] {
+            let event: StreamEvent = serde_json::from_value(json!({
+                "type": "response.completed",
+                "response": {
+                    "service_tier": response_service_tier,
+                    "usage": {
+                        "input_tokens": 21,
+                        "output_tokens": 13,
+                        "total_tokens": 34
+                    }
+                }
+            }))?;
+            let StreamEvent::Completed { response } = event else {
+                panic!("expected completion event for {response_service_tier}");
+            };
+            assert_eq!(response.service_tier, Some(ServiceTier::Priority));
+            let usage = response.usage.expect("completion includes usage");
+            assert_eq!(usage.input_tokens, Some(21));
+            assert_eq!(usage.output_tokens, Some(13));
+            assert_eq!(usage.total_tokens, Some(34));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn compact_response_reports_http_send_errors() {
+        let http_client =
+            FakeHttpClient::create(|_| async move { Err(anyhow::anyhow!("DNS lookup failed")) });
+
+        let error = block_on(compact_response(
+            http_client.as_ref(),
+            "ChatGPT Subscription",
+            "https://chatgpt.com/backend-api/codex",
+            "secret",
+            compact_test_request(),
+            &CustomHeaders::default(),
+        ));
+        let error = match error {
+            Ok(_) => panic!("expected request to fail"),
+            Err(error) => language_model_core::LanguageModelCompletionError::from(error),
+        };
+
+        match error {
+            language_model_core::LanguageModelCompletionError::HttpSend {
+                provider,
+                host,
+                error,
+            } => {
+                assert_eq!(provider.0.as_ref(), "ChatGPT Subscription");
+                assert_eq!(host, "chatgpt.com");
+                assert_eq!(error.to_string(), "DNS lookup failed");
+            }
+            error => panic!("expected an HTTP send error, got {error:?}"),
+        }
+    }
+
+    #[test]
     fn compacted_response_preserves_canonical_output_items() {
         let output = vec![
             json!({
@@ -1127,6 +1677,29 @@ mod tests {
             provider_compaction_items(&state, &OPEN_AI_PROVIDER_ID).unwrap(),
             Some(output)
         );
+    }
+
+    #[test]
+    fn compacted_response_preserves_legacy_compaction_item_types() {
+        for item_type in ["compaction_summary", "context_compaction"] {
+            let output = vec![json!({
+                "type": item_type,
+                "encrypted_content": "opaque-state"
+            })];
+            let response: CompactedResponse =
+                serde_json::from_value(json!({ "output": &output })).unwrap();
+
+            let CompactedContext::ProviderState(state) = response
+                .into_compacted_context(OPEN_AI_PROVIDER_ID)
+                .unwrap()
+            else {
+                panic!("expected provider state");
+            };
+            assert_eq!(
+                provider_compaction_items(&state, &OPEN_AI_PROVIDER_ID).unwrap(),
+                Some(output)
+            );
+        }
     }
 
     #[test]
@@ -1259,6 +1832,27 @@ mod tests {
             ),
             prompt_cache_key: Some("thread-123".to_string()),
             service_tier: Some(ServiceTier::Priority),
+        }
+    }
+
+    fn response_test_request() -> Request {
+        Request {
+            model: "gpt-5.4".to_string(),
+            instructions: None,
+            input: ResponseInput::new(Vec::new(), Vec::new()),
+            include: Vec::new(),
+            stream: true,
+            temperature: None,
+            top_p: None,
+            max_output_tokens: None,
+            parallel_tool_calls: None,
+            tool_choice: None,
+            tools: Vec::new(),
+            prompt_cache_key: None,
+            reasoning: None,
+            store: None,
+            service_tier: None,
+            context_management: None,
         }
     }
 }

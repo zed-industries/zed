@@ -81,8 +81,6 @@ fn collect_agents(store: &Entity<AgentServerStore>, cx: &App) -> Vec<AgentRow> {
     store
         .external_agents()
         .cloned()
-        .collect::<Vec<_>>()
-        .into_iter()
         .map(|name| {
             let icon = store.agent_icon(&name);
             let display_name = store

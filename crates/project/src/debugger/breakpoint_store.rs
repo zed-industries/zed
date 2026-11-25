@@ -15,7 +15,7 @@ use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self},
 };
-use std::{hash::Hash, ops::Range, path::Path, sync::Arc, u32};
+use std::{hash::Hash, ops::Range, path::Path, sync::Arc};
 use text::{Bias, Point, PointUtf16, Unclipped};
 use util::maybe;
 
@@ -242,8 +242,7 @@ impl BreakpointStore {
                 .breakpoints
                 .into_iter()
                 .filter_map(|breakpoint| {
-                    let position =
-                        language::proto::deserialize_anchor(breakpoint.position.clone()?)?;
+                    let position = language::proto::deserialize_anchor(breakpoint.position?)?;
                     let session_state = breakpoint
                         .session_state
                         .iter()
@@ -295,7 +294,6 @@ impl BreakpointStore {
         let position = language::proto::deserialize_anchor(
             breakpoint
                 .position
-                .clone()
                 .context("Anchor not present in RPC payload")?,
         )
         .context("Anchor deserialization failed")?;
@@ -613,19 +611,6 @@ impl BreakpointStore {
             BreakpointUpdatedReason::Toggled,
         ));
         cx.notify();
-    }
-
-    pub fn on_file_rename(
-        &mut self,
-        old_path: Arc<Path>,
-        new_path: Arc<Path>,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(breakpoints) = self.breakpoints.remove(&old_path) {
-            self.breakpoints.insert(new_path, breakpoints);
-
-            cx.notify();
-        }
     }
 
     pub fn clear_breakpoints(&mut self, cx: &mut Context<Self>) {
@@ -979,15 +964,6 @@ impl Breakpoint {
         }
     }
 
-    pub fn new_condition(hit_condition: &str) -> Self {
-        Self {
-            state: BreakpointState::Enabled,
-            condition: None,
-            hit_condition: Some(hit_condition.into()),
-            message: None,
-        }
-    }
-
     pub fn new_log(log_message: &str) -> Self {
         Self {
             state: BreakpointState::Enabled,
@@ -1032,7 +1008,7 @@ impl Breakpoint {
 
     fn from_proto(breakpoint: client::proto::Breakpoint) -> Option<Self> {
         Some(Self {
-            state: match proto::BreakpointState::from_i32(breakpoint.state) {
+            state: match proto::BreakpointState::try_from(breakpoint.state).ok() {
                 Some(proto::BreakpointState::Disabled) => BreakpointState::Disabled,
                 None | Some(proto::BreakpointState::Enabled) => BreakpointState::Enabled,
             },

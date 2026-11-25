@@ -28,8 +28,8 @@ use workspace::{
 };
 use zed_actions::OpenPerformanceProfiler;
 
-const NANOS_PER_MS: u128 = 1_000_000;
-const VISIBLE_WINDOW_NANOS: u128 = 10 * 1_000_000_000;
+const NANOS_PER_MS: u128 = Duration::from_millis(1).as_nanos();
+const VISIBLE_WINDOW_NANOS: u128 = Duration::from_secs(10).as_nanos();
 const REMOTE_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -153,6 +153,7 @@ fn open_performance_profiler(
     let default_bounds = size(px(1280.), px(720.));
 
     cx.defer(move |cx| {
+        let display_id = cx.active_display().map(|display| display.id());
         cx.open_window(
             WindowOptions {
                 titlebar: Some(TitlebarOptions {
@@ -167,7 +168,8 @@ fn open_performance_profiler(
                 window_background,
                 window_decorations: None,
                 window_min_size: Some(default_bounds),
-                window_bounds: Some(WindowBounds::centered(default_bounds, cx)),
+                window_bounds: Some(WindowBounds::centered(display_id, default_bounds, cx)),
+                display_id,
                 ..Default::default()
             },
             |_window, cx| ProfilerWindow::new(startup_time, Some(workspace_handle), cx),
@@ -664,7 +666,7 @@ impl Render for ProfilerWindow {
                                 }
                             })
                             .p_4()
-                            .on_scroll_wheel(cx.listener(|this, _, _, cx| {
+                            .on_scroll(cx.listener(|this, _, _, cx| {
                                 this.autoscroll = false;
                                 cx.notify();
                             }))

@@ -25,8 +25,8 @@ cargo install lychee
 cd "$(dirname "$0")/.."
 
 if [ "$check_mode" = "all" ]; then
-    lychee --no-progress './docs/src/**/*'
+    lychee --config .config/lychee.toml --no-progress './docs/src/**/*'
 else
-    lychee --exclude '^http' './docs/src/**/*'
+    lychee --config .config/lychee.toml --exclude '^http' './docs/src/**/*'
 fi
 #

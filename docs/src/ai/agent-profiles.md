@@ -5,7 +5,7 @@ description: Configure Zed Agent profiles for model selection, built-in tool ava
 
 # Agent Profiles
 
-Agent profiles control how the [Zed Agent](./zed-agent.md) behaves in a thread. A profile can set a default model and choose which built-in tools and MCP tools are available.
+Agent profiles control how the [Zed Agent](./zed-agent.md) behaves in a thread. A profile can set a default model and choose which [built-in tools](./tools.md) and MCP tools are available.
 
 Profiles do not decide whether a tool call is allowed automatically. Use [Tool Permissions](./tool-permissions.md) to control allow, deny, and confirm behavior.
 
@@ -17,9 +17,15 @@ Zed includes three built-in profiles:
 - `Ask`: focuses on read-only codebase questions.
 - `Minimal`: uses no project tools.
 
+## Switch Profiles {#switch-profiles}
+
+Picking a profile in the [Agent Panel](./agent-panel.md) also saves it as `agent.default_profile`, so new threads start with it. To change it for the current thread only, pick it with {#kb menu::SecondaryConfirm}; see [Changing Models](./agent-panel.md#changing-models).
+
+Cycling profiles with {#kb agent::CycleModeSelector} only changes the current thread.
+
 ## Configure Profiles {#configure-profiles}
 
-Open the profile selector in the Agent Panel, then click `Configure`.
+Open the profile selector in the [Agent Panel](./agent-panel.md), then click `Configure`.
 
 You can also run {#action agent::ManageProfiles} from the command palette.
 
@@ -73,4 +79,4 @@ If a tool is not available in the active profile, the Zed Agent cannot use it. I
 
 ## Agent Path Boundaries {#agent-path-boundaries}
 
-Agent profiles apply to the Zed Agent. External Agents and Terminal Threads do not use Zed Agent profiles unless their integration explicitly supports similar behavior.
+Agent profiles apply to the Zed Agent. External Agents and [Terminal Threads](./terminal-threads.md) do not use Zed Agent profiles unless their integration explicitly supports similar behavior.

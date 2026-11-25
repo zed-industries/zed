@@ -7,7 +7,10 @@ use worktree::{PathKey, PathSummary};
 pub enum GitStatus {
     Staged,
     Unstaged,
+    /// Restored to `HEAD`, dropping staged and unstaged changes.
     Reverted,
+    /// Working tree restored from the index; staged changes are kept.
+    RevertedUnstaged,
     Unchanged,
 }
 
@@ -101,10 +104,6 @@ impl PendingOps {
 
     pub fn max_id(&self) -> PendingOpId {
         self.ops.last().map(|op| op.id).unwrap_or_default()
-    }
-
-    pub fn op_by_id(&self, id: PendingOpId) -> Option<&PendingOp> {
-        self.ops.iter().find(|op| op.id == id)
     }
 
     pub fn op_by_id_mut(&mut self, id: PendingOpId) -> Option<&mut PendingOp> {

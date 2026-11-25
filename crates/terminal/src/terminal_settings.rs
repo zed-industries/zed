@@ -1,5 +1,5 @@
 use collections::HashMap;
-use gpui::{FontFallbacks, FontFeatures, FontWeight, Pixels, px};
+use gpui::{FontFallbacks, FontFeatures, FontWeight, Pixels};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -38,6 +38,7 @@ pub struct TerminalSettings {
     pub open_links_in_mouse_mode: bool,
     pub button: bool,
     pub dock: TerminalDockPosition,
+    pub starts_open: bool,
     pub flexible: bool,
     pub default_width: Pixels,
     pub default_height: Pixels,
@@ -109,8 +110,9 @@ impl settings::Settings for TerminalSettings {
             open_links_in_mouse_mode: user_content.open_links_in_mouse_mode.unwrap(),
             button: user_content.button.unwrap(),
             dock: user_content.dock.unwrap(),
-            default_width: px(user_content.default_width.unwrap()),
-            default_height: px(user_content.default_height.unwrap()),
+            starts_open: user_content.starts_open.unwrap(),
+            default_width: user_content.default_width.unwrap().into_gpui(),
+            default_height: user_content.default_height.unwrap().into_gpui(),
             flexible: user_content.flexible.unwrap(),
             detect_venv: project_content.detect_venv.unwrap(),
             scroll_multiplier: user_content.scroll_multiplier.unwrap(),
@@ -125,6 +127,7 @@ impl settings::Settings for TerminalSettings {
             path_hyperlink_regexes: project_content
                 .path_hyperlink_regexes
                 .unwrap()
+                .0
                 .into_iter()
                 .map(|regex| match regex {
                     PathHyperlinkRegex::SingleLine(regex) => regex,
@@ -160,5 +163,166 @@ impl From<settings::CursorShapeContent> for CursorShape {
             settings::CursorShapeContent::Bar => CursorShape::Bar,
             settings::CursorShapeContent::Hollow => CursorShape::Hollow,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use settings::{
+        LocalSettingsKind, LocalSettingsPath, SettingsLocation, SettingsStore, WorktreeId,
+    };
+    use util::rel_path::rel_path;
+
+    fn path_regexes<'a>(store: &'a SettingsStore, path: Option<&str>) -> &'a [String] {
+        &store
+            .get::<TerminalSettings>(path.map(|path| SettingsLocation {
+                worktree_id: WorktreeId::from_usize(1),
+                path: rel_path(path),
+            }))
+            .path_hyperlink_regexes
+    }
+
+    #[gpui::test]
+    fn test_path_hyperlink_regexes_inherit_across_settings_layers(cx: &mut gpui::App) {
+        let mut store = SettingsStore::new(cx, &settings::default_settings());
+        let defaults = path_regexes(&store, None).to_vec();
+        store
+            .set_user_settings(
+                r##"{"terminal": {"path_hyperlink_regexes": [
+                    ["(?x)", "# Keep this comment", "(?<path>user)"],
+                    "...",
+                    "(?<path>tail)",
+                    "..."
+                ]}}"##,
+                cx,
+            )
+            .expect("user terminal settings must parse");
+        let user_regex = "(?x)\n# Keep this comment\n(?<path>user)".to_owned();
+        let mut user = vec![user_regex.clone()];
+        user.extend(defaults.clone());
+        user.push("(?<path>tail)".into());
+        assert_eq!(path_regexes(&store, None), user);
+
+        for (path, content) in [
+            (
+                "project",
+                r#"{"terminal": {"path_hyperlink_regexes": [
+                    "(?<path>project)",
+                    "...",
+                    ["..."],
+                    "(?x)\n# Keep this comment\n(?<path>user)"
+                ]}}"#,
+            ),
+            (
+                "project/child",
+                r##"{"terminal": {"path_hyperlink_regexes": [
+                    ["(?x)", "# Keep this comment", "(?<path>user)"],
+                    "...",
+                    ["..."],
+                    ["(?x)", "# Keep this too", "(?<path>child)", "..."]
+                ]}}"##,
+            ),
+        ] {
+            store
+                .set_local_settings(
+                    WorktreeId::from_usize(1),
+                    LocalSettingsPath::InWorktree(rel_path(path).into()),
+                    LocalSettingsKind::Settings,
+                    Some(content),
+                    cx,
+                )
+                .expect("project terminal settings must parse");
+        }
+
+        let mut project = vec!["(?<path>project)".to_owned()];
+        project.extend(user.clone());
+        project.push("...".into());
+        assert_eq!(path_regexes(&store, Some("project/file")), project);
+
+        let mut child = vec![user_regex, "(?<path>project)".to_owned()];
+        child.extend(defaults);
+        child.extend([
+            "(?<path>tail)".into(),
+            "...".into(),
+            "(?x)\n# Keep this too\n(?<path>child)\n...".into(),
+        ]);
+        assert_eq!(path_regexes(&store, Some("project/child/file")), child);
+        assert_eq!(path_regexes(&store, Some("elsewhere/file")), user);
+    }
+
+    #[gpui::test]
+    fn test_path_hyperlink_regexes_replace_clear_and_omit(cx: &mut gpui::App) {
+        let mut store = SettingsStore::new(cx, &settings::default_settings());
+        let defaults = path_regexes(&store, None).to_vec();
+        store
+            .set_user_settings(
+                r#"{"terminal": {"path_hyperlink_regexes": ["(?<path>user)"]}}"#,
+                cx,
+            )
+            .expect("user terminal settings must parse");
+        assert_eq!(path_regexes(&store, None), ["(?<path>user)"]);
+
+        for (path, content) in [
+            (
+                "project",
+                r#"{"terminal": {"path_hyperlink_regexes": ["(?<path>project)"]}}"#,
+            ),
+            (
+                "project/child",
+                r#"{"terminal": {"path_hyperlink_regexes": []}}"#,
+            ),
+            (
+                "project/child/nested",
+                r#"{"terminal": {"path_hyperlink_regexes": [
+                    "...", ["(?x)", "...", "(?<path>nested)"]
+                ]}}"#,
+            ),
+        ] {
+            store
+                .set_local_settings(
+                    WorktreeId::from_usize(1),
+                    LocalSettingsPath::InWorktree(rel_path(path).into()),
+                    LocalSettingsKind::Settings,
+                    Some(content),
+                    cx,
+                )
+                .expect("project terminal settings must parse");
+        }
+        assert_eq!(
+            path_regexes(&store, Some("project/file")),
+            ["(?<path>project)"]
+        );
+        assert!(path_regexes(&store, Some("project/child/file")).is_empty());
+        assert_eq!(
+            path_regexes(&store, Some("project/child/nested/file")),
+            ["(?x)\n...\n(?<path>nested)"]
+        );
+        assert_eq!(path_regexes(&store, None), ["(?<path>user)"]);
+
+        store
+            .set_local_settings(
+                WorktreeId::from_usize(1),
+                LocalSettingsPath::InWorktree(rel_path("project").into()),
+                LocalSettingsKind::Settings,
+                Some(r#"{"terminal": {"path_hyperlink_timeout_ms": 17}}"#),
+                cx,
+            )
+            .expect("project terminal settings must parse");
+        assert_eq!(
+            path_regexes(&store, Some("project/file")),
+            ["(?<path>user)"]
+        );
+        store
+            .set_user_settings(r#"{"terminal": {"path_hyperlink_regexes": []}}"#, cx)
+            .expect("user terminal settings must parse");
+        assert!(path_regexes(&store, None).is_empty());
+        assert!(path_regexes(&store, Some("project/file")).is_empty());
+        store
+            .set_user_settings("{}", cx)
+            .expect("empty user settings must parse");
+        assert_eq!(path_regexes(&store, None), defaults);
+        assert_eq!(path_regexes(&store, Some("project/file")), defaults);
+        assert!(path_regexes(&store, Some("project/child/file")).is_empty());
     }
 }

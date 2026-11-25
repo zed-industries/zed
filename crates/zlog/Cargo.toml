@@ -3,21 +3,22 @@ name = "zlog"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
-license = "GPL-3.0-or-later"
+license = "Apache-2.0"
 
 [lints]
 workspace = true
 
 [lib]
 path = "src/zlog.rs"
+doctest = false
 
 [features]
 default = []
 
 [dependencies]
 collections.workspace = true
-chrono.workspace = true
-log.workspace = true
+chrono = { workspace = true, default-features = true }
+log = { workspace = true, features = ["kv_unstable_std"] }
 anyhow.workspace = true
 
 [dev-dependencies]

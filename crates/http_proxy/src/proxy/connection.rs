@@ -540,12 +540,8 @@ fn handle_connect(
     // sent past its CONNECT response and anything the client pipelined ahead
     // of ours.
     client.write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")?;
-    if !upstream_leftover.is_empty() {
-        client.write_all(&upstream_leftover)?;
-    }
-    if !leftover_body.is_empty() {
-        upstream.write_all(&leftover_body)?;
-    }
+    client.write_all(&upstream_leftover)?;
+    upstream.write_all(&leftover_body)?;
 
     let started = Instant::now();
     let (pumped_to_remote, pumped_from_remote) = pump_bidir(client, upstream);
@@ -629,13 +625,9 @@ fn handle_http_forward(
         log::debug!("[http_proxy] failed to set TCP_NODELAY on upstream socket: {error}");
     }
 
-    if !upstream_leftover.is_empty() {
-        client.write_all(&upstream_leftover)?;
-    }
+    client.write_all(&upstream_leftover)?;
     upstream.write_all(&request_bytes)?;
-    if !leftover_body.is_empty() {
-        upstream.write_all(&leftover_body)?;
-    }
+    upstream.write_all(&leftover_body)?;
 
     let started = Instant::now();
     let (pumped_to_remote, pumped_from_remote) = pump_bidir(client, upstream);

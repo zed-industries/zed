@@ -322,7 +322,7 @@ pub fn setup_linux() -> Step<Run> {
     named::bash("./script/linux")
 }
 
-fn download_wasi_sdk() -> Step<Run> {
+pub(crate) fn download_wasi_sdk() -> Step<Run> {
     named::bash("./script/download-wasi-sdk")
 }
 
@@ -777,7 +777,6 @@ pub fn download_artifact() -> DownloadArtifactStep {
 ///
 /// See https://github.com/actions/create-github-app-token?tab=readme-ov-file#permission-permission-name
 /// and beyond for a full list of available permissions.
-#[allow(unused)]
 pub(crate) enum TokenPermissions {
     Contents,
     Issues,

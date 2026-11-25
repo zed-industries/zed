@@ -21,11 +21,14 @@
 //! Unix domain sockets for local IPC; those do not permit sending packets to
 //! other machines.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::{io::Write, path::PathBuf};
 
 use anyhow::{Context, Result};
 use tempfile::NamedTempFile;
+
+use crate::ProtectedFileName;
 
 /// Per-command relaxations of the default Seatbelt sandbox.
 ///
@@ -41,6 +44,13 @@ use tempfile::NamedTempFile;
 pub struct SandboxPermissions {
     /// Network access policy for the command.
     pub network: NetworkAccess,
+    /// With [`NetworkAccess::LocalhostPort`], whether the command may also
+    /// reach the system services for network configuration and TLS trust
+    /// evaluation. They run outside the sandbox, and `trustd` fetches URLs
+    /// named in certificates it is given, so they are a way around the proxy.
+    /// [`NetworkAccess::All`] always includes them, and
+    /// [`NetworkAccess::None`] never does.
+    pub allow_system_network_services: bool,
     /// Allow unrestricted filesystem writes.
     pub allow_fs_write: bool,
 }
@@ -91,13 +101,28 @@ impl SeatbeltConfigFile {
     /// `protected_paths` lists paths whose writes should be blocked even if they
     /// fall under a writable directory. Contents remain readable.
     ///
+    /// `protected_file_names` lists file names whose writes are blocked
+    /// wherever they appear (see [`ProtectedFileName`]).
+    ///
+    /// `paths_disallowing_reads` lists subtrees the command may neither read
+    /// nor write; `paths_allowing_reads` lists subtrees that behave as if none
+    /// of those covered them. Where the two overlap, allowing wins.
+    ///
     /// `allowed_unix_socket_paths` lists Unix domain sockets the command may
     /// connect to for local IPC even when IP network access is otherwise
     /// disabled. This does not permit sending packets to other machines.
+    ///
+    /// `allowed_tcp_ports` lists destination ports the command may open raw
+    /// outbound TCP connections to, on any host, when `permissions.network` is
+    /// [`NetworkAccess::LocalhostPort`]. It is ignored for the other modes.
     pub fn new(
         writable_directories: &[&Path],
         protected_paths: &[&Path],
+        protected_file_names: &[ProtectedFileName],
+        paths_disallowing_reads: &[&Path],
+        paths_allowing_reads: &[&Path],
         allowed_unix_socket_paths: &[&Path],
+        allowed_tcp_ports: &[u16],
         permissions: SandboxPermissions,
     ) -> Result<Self> {
         let mut file =
@@ -106,7 +131,11 @@ impl SeatbeltConfigFile {
         let config = generate_seatbelt_config(
             writable_directories,
             protected_paths,
+            protected_file_names,
+            paths_disallowing_reads,
+            paths_allowing_reads,
             allowed_unix_socket_paths,
+            allowed_tcp_ports,
             permissions,
         )?;
         file.write_all(config.as_bytes())
@@ -139,9 +168,18 @@ impl SeatbeltConfigFile {
 ///   the writable scope would let the model write outside the project).
 /// * `protected_paths` - Paths whose writes should be denied even if they fall
 ///   under a writable directory. Contents remain readable.
+/// * `protected_file_names` - File names whose writes should be denied wherever
+///   they appear (see [`ProtectedFileName`]). Contents remain readable.
+/// * `paths_disallowing_reads` - Subtrees the command may neither read nor write.
+/// * `paths_allowing_reads` - Subtrees that behave as if no path disallowing
+///   reads covered them: readable, and writable where the write rules would
+///   otherwise allow it.
 /// * `allowed_unix_socket_paths` - Unix domain sockets the command may
 ///   connect to for local IPC even when IP network access is otherwise
 ///   disabled. This does not permit sending packets to other machines.
+/// * `allowed_tcp_ports` - Destination ports the command may open raw outbound
+///   TCP connections to, on any host, when `permissions.network` is
+///   [`NetworkAccess::LocalhostPort`]. Ignored for the other modes.
 /// * `permissions` - Sandbox relaxations requested for this command.
 ///
 /// # Returns
@@ -152,13 +190,21 @@ pub fn wrap_invocation(
     args: &[String],
     writable_directories: &[&Path],
     protected_paths: &[&Path],
+    protected_file_names: &[ProtectedFileName],
+    paths_disallowing_reads: &[&Path],
+    paths_allowing_reads: &[&Path],
     allowed_unix_socket_paths: &[&Path],
+    allowed_tcp_ports: &[u16],
     permissions: SandboxPermissions,
 ) -> Result<(String, Vec<String>, SeatbeltConfigFile)> {
     let config_file = SeatbeltConfigFile::new(
         writable_directories,
         protected_paths,
+        protected_file_names,
+        paths_disallowing_reads,
+        paths_allowing_reads,
         allowed_unix_socket_paths,
+        allowed_tcp_ports,
         permissions,
     )?;
 
@@ -190,10 +236,17 @@ pub fn wrap_invocation(
 /// worktree paths plus any per-command scratch directory the caller wants
 /// allowed) and the standard `/dev/*` write targets are also allowed by
 /// default. Writes to paths in `protected_paths` are denied even when they
-/// would otherwise be writable; contents remain readable. Unix domain socket paths in
-/// `allowed_unix_socket_paths` are reachable for local IPC even when IP
-/// network access is otherwise blocked. This does not permit sending packets
-/// to other machines.
+/// would otherwise be writable; contents remain readable. The same holds for
+/// any path whose final component matches one of `protected_file_names`.
+/// Paths in `paths_disallowing_reads` can be neither read nor written, except
+/// inside `paths_allowing_reads`, which behave as if none of those covered
+/// them. The directories above a protected path or a path disallowing reads
+/// can't be renamed or removed, and a missing directory above a protected path
+/// can't be created. Unix
+/// domain socket paths in `allowed_unix_socket_paths` are reachable for local
+/// IPC even when IP network access is otherwise blocked. This does not permit
+/// sending packets to other machines. With [`NetworkAccess::LocalhostPort`],
+/// raw outbound TCP to each of `allowed_tcp_ports` is also allowed, on any host.
 ///
 /// Network access and unrestricted filesystem writes must be requested via
 /// [`SandboxPermissions`].
@@ -203,7 +256,11 @@ pub fn wrap_invocation(
 fn generate_seatbelt_config(
     writable_directories: &[&Path],
     protected_paths: &[&Path],
+    protected_file_names: &[ProtectedFileName],
+    paths_disallowing_reads: &[&Path],
+    paths_allowing_reads: &[&Path],
     allowed_unix_socket_paths: &[&Path],
+    allowed_tcp_ports: &[u16],
     permissions: SandboxPermissions,
 ) -> Result<String> {
     // These paths are already the canonical identities captured once, at
@@ -220,10 +277,9 @@ fn generate_seatbelt_config(
         .iter()
         .map(|path| path.to_path_buf())
         .collect();
-    // Unlike file paths, Unix socket literals are emitted verbatim: it isn't
-    // guaranteed whether Seatbelt resolves symlinks before matching a
-    // `remote unix-socket` literal, so the caller passes both the path the
-    // child connects to and its canonical form, and we keep them as given.
+    // Unix socket literals are emitted verbatim too. Seatbelt matches a
+    // `remote unix-socket` literal against the resolved socket path, so only a
+    // canonical path ever matches.
 
     let mut config = r#"(version 1)
 
@@ -307,6 +363,29 @@ fn generate_seatbelt_config(
 "#
     .to_string();
 
+    // Seatbelt applies the last matching rule, so each allow must follow the
+    // denies for allowing to win.
+    for disallowing in paths_disallowing_reads {
+        let escaped_path = escape_sandbox_path(disallowing)?;
+        config.push_str(&format!(
+            r#"
+; Block reads of a path disallowing reads
+(deny file-read*
+    (subpath "{escaped_path}"))
+"#
+        ));
+    }
+    for allowing in paths_allowing_reads {
+        let escaped_path = escape_sandbox_path(allowing)?;
+        config.push_str(&format!(
+            r#"
+; Allow reads of a path allowing reads
+(allow file-read*
+    (subpath "{escaped_path}"))
+"#
+        ));
+    }
+
     if permissions.allow_fs_write {
         config.push_str(
             r#"
@@ -341,6 +420,49 @@ fn generate_seatbelt_config(
         );
     }
 
+    for disallowing in paths_disallowing_reads {
+        let escaped_path = escape_sandbox_path(disallowing)?;
+        config.push_str(&format!(
+            r#"
+; Block writes to a path disallowing reads
+(deny file-write*
+    (subpath "{escaped_path}"))
+"#
+        ));
+    }
+    // A path allowing reads is writable exactly where it would be if no path
+    // disallowing reads covered it: everywhere with unrestricted writes, otherwise where it overlaps a
+    // writable directory (whichever of the two is nested in the other).
+    let mut writable_allowing_paths: Vec<&Path> = Vec::new();
+    for allowing in paths_allowing_reads {
+        if permissions.allow_fs_write {
+            writable_allowing_paths.push(allowing);
+            continue;
+        }
+        for writable_directory in writable_directories {
+            let overlap = if allowing.starts_with(writable_directory) {
+                *allowing
+            } else if writable_directory.starts_with(allowing) {
+                *writable_directory
+            } else {
+                continue;
+            };
+            if !writable_allowing_paths.contains(&overlap) {
+                writable_allowing_paths.push(overlap);
+            }
+        }
+    }
+    for writable_allowing_path in writable_allowing_paths {
+        let escaped_path = escape_sandbox_path(writable_allowing_path)?;
+        config.push_str(&format!(
+            r#"
+; Allow writes to a path allowing reads
+(allow file-write*
+    (subpath "{escaped_path}"))
+"#
+        ));
+    }
+
     for protected_path in &canonical_protected_paths {
         let escaped_path = escape_sandbox_path(protected_path)?;
         // `subpath` already matches the path itself plus everything beneath it,
@@ -350,6 +472,70 @@ fn generate_seatbelt_config(
 ; Block protected path writes
 (deny file-write*
     (subpath "{escaped_path}"))
+"#
+        ));
+    }
+
+    // Seatbelt checks the path at each access, so a rule for a path stops
+    // applying once a directory above it is renamed away: the content can be
+    // changed or read at its new location and the directory renamed back.
+    // Renaming a directory away, removing it, and renaming another directory
+    // over it all check `file-write-unlink` on its path, so denying that pins
+    // every directory above a protected path or a path disallowing reads.
+    // `literal` matches only the directory itself, so entries inside it stay
+    // creatable, renamable, and removable.
+    let directories_above = |paths: &mut dyn Iterator<Item = &Path>| -> Result<String> {
+        let directories: BTreeSet<&Path> =
+            paths.flat_map(|path| path.ancestors().skip(1)).collect();
+        let mut literals = String::new();
+        for directory in directories {
+            let escaped_path = escape_sandbox_path(directory)?;
+            literals.push_str(&format!("\n    (literal \"{escaped_path}\")"));
+        }
+        Ok(literals)
+    };
+    let pinned_directories = directories_above(
+        &mut canonical_protected_paths
+            .iter()
+            .map(PathBuf::as_path)
+            .chain(paths_disallowing_reads.iter().copied()),
+    )?;
+    if !pinned_directories.is_empty() {
+        config.push_str(&format!(
+            r#"
+; Block renaming or removing directories that contain restricted paths
+(deny file-write-unlink{pinned_directories})
+"#
+        ));
+    }
+    // Where a directory above a protected path is missing, the command could
+    // supply it as a symlink, or as a directory prepared elsewhere and renamed
+    // into place, with content of its own choosing already at the protected
+    // path. `file-write-create` can't tell those from a new empty directory,
+    // so such a directory can't be created at all. A path disallowing reads
+    // needs no such rule: content supplied that way is the command's own.
+    let directories_above_protected_paths =
+        directories_above(&mut canonical_protected_paths.iter().map(PathBuf::as_path))?;
+    if !directories_above_protected_paths.is_empty() {
+        config.push_str(&format!(
+            r#"
+; Block supplying missing directories that contain protected paths
+(deny file-write-create{directories_above_protected_paths})
+"#
+        ));
+    }
+
+    // Seatbelt applies the last matching rule, so these denies must follow the
+    // writable-path allows above. `file-write*` covers creating, writing,
+    // truncating, unlinking, renaming (source and destination), and creating
+    // hard or symbolic links.
+    for name in protected_file_names {
+        let escaped_regex = escape_sandbox_string(&protected_file_name_regex(name));
+        config.push_str(&format!(
+            r#"
+; Block writes to every file with a protected name
+(deny file-write*
+    (regex "{escaped_regex}"))
 "#
         ));
     }
@@ -378,6 +564,28 @@ fn generate_seatbelt_config(
 (allow network-bind (local ip "localhost:*"))
 "#,
             ));
+            for allowed_tcp_port in allowed_tcp_ports {
+                config.push_str(&format!(
+                    r#"
+; Allow raw outbound TCP to a granted destination port, on any host
+(allow network-outbound (remote tcp "*:{allowed_tcp_port}"))
+"#,
+                ));
+            }
+            if !allowed_tcp_ports.is_empty() {
+                config.push_str(
+                    r#"
+; A raw TCP grant means the command resolves hostnames itself (the proxy
+; resolves them for proxied requests), and getaddrinfo on macOS asks
+; mDNSResponder over this Unix socket rather than sending DNS packets.
+(allow system-socket
+    (socket-domain AF_UNIX))
+(allow network-outbound
+    (remote unix-socket
+        (literal "/private/var/run/mDNSResponder")))
+"#,
+                );
+            }
         }
     }
 
@@ -386,7 +594,18 @@ fn generate_seatbelt_config(
     // few more Mach services. Kept out of the base allowlist so a no-network
     // command can't reach them. Still an allowlist (mirrors Codex's Seatbelt
     // network policy) that excludes LaunchServices/launchd.
-    if !matches!(permissions.network, NetworkAccess::None) {
+    //
+    // These services run outside the sandbox with unrestricted network access.
+    // `trustd` fetches the issuer and revocation URLs named in a certificate it
+    // is asked to evaluate, so a command confined to the proxy can still use it
+    // to send data to any host. A caller that needs the proxy's allowlist to
+    // hold therefore leaves them out.
+    let system_network_services = match permissions.network {
+        NetworkAccess::None => false,
+        NetworkAccess::LocalhostPort(_) => permissions.allow_system_network_services,
+        NetworkAccess::All => true,
+    };
+    if system_network_services {
         config.push_str(
             r#"
 ; Extra Mach services for DNS / TLS-trust / network configuration, needed only
@@ -447,7 +666,37 @@ fn escape_sandbox_path(path: &Path) -> Result<String> {
     let path_str = path
         .to_str()
         .with_context(|| format!("path contains invalid UTF-8: {}", path.display()))?;
-    Ok(path_str.replace('\\', "\\\\").replace('"', "\\\""))
+    Ok(escape_sandbox_string(path_str))
+}
+
+/// Escape text for use inside a double-quoted Seatbelt string literal.
+fn escape_sandbox_string(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Build a regex matching any absolute path whose final component is `name`.
+///
+/// Every regex metacharacter is backslash-escaped so the name matches
+/// literally. ASCII letters become classes such as `[eE]` because APFS is
+/// case-insensitive by default and Seatbelt's regex has no case-insensitive
+/// flag. Non-ASCII characters are not case-folded.
+fn protected_file_name_regex(name: &ProtectedFileName) -> String {
+    let mut regex = String::from("/");
+    for character in name.as_str().chars() {
+        if character.is_ascii_alphabetic() {
+            regex.push('[');
+            regex.push(character.to_ascii_lowercase());
+            regex.push(character.to_ascii_uppercase());
+            regex.push(']');
+        } else {
+            if r"\.^$|?*+()[]{}".contains(character) {
+                regex.push('\\');
+            }
+            regex.push(character);
+        }
+    }
+    regex.push('$');
+    regex
 }
 
 #[cfg(test)]
@@ -475,9 +724,17 @@ mod tests {
     #[test]
     fn test_generate_seatbelt_config_contains_read_and_project_write_permissions_by_default() {
         let dir = PathBuf::from("/Users/test/projects/myproject");
-        let config =
-            generate_seatbelt_config(&[dir.as_path()], &[], &[], SandboxPermissions::default())
-                .unwrap();
+        let config = generate_seatbelt_config(
+            &[dir.as_path()],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            SandboxPermissions::default(),
+        )
+        .unwrap();
 
         assert!(config.contains("(allow file-read*)"));
         assert!(config.contains("/Users/test/projects/myproject"));
@@ -493,8 +750,13 @@ mod tests {
             &[dir.as_path()],
             &[],
             &[],
+            &[],
+            &[],
+            &[],
+            &[],
             SandboxPermissions {
                 network: NetworkAccess::None,
+                allow_system_network_services: true,
                 allow_fs_write: true,
             },
         )
@@ -510,9 +772,17 @@ mod tests {
     #[test]
     fn test_generate_seatbelt_config_allows_terminal_ioctls_by_default() {
         let dir = PathBuf::from("/Users/test/projects/myproject");
-        let config =
-            generate_seatbelt_config(&[dir.as_path()], &[], &[], SandboxPermissions::default())
-                .unwrap();
+        let config = generate_seatbelt_config(
+            &[dir.as_path()],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            SandboxPermissions::default(),
+        )
+        .unwrap();
 
         assert!(config.contains("(allow file-ioctl"));
         assert!(config.contains("/dev/ptmx"));
@@ -522,9 +792,17 @@ mod tests {
     #[test]
     fn test_generate_seatbelt_config_scopes_mach_lookup_and_excludes_escape_services() {
         let dir = PathBuf::from("/Users/test/projects/myproject");
-        let config =
-            generate_seatbelt_config(&[dir.as_path()], &[], &[], SandboxPermissions::default())
-                .unwrap();
+        let config = generate_seatbelt_config(
+            &[dir.as_path()],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            SandboxPermissions::default(),
+        )
+        .unwrap();
         // Assert on the rules only: the mach-lookup comment intentionally spells
         // out the blanket `(allow mach-lookup)` form it avoids, which a raw
         // `config.contains` would match.
@@ -554,8 +832,13 @@ mod tests {
             &[dir.as_path()],
             &[],
             &[],
+            &[],
+            &[],
+            &[],
+            &[],
             SandboxPermissions {
                 network: NetworkAccess::All,
+                allow_system_network_services: true,
                 allow_fs_write: false,
             },
         )
@@ -577,7 +860,11 @@ mod tests {
         let config = generate_seatbelt_config(
             &[dir.as_path()],
             &[],
+            &[],
+            &[],
+            &[],
             &[socket_path.as_path()],
+            &[],
             SandboxPermissions::default(),
         )
         .unwrap();
@@ -643,7 +930,11 @@ mod tests {
             ],
             &[temp_dir.path()],
             &[],
+            &[],
+            &[],
+            &[],
             &[socket_path.as_path(), canonical_socket_path.as_path()],
+            &[],
             SandboxPermissions::default(),
         )
         .unwrap();
@@ -669,6 +960,10 @@ mod tests {
         let config = generate_seatbelt_config(
             &[dir.as_path()],
             &[protected.as_path()],
+            &[],
+            &[],
+            &[],
+            &[],
             &[],
             SandboxPermissions::default(),
         )
@@ -706,6 +1001,10 @@ mod tests {
             ],
             &[dir.as_path()],
             &[protected_file.as_path()],
+            &[],
+            &[],
+            &[],
+            &[],
             &[],
             SandboxPermissions::default(),
         )
@@ -752,8 +1051,13 @@ mod tests {
             &[dir.as_path()],
             &[protected_file.as_path()],
             &[],
+            &[],
+            &[],
+            &[],
+            &[],
             SandboxPermissions {
                 network: NetworkAccess::None,
+                allow_system_network_services: true,
                 allow_fs_write: true,
             },
         )
@@ -777,14 +1081,475 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_seatbelt_config_denies_unlinking_protected_path_ancestors() {
+        let config = generate_seatbelt_config(
+            &[Path::new("/work")],
+            &[
+                Path::new("/work/repo/.git/config"),
+                Path::new("/work/repo/.git/hooks"),
+            ],
+            &[],
+            &[Path::new("/work/secrets/key")],
+            &[],
+            &[],
+            &[],
+            SandboxPermissions::default(),
+        )
+        .unwrap();
+
+        assert!(config.contains(
+            r#"(deny file-write-unlink
+    (literal "/")
+    (literal "/work")
+    (literal "/work/repo")
+    (literal "/work/repo/.git")
+    (literal "/work/secrets"))"#
+        ));
+        assert!(config.contains(
+            r#"(deny file-write-create
+    (literal "/")
+    (literal "/work")
+    (literal "/work/repo")
+    (literal "/work/repo/.git"))"#
+        ));
+    }
+
+    #[test]
+    fn test_sandbox_blocks_moving_protected_paths_by_renaming_an_ancestor() {
+        // Each case renames a directory above the protected paths, writes to
+        // them at the Git directory's moved location, and renames it back.
+        let cases = [
+            ("the Git directory", "repo/.git", "repo/moved", "repo/moved"),
+            ("the repository", "repo", "moved", "moved/.git"),
+            (
+                "the writable root",
+                "../work",
+                "../moved",
+                "../moved/repo/.git",
+            ),
+        ];
+
+        for allow_fs_write in [false, true] {
+            for (description, from, to, moved_git_dir) in cases {
+                let temp_dir = tempfile::tempdir().unwrap();
+                // Canonicalize so policy paths resolve the macOS `/var` ->
+                // `/private/var` symlink that Seatbelt matches against.
+                let work = std::fs::canonicalize(temp_dir.path()).unwrap().join("work");
+                let git_dir = work.join("repo/.git");
+                std::fs::create_dir_all(git_dir.join("hooks")).unwrap();
+                std::fs::write(git_dir.join("config"), "original\n").unwrap();
+                std::fs::write(git_dir.join("hooks/pre-commit"), "original\n").unwrap();
+
+                let output = run_sandboxed_shell(
+                    &work,
+                    &[work.join("repo/.git/config"), work.join("repo/.git/hooks")],
+                    &[],
+                    allow_fs_write,
+                    &format!(
+                        "echo ok > ordinary; mv {from} {to}; \
+                         echo evil > {moved_git_dir}/config; \
+                         echo evil > {moved_git_dir}/hooks/pre-commit; \
+                         mv {to} {from}"
+                    ),
+                );
+
+                let context = format!(
+                    "renaming {description} (allow_fs_write: {allow_fs_write}): stderr={}",
+                    String::from_utf8_lossy(&output.stderr),
+                );
+                assert_eq!(
+                    std::fs::read_to_string(work.join("ordinary"))
+                        .ok()
+                        .as_deref(),
+                    Some("ok\n"),
+                    "ordinary file should stay writable: {context}"
+                );
+                for protected_file in ["config", "hooks/pre-commit"] {
+                    assert_eq!(
+                        std::fs::read_to_string(git_dir.join(protected_file))
+                            .ok()
+                            .as_deref(),
+                        Some("original\n"),
+                        "{protected_file} should be untouched: {context}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_sandbox_blocks_supplying_a_missing_directory_above_a_protected_path() {
+        // Nothing above the protected path exists yet. Each case tries to
+        // put content prepared elsewhere where the protected path will be
+        // looked up.
+        let prepare = "mkdir -p evil/b/hooks && echo evil > evil/b/hooks/pre-commit";
+        let cases = [
+            ("a symlink", "ln -s evil a"),
+            ("a renamed directory", "mv evil a"),
+            ("a renamed symlink", "ln -s evil link && mv link a"),
+            ("a symlink one level down", "mkdir a && ln -s ../evil/b a/b"),
+            (
+                "a renamed directory one level down",
+                "mkdir a && mv evil/b a/b",
+            ),
+        ];
+
+        for allow_fs_write in [false, true] {
+            for (description, attempt) in cases {
+                let temp_dir = tempfile::tempdir().unwrap();
+                let work = std::fs::canonicalize(temp_dir.path()).unwrap().join("work");
+                std::fs::create_dir(&work).unwrap();
+
+                let output = run_sandboxed_shell(
+                    &work,
+                    &[work.join("a/b/hooks")],
+                    &[],
+                    allow_fs_write,
+                    &format!("{prepare}; {attempt}"),
+                );
+
+                assert!(
+                    !work.join("a/b/hooks/pre-commit").exists(),
+                    "supplying {description} (allow_fs_write: {allow_fs_write}) should not \
+                     put a hook at the protected path: stderr={}",
+                    String::from_utf8_lossy(&output.stderr),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_sandbox_blocks_reading_a_hidden_path_by_renaming_an_ancestor() {
+        for allow_fs_write in [false, true] {
+            let temp_dir = tempfile::tempdir().unwrap();
+            let work = std::fs::canonicalize(temp_dir.path()).unwrap().join("work");
+            std::fs::create_dir_all(work.join("private")).unwrap();
+            std::fs::write(work.join("private/secret"), "secret\n").unwrap();
+
+            let output = run_sandboxed_shell(
+                &work,
+                &[],
+                &[work.join("private/secret")],
+                allow_fs_write,
+                "echo ok > private/ordinary; mv private moved; cat moved/secret > leaked",
+            );
+
+            let context = format!(
+                "allow_fs_write: {allow_fs_write}: stderr={}",
+                String::from_utf8_lossy(&output.stderr),
+            );
+            assert_eq!(
+                std::fs::read_to_string(work.join("private/ordinary"))
+                    .ok()
+                    .as_deref(),
+                Some("ok\n"),
+                "a sibling of the hidden path should stay writable: {context}"
+            );
+            assert_ne!(
+                std::fs::read_to_string(work.join("leaked")).ok().as_deref(),
+                Some("secret\n"),
+                "the hidden file should not be readable: {context}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_sandbox_blocks_creating_protected_path_whose_parents_are_missing() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let work = std::fs::canonicalize(temp_dir.path()).unwrap().join("work");
+        std::fs::create_dir(&work).unwrap();
+        // Name the protected path through a symlink, so it only matches the path
+        // the command writes if its missing components are resolved through the
+        // nearest existing ancestor.
+        let link = work.with_file_name("link");
+        std::os::unix::fs::symlink(&work, &link).unwrap();
+        let protected =
+            crate::HostFilesystemLocation::capture(link.join("a/b/c")).expect("capture a/b/c");
+
+        let output = run_sandboxed_shell(
+            &work,
+            &[protected.macos_canonical_path().to_path_buf()],
+            &[],
+            false,
+            "echo ok > sibling; mkdir -p a/b && echo x > a/b/c",
+        );
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            std::fs::read_to_string(work.join("sibling"))
+                .ok()
+                .as_deref(),
+            Some("ok\n"),
+            "sibling should stay writable: stderr={stderr}"
+        );
+        assert!(
+            !work.join("a/b/c").exists(),
+            "protected path should not be created: stderr={stderr}"
+        );
+    }
+
+    #[test]
+    fn test_sandbox_allows_git_operations_with_protected_git_metadata() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let work = std::fs::canonicalize(temp_dir.path()).unwrap();
+        let repo = work.join("repo");
+        let linked = work.join("linked");
+        let git = |directory: &Path, arguments: &[&str]| {
+            let output = std::process::Command::new("git")
+                .args(arguments)
+                .current_dir(directory)
+                .envs(GIT_TEST_ENVIRONMENT)
+                .output()
+                .expect("failed to run git");
+            assert!(
+                output.status.success(),
+                "git {arguments:?} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        std::fs::create_dir(&repo).unwrap();
+        git(&repo, &["init", "--quiet", "--initial-branch=main"]);
+        std::fs::write(repo.join("file.txt"), "one\n").unwrap();
+        git(&repo, &["add", "file.txt"]);
+        git(&repo, &["commit", "--quiet", "-m", "initial"]);
+
+        let main_protected_paths = [repo.join(".git/config"), repo.join(".git/hooks")];
+        let output = run_sandboxed_shell(
+            &work,
+            &main_protected_paths,
+            &[],
+            false,
+            "git init --quiet --initial-branch=main nested \
+             && cd repo \
+             && echo two >> file.txt \
+             && git add file.txt \
+             && git commit --quiet -m second \
+             && git branch feature \
+             && git pack-refs --all \
+             && git gc --quiet \
+             && git worktree add --quiet ../linked feature",
+        );
+        assert!(
+            output.status.success(),
+            "git should work in a checkout with protected metadata: stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(work.join("nested/.git/HEAD").exists());
+        assert!(repo.join(".git/packed-refs").exists());
+        assert!(linked.join("file.txt").exists());
+
+        let linked_git_dir = repo.join(".git/worktrees/linked");
+        let mut linked_protected_paths = main_protected_paths.to_vec();
+        linked_protected_paths.extend([
+            linked.join(".git"),
+            linked_git_dir.join("commondir"),
+            linked_git_dir.join("gitdir"),
+            linked_git_dir.join("config"),
+            linked_git_dir.join("hooks"),
+        ]);
+        let output = run_sandboxed_shell(
+            &work,
+            &linked_protected_paths,
+            &[],
+            false,
+            "cd linked \
+             && echo three >> file.txt \
+             && git commit --quiet -am third \
+             && git worktree add --quiet -b another ../another",
+        );
+        assert!(
+            output.status.success(),
+            "git should work in a linked worktree with protected metadata: stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            std::fs::read_to_string(linked.join("file.txt")).unwrap(),
+            "one\ntwo\nthree\n"
+        );
+    }
+
+    #[test]
+    fn test_sandbox_blocks_every_write_to_protected_file_names() {
+        struct Case {
+            description: &'static str,
+            envrc_exists: bool,
+            command: &'static str,
+            target: &'static str,
+        }
+        let cases = [
+            Case {
+                description: "create at the writable root",
+                envrc_exists: false,
+                command: "echo x > .envrc",
+                target: ".envrc",
+            },
+            Case {
+                description: "create in a directory made by the same command",
+                envrc_exists: false,
+                command: "mkdir -p nested/deeper && echo x > nested/deeper/.envrc",
+                target: "nested/deeper/.envrc",
+            },
+            Case {
+                description: "create with different ASCII case",
+                envrc_exists: false,
+                command: "echo x > .ENVRC",
+                target: ".ENVRC",
+            },
+            Case {
+                description: "append to an existing file",
+                envrc_exists: true,
+                command: "echo x >> .envrc",
+                target: ".envrc",
+            },
+            Case {
+                description: "delete an existing file",
+                envrc_exists: true,
+                command: "rm .envrc",
+                target: ".envrc",
+            },
+            Case {
+                description: "rename another file onto it",
+                envrc_exists: true,
+                command: "mv other .envrc",
+                target: ".envrc",
+            },
+            Case {
+                description: "create a hard link with the name",
+                envrc_exists: false,
+                command: "ln other .envrc",
+                target: ".envrc",
+            },
+            Case {
+                description: "create a symlink with the name",
+                envrc_exists: false,
+                command: "ln -s other .envrc",
+                target: ".envrc",
+            },
+        ];
+        let protected_names = [ProtectedFileName::new(".envrc").unwrap()];
+
+        for allow_fs_write in [false, true] {
+            for case in &cases {
+                let temp_dir = tempfile::tempdir().unwrap();
+                // Canonicalize so the writable subpath resolves the macOS `/var`
+                // -> `/private/var` symlink that Seatbelt matches against.
+                let dir = std::fs::canonicalize(temp_dir.path()).unwrap();
+                std::fs::write(dir.join("other"), "other\n").unwrap();
+                if case.envrc_exists {
+                    std::fs::write(dir.join(".envrc"), "original\n").unwrap();
+                }
+
+                let (program, args, _config_file) = wrap_invocation(
+                    "/bin/sh",
+                    &[
+                        "-c".to_string(),
+                        format!("echo ok > ordinary && {}", case.command),
+                    ],
+                    &[dir.as_path()],
+                    &[],
+                    &protected_names,
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    SandboxPermissions {
+                        network: NetworkAccess::None,
+                        allow_system_network_services: true,
+                        allow_fs_write,
+                    },
+                )
+                .unwrap();
+                let output = std::process::Command::new(&program)
+                    .args(&args)
+                    .current_dir(&dir)
+                    .output()
+                    .expect("failed to execute sandbox-exec");
+
+                let context = format!(
+                    "{} (allow_fs_write: {allow_fs_write}): stderr={}",
+                    case.description,
+                    String::from_utf8_lossy(&output.stderr),
+                );
+                assert!(!output.status.success(), "should be denied: {context}");
+                assert_eq!(
+                    std::fs::read_to_string(dir.join("ordinary"))
+                        .ok()
+                        .as_deref(),
+                    Some("ok\n"),
+                    "ordinary file should stay writable: {context}"
+                );
+                let target = dir.join(case.target);
+                if case.envrc_exists {
+                    assert_eq!(
+                        std::fs::read_to_string(&target).ok().as_deref(),
+                        Some("original\n"),
+                        "existing file should be untouched: {context}"
+                    );
+                } else {
+                    assert!(
+                        std::fs::symlink_metadata(&target).is_err(),
+                        "file should not have been created: {context}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_protected_file_name_with_regex_metacharacters_matches_literally() {
+        let name = ProtectedFileName::new("a.b+c").unwrap();
+        assert_eq!(protected_file_name_regex(&name), r"/[aA]\.[bB]\+[cC]$");
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = std::fs::canonicalize(temp_dir.path()).unwrap();
+        let (program, args, _config_file) = wrap_invocation(
+            "/bin/sh",
+            &[
+                "-c".to_string(),
+                // `axbbc` would match the unescaped regex `a.b+c`.
+                "echo ok > axbbc && echo ok > a.bbc && ! sh -c 'echo x > a.b+c' 2>/dev/null"
+                    .to_string(),
+            ],
+            &[dir.as_path()],
+            &[],
+            &[name],
+            &[],
+            &[],
+            &[],
+            &[],
+            SandboxPermissions::default(),
+        )
+        .unwrap();
+        let output = std::process::Command::new(&program)
+            .args(&args)
+            .current_dir(&dir)
+            .output()
+            .expect("failed to execute sandbox-exec");
+
+        assert!(
+            output.status.success(),
+            "only the literal name should be protected: stderr={}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(dir.join("axbbc").exists());
+        assert!(dir.join("a.bbc").exists());
+        assert!(!dir.join("a.b+c").exists());
+    }
+
+    #[test]
     fn test_generate_seatbelt_config_contains_network_when_allowed() {
         let dir = PathBuf::from("/Users/test/projects/myproject");
         let config = generate_seatbelt_config(
             &[dir.as_path()],
             &[],
             &[],
+            &[],
+            &[],
+            &[],
+            &[],
             SandboxPermissions {
                 network: NetworkAccess::All,
+                allow_system_network_services: true,
                 allow_fs_write: false,
             },
         )
@@ -803,8 +1568,13 @@ mod tests {
             &[dir.as_path()],
             &[],
             &[],
+            &[],
+            &[],
+            &[],
+            &[],
             SandboxPermissions {
                 network: NetworkAccess::LocalhostPort(54321),
+                allow_system_network_services: true,
                 allow_fs_write: false,
             },
         )
@@ -814,6 +1584,103 @@ mod tests {
         assert!(config.contains("(allow network-outbound (remote tcp \"localhost:54321\"))"));
         assert!(config.contains("(allow network-bind (local ip \"localhost:*\"))"));
         assert!(!config.contains("(allow network*)"));
+        assert!(!seatbelt_rules_only(&config).contains("mDNSResponder"));
+    }
+
+    #[test]
+    fn test_generate_seatbelt_config_system_network_services_follow_the_permission() {
+        let dir = PathBuf::from("/Users/test/projects/myproject");
+        let services = [
+            "com.apple.SystemConfiguration.configd",
+            "com.apple.SystemConfiguration.DNSConfiguration",
+            "com.apple.networkd",
+            "com.apple.SecurityServer",
+            "com.apple.trustd",
+            "com.apple.trustd.agent",
+            "com.apple.ocspd",
+        ];
+        // Whether the services are reachable for each network mode with the
+        // permission off and on. Only the proxy mode leaves it to the caller.
+        let cases = [
+            (NetworkAccess::None, [false, false]),
+            (NetworkAccess::LocalhostPort(54321), [false, true]),
+            (NetworkAccess::All, [true, true]),
+        ];
+
+        for (network, reachable) in cases {
+            for (allow_system_network_services, reachable) in
+                [false, true].into_iter().zip(reachable)
+            {
+                let config = generate_seatbelt_config(
+                    &[dir.as_path()],
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    &[],
+                    SandboxPermissions {
+                        network,
+                        allow_system_network_services,
+                        allow_fs_write: false,
+                    },
+                )
+                .unwrap();
+                let rules = seatbelt_rules_only(&config);
+                for service in services {
+                    assert_eq!(
+                        rules.contains(&format!("(global-name \"{service}\")")),
+                        reachable,
+                        "{service} with {network:?} and \
+                         allow_system_network_services: {allow_system_network_services}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_generate_seatbelt_config_allows_granted_tcp_ports_and_dns_with_proxy() {
+        let config = seatbelt_rules_only(
+            &generate_seatbelt_config(
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[22, 5432],
+                SandboxPermissions {
+                    network: NetworkAccess::LocalhostPort(54321),
+                    allow_system_network_services: true,
+                    allow_fs_write: false,
+                },
+            )
+            .unwrap(),
+        );
+
+        assert!(config.contains("(allow network-outbound (remote tcp \"localhost:54321\"))"));
+        assert!(config.contains("(allow network-outbound (remote tcp \"*:22\"))"));
+        assert!(config.contains("(allow network-outbound (remote tcp \"*:5432\"))"));
+        assert!(config.contains("(literal \"/private/var/run/mDNSResponder\")"));
+        assert!(!config.contains("(allow network*)"));
+
+        // Port grants only widen a proxy-restricted network.
+        let blocked = seatbelt_rules_only(
+            &generate_seatbelt_config(
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[],
+                &[22],
+                SandboxPermissions::default(),
+            )
+            .unwrap(),
+        );
+        assert!(!blocked.contains("*:22"));
+        assert!(!blocked.contains("mDNSResponder"));
     }
 
     #[test]
@@ -822,6 +1689,10 @@ mod tests {
         let scratch_dir = PathBuf::from("/private/tmp/zed-agent-command");
         let config = generate_seatbelt_config(
             &[project_dir.as_path(), scratch_dir.as_path()],
+            &[],
+            &[],
+            &[],
+            &[],
             &[],
             &[],
             SandboxPermissions::default(),
@@ -861,6 +1732,10 @@ mod tests {
             &[temp_dir.path()],
             &[],
             &[],
+            &[],
+            &[],
+            &[],
+            &[],
             SandboxPermissions::default(),
         )
         .unwrap();
@@ -882,6 +1757,10 @@ mod tests {
             "/bin/sh",
             &["-c".to_string(), "cat /etc/hosts".to_string()],
             &[temp_dir.path()],
+            &[],
+            &[],
+            &[],
+            &[],
             &[],
             &[],
             SandboxPermissions::default(),
@@ -911,6 +1790,10 @@ mod tests {
             &[temp_dir.path()],
             &[],
             &[],
+            &[],
+            &[],
+            &[],
+            &[],
             SandboxPermissions::default(),
         )
         .unwrap();
@@ -938,8 +1821,13 @@ mod tests {
             &[temp_dir.path()],
             &[],
             &[],
+            &[],
+            &[],
+            &[],
+            &[],
             SandboxPermissions {
                 network: NetworkAccess::None,
+                allow_system_network_services: true,
                 allow_fs_write: true,
             },
         )
@@ -973,8 +1861,13 @@ mod tests {
             &[temp_dir.path()],
             &[],
             &[],
+            &[],
+            &[],
+            &[],
+            &[],
             SandboxPermissions {
                 network: NetworkAccess::None,
+                allow_system_network_services: true,
                 allow_fs_write: true,
             },
         )
@@ -1014,6 +1907,10 @@ mod tests {
             &[project_path.as_path(), scratch_path.as_path()],
             &[],
             &[],
+            &[],
+            &[],
+            &[],
+            &[],
             SandboxPermissions::default(),
         )
         .unwrap();
@@ -1050,6 +1947,10 @@ mod tests {
             &[dir.as_path()],
             &[],
             &[],
+            &[],
+            &[],
+            &[],
+            &[],
             SandboxPermissions::default(),
         )
         .unwrap();
@@ -1084,8 +1985,13 @@ mod tests {
             &[project_dir.path()],
             &[],
             &[],
+            &[],
+            &[],
+            &[],
+            &[],
             SandboxPermissions {
                 network: NetworkAccess::None,
+                allow_system_network_services: true,
                 allow_fs_write: true,
             },
         )
@@ -1124,6 +2030,10 @@ mod tests {
             &[project_dir.path()],
             &[],
             &[],
+            &[],
+            &[],
+            &[],
+            &[],
             SandboxPermissions::default(),
         )
         .unwrap();
@@ -1141,5 +2051,53 @@ mod tests {
             !forbidden_file.exists(),
             "file should not have been created"
         );
+    }
+
+    /// Isolates `git` from the user's global and system configuration, which
+    /// could enable commit signing or hooks that need access outside the test.
+    const GIT_TEST_ENVIRONMENT: [(&str, &str); 6] = [
+        ("GIT_CONFIG_GLOBAL", "/dev/null"),
+        ("GIT_CONFIG_NOSYSTEM", "1"),
+        ("GIT_AUTHOR_NAME", "Test"),
+        ("GIT_AUTHOR_EMAIL", "test@example.com"),
+        ("GIT_COMMITTER_NAME", "Test"),
+        ("GIT_COMMITTER_EMAIL", "test@example.com"),
+    ];
+
+    fn run_sandboxed_shell(
+        writable_directory: &Path,
+        protected_paths: &[PathBuf],
+        paths_disallowing_reads: &[PathBuf],
+        allow_fs_write: bool,
+        script: &str,
+    ) -> std::process::Output {
+        let protected_paths: Vec<&Path> = protected_paths.iter().map(PathBuf::as_path).collect();
+        let paths_disallowing_reads: Vec<&Path> = paths_disallowing_reads
+            .iter()
+            .map(PathBuf::as_path)
+            .collect();
+        let (program, args, _config_file) = wrap_invocation(
+            "/bin/sh",
+            &["-c".to_string(), script.to_string()],
+            &[writable_directory],
+            &protected_paths,
+            &[],
+            &paths_disallowing_reads,
+            &[],
+            &[],
+            &[],
+            SandboxPermissions {
+                network: NetworkAccess::None,
+                allow_system_network_services: true,
+                allow_fs_write,
+            },
+        )
+        .unwrap();
+        std::process::Command::new(&program)
+            .args(&args)
+            .current_dir(writable_directory)
+            .envs(GIT_TEST_ENVIRONMENT)
+            .output()
+            .expect("failed to execute sandbox-exec")
     }
 }

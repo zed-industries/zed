@@ -15,7 +15,16 @@ pub fn tls_config() -> ClientConfig {
                 .install_default()
                 .ok();
 
-            ClientConfig::with_platform_verifier()
+            ClientConfig::with_platform_verifier().unwrap_or_else(|error| {
+                log::error!(
+                    "failed to load platform TLS certificate verifier, falling back to bundled webpki roots: {error}"
+                );
+                ClientConfig::builder()
+                    .with_root_certificates(rustls::RootCertStore {
+                        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+                    })
+                    .with_no_client_auth()
+            })
         })
         .clone()
 }

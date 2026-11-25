@@ -1,20 +1,23 @@
+use crate::CanvasFontFallback;
 use crate::dispatcher::WebDispatcher;
 use crate::display::WebDisplay;
 use crate::events::EventListenerHandle;
 use crate::http_client::FetchHttpClient;
 use crate::keyboard::WebKeyboardLayout;
+use crate::text_system::WebTextSystem;
 use crate::window::WebWindow;
 use anyhow::Result;
 use futures::channel::oneshot;
 use gpui::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DummyKeyboardMapper,
-    ForegroundExecutor, Keymap, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Task,
-    ThermalState, WindowAppearance, WindowKind, WindowParams, popup::PopupNotSupportedError,
+    Action, ActivityGuard, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem,
+    ClipboardReadError, ClipboardString, CursorStyle, DummyKeyboardMapper, ForegroundExecutor,
+    GestureTuning, Image, ImageFormat, Keymap, Menu, MenuItem, PathPromptOptions, Platform,
+    PlatformDisplay, PlatformGestures, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformTextSystem, PlatformWindow, ScrollPhysics, Task, ThermalState, WindowAppearance,
+    WindowKind, WindowParams, popup::PopupNotSupportedError,
 };
 use gpui_wgpu::{PreparedWebGraphics, WebBackendPreference, WgpuContext, wgpu};
 use std::{
-    borrow::Cow,
     cell::{Cell, RefCell},
     path::{Path, PathBuf},
     rc::Rc,
@@ -22,20 +25,13 @@ use std::{
 };
 use wasm_bindgen::prelude::*;
 
-static BUNDLED_FONTS: &[&[u8]] = &[
-    include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf"),
-    include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Italic.ttf"),
-    include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-SemiBold.ttf"),
-    include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-SemiBoldItalic.ttf"),
-    include_bytes!("../../../assets/fonts/lilex/Lilex-Regular.ttf"),
-    include_bytes!("../../../assets/fonts/lilex/Lilex-Bold.ttf"),
-    include_bytes!("../../../assets/fonts/lilex/Lilex-Italic.ttf"),
-    include_bytes!("../../../assets/fonts/lilex/Lilex-BoldItalic.ttf"),
-];
-
+/// Provides the GPUI platform implementation for web browsers.
+///
+/// The platform starts with an empty font database. Applications must add fonts
+/// through [`gpui::App::text_system`] before opening a window.
 pub struct WebPlatform {
     browser_window: web_sys::Window,
-    dispatcher: Arc<WebDispatcher>,
+    platform_info: gpui::PlatformInfo,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
     text_system: Arc<dyn PlatformTextSystem>,
@@ -48,7 +44,40 @@ pub struct WebPlatform {
     window_lifecycle: Rc<Cell<WebWindowLifecycle>>,
     cursor_visible: Rc<Cell<bool>>,
     last_cursor_css: Rc<Cell<&'static str>>,
+    gestures: Rc<WebGestures>,
     _cursor_restore_listeners: Vec<EventListenerHandle>,
+}
+
+/// Gesture feel for the browser, chosen so touch scrolling matches the host
+/// OS's native applications.
+struct WebGestures {
+    tuning: GestureTuning,
+}
+
+impl WebGestures {
+    fn from_user_agent(user_agent: &str) -> Self {
+        let scroll_physics = if user_agent.contains("Android") {
+            ScrollPhysics::android()
+        } else {
+            // iOS, and also desktops: the default exponential decay. Desktop
+            // browsers rarely reach the portable fling at all (trackpads
+            // deliver their own momentum events), so the distinction only
+            // matters for touch screens.
+            ScrollPhysics::ios()
+        };
+        Self {
+            tuning: GestureTuning {
+                scroll_physics,
+                ..GestureTuning::default()
+            },
+        }
+    }
+}
+
+impl PlatformGestures for WebGestures {
+    fn tuning(&self) -> GestureTuning {
+        self.tuning
+    }
 }
 
 struct PreparedWebWindow {
@@ -105,7 +134,7 @@ impl std::error::Error for WebWindowError {}
 #[derive(Default)]
 struct WebPlatformCallbacks {
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
-    quit: Option<Box<dyn FnMut()>>,
+    quit: Option<Box<dyn FnMut() -> bool>>,
     reopen: Option<Box<dyn FnMut()>>,
     app_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
     will_open_app_menu: Option<Box<dyn FnMut()>>,
@@ -123,24 +152,32 @@ impl WebPlatform {
         allow_multi_threading: bool,
         backend_preference: WebBackendPreference,
     ) -> Self {
+        Self::new_with_backend_and_font_fallback(
+            allow_multi_threading,
+            backend_preference,
+            CanvasFontFallback::default(),
+        )
+    }
+
+    /// Configures browser fallback before any fonts or layouts are cached.
+    ///
+    /// Loaded fonts remain preferred, except when they cannot supply requested
+    /// emoji presentation. The policy cannot be changed after construction.
+    pub fn new_with_backend_and_font_fallback(
+        allow_multi_threading: bool,
+        backend_preference: WebBackendPreference,
+        canvas_font_fallback: CanvasFontFallback,
+    ) -> Self {
         let browser_window =
             web_sys::window().expect("must be running in a browser window context");
+        let platform_info = crate::events::platform_info(&browser_window);
         let dispatcher = Arc::new(WebDispatcher::new(
             browser_window.clone(),
             allow_multi_threading,
         ));
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher.clone());
-        let text_system = Arc::new(gpui_wgpu::CosmicTextSystem::new_without_system_fonts(
-            "IBM Plex Sans",
-        ));
-        let fonts = BUNDLED_FONTS
-            .iter()
-            .map(|bytes| Cow::Borrowed(*bytes))
-            .collect();
-        if let Err(error) = text_system.add_fonts(fonts) {
-            log::error!("failed to load bundled fonts: {error:#}");
-        }
+        let text_system = Arc::new(WebTextSystem::new("IBM Plex Sans", canvas_font_fallback));
         let text_system: Arc<dyn PlatformTextSystem> = text_system;
         let active_display: Rc<dyn PlatformDisplay> =
             Rc::new(WebDisplay::new(browser_window.clone()));
@@ -152,10 +189,13 @@ impl WebPlatform {
             cursor_visible.clone(),
             last_cursor_css.clone(),
         );
+        let gestures = Rc::new(WebGestures::from_user_agent(
+            &browser_window.navigator().user_agent().unwrap_or_default(),
+        ));
 
         Self {
             browser_window,
-            dispatcher,
+            platform_info,
             background_executor,
             foreground_executor,
             text_system,
@@ -168,13 +208,14 @@ impl WebPlatform {
             window_lifecycle: Rc::new(Cell::new(WebWindowLifecycle::Available)),
             cursor_visible,
             last_cursor_css,
+            gestures,
             _cursor_restore_listeners: cursor_restore_listeners,
         }
     }
 
     /// Returns an HTTP client that runs browser Fetch operations on this platform's main thread.
     pub fn fetch_http_client(&self) -> FetchHttpClient {
-        FetchHttpClient::new(self.dispatcher.clone())
+        FetchHttpClient::new(self.foreground_executor.to_send())
     }
 
     /// Returns a browser Fetch HTTP client with the given reported user agent.
@@ -182,7 +223,7 @@ impl WebPlatform {
         &self,
         user_agent: &str,
     ) -> anyhow::Result<FetchHttpClient> {
-        FetchHttpClient::with_user_agent(self.dispatcher.clone(), user_agent)
+        FetchHttpClient::with_user_agent(self.foreground_executor.to_send(), user_agent)
     }
 }
 
@@ -264,8 +305,16 @@ async fn initialize_graphics(
 }
 
 impl Platform for WebPlatform {
+    fn platform_info(&self) -> gpui::PlatformInfo {
+        self.platform_info
+    }
+
     fn background_executor(&self) -> BackgroundExecutor {
         self.background_executor.clone()
+    }
+
+    fn gestures(&self) -> Option<Rc<dyn PlatformGestures>> {
+        Some(self.gestures.clone())
     }
 
     fn foreground_executor(&self) -> ForegroundExecutor {
@@ -306,7 +355,7 @@ impl Platform for WebPlatform {
         log::warn!("WebPlatform::quit called, but quitting is not supported in the browser .");
     }
 
-    fn restart(&self, _binary_path: Option<PathBuf>) {}
+    fn restart(&self, _binary_path: Option<PathBuf>, _arguments: Vec<std::ffi::OsString>) {}
 
     fn activate(&self, _ignoring_other_apps: bool) {}
 
@@ -323,6 +372,9 @@ impl Platform for WebPlatform {
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         Some(self.active_display.clone())
     }
+
+    // The browser is the only display, and it never changes.
+    fn on_displays_changed(&self, _callback: Box<dyn FnMut()>) {}
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
         *self.active_window.borrow()
@@ -457,13 +509,17 @@ impl Platform for WebPlatform {
 
     fn open_with_system(&self, _path: &Path) {}
 
-    fn on_quit(&self, callback: Box<dyn FnMut()>) {
+    fn on_quit(&self, callback: Box<dyn FnMut() -> bool>) {
         self.callbacks.borrow_mut().quit = Some(callback);
     }
 
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
         self.callbacks.borrow_mut().reopen = Some(callback);
     }
+
+    // Browsers expose no system sleep or wake signal; the nearest thing is the
+    // Page Visibility API, which drives `WindowVisibility` instead.
+    fn on_system_sleep(&self, _callback: Box<dyn FnMut()>) {}
 
     fn on_system_wake(&self, _callback: Box<dyn FnMut()>) {}
 
@@ -489,6 +545,12 @@ impl Platform for WebPlatform {
 
     fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>) {
         self.callbacks.borrow_mut().thermal_state_change = Some(callback);
+    }
+
+    fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "Idle sleep prevention for {reason:?} is not supported in the browser"
+        )))
     }
 
     fn compositor_name(&self) -> &'static str {
@@ -555,6 +617,67 @@ impl Platform for WebPlatform {
         None
     }
 
+    fn read_from_clipboard_async(&self) -> Task<Result<Option<ClipboardItem>, ClipboardReadError>> {
+        let navigator = self.browser_window.navigator();
+        // `navigator.clipboard` is undefined outside secure contexts; probing
+        // first avoids a wasm-bindgen abort from invoking a method on
+        // `undefined`.
+        let clipboard_available = js_sys::Reflect::get(navigator.as_ref(), &"clipboard".into())
+            .is_ok_and(|clipboard| !clipboard.is_undefined() && !clipboard.is_null());
+        if !clipboard_available {
+            return Task::ready(Err(ClipboardReadError::Unavailable));
+        }
+        // `read()` must be called synchronously so it is still covered by the
+        // user activation (e.g. the click on a context-menu item) that
+        // triggered this read.
+        let read = navigator.clipboard().read();
+        self.foreground_executor.spawn(async move {
+            let items = wasm_bindgen_futures::JsFuture::from(read)
+                .await
+                .map_err(clipboard_read_rejection_error)?;
+            let mut entries = Vec::new();
+            let mut saw_unsupported_type = false;
+            for item in js_sys::Array::from(&items).iter() {
+                let item: web_sys::ClipboardItem = item.unchecked_into();
+                for mime_type in item.types().iter() {
+                    let Some(mime_type) = mime_type.as_string() else {
+                        continue;
+                    };
+                    // Only fetch blobs for types we can convert; copies from
+                    // other web apps routinely carry `text/html` and
+                    // `web application/...` custom formats whose `getType`
+                    // fetches would be wasted or rejected.
+                    if mime_type == "text/plain" {
+                        match read_clipboard_item_text(&item, &mime_type).await {
+                            Ok(text) if !text.is_empty() => {
+                                entries.push(ClipboardEntry::String(ClipboardString::new(text)));
+                            }
+                            Ok(_) => {}
+                            Err(error) => log_clipboard_entry_error(&mime_type, &error),
+                        }
+                    } else if let Some(format) = ImageFormat::from_mime_type(&mime_type) {
+                        match read_clipboard_item_bytes(&item, &mime_type).await {
+                            Ok(bytes) => {
+                                entries
+                                    .push(ClipboardEntry::Image(Image::from_bytes(format, bytes)));
+                            }
+                            Err(error) => log_clipboard_entry_error(&mime_type, &error),
+                        }
+                    } else {
+                        saw_unsupported_type = true;
+                    }
+                }
+            }
+            if !entries.is_empty() {
+                Ok(Some(ClipboardItem { entries }))
+            } else if saw_unsupported_type {
+                Err(ClipboardReadError::UnsupportedContent)
+            } else {
+                Ok(None)
+            }
+        })
+    }
+
     fn write_to_clipboard(&self, item: ClipboardItem) {
         if let Some(text) = item.text()
             && let Some(window) = web_sys::window()
@@ -592,6 +715,73 @@ impl Platform for WebPlatform {
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
         self.callbacks.borrow_mut().keyboard_layout_change = Some(callback);
     }
+}
+
+/// Maps a `navigator.clipboard.read()` rejection to a [`ClipboardReadError`].
+///
+/// Only `NotAllowedError` and `SecurityError` mean the user or browser
+/// refused access; other rejections (e.g. `DataError`) indicate content the
+/// clipboard could not represent, where "allow clipboard access" guidance
+/// would mislead.
+fn clipboard_read_rejection_error(error: JsValue) -> ClipboardReadError {
+    match js_error_name(&error).as_deref() {
+        Some("NotAllowedError") | Some("SecurityError") => {
+            ClipboardReadError::Denied(js_error_message(&error))
+        }
+        _ => ClipboardReadError::UnsupportedContent,
+    }
+}
+
+async fn read_clipboard_item_blob(
+    item: &web_sys::ClipboardItem,
+    mime_type: &str,
+) -> Result<web_sys::Blob, JsValue> {
+    let blob = wasm_bindgen_futures::JsFuture::from(item.get_type(mime_type)).await?;
+    Ok(blob.unchecked_into())
+}
+
+async fn read_clipboard_item_text(
+    item: &web_sys::ClipboardItem,
+    mime_type: &str,
+) -> Result<String, JsValue> {
+    let blob = read_clipboard_item_blob(item, mime_type).await?;
+    let text = wasm_bindgen_futures::JsFuture::from(blob.text()).await?;
+    text.as_string()
+        .ok_or_else(|| JsValue::from_str("blob text is not a string"))
+}
+
+async fn read_clipboard_item_bytes(
+    item: &web_sys::ClipboardItem,
+    mime_type: &str,
+) -> Result<Vec<u8>, JsValue> {
+    let blob = read_clipboard_item_blob(item, mime_type).await?;
+    read_blob_bytes(&blob).await
+}
+
+pub(crate) async fn read_blob_bytes(blob: &web_sys::Blob) -> Result<Vec<u8>, JsValue> {
+    let buffer = wasm_bindgen_futures::JsFuture::from(blob.array_buffer()).await?;
+    Ok(js_sys::Uint8Array::new(&buffer).to_vec())
+}
+
+fn js_error_name(error: &JsValue) -> Option<String> {
+    js_sys::Reflect::get(error, &"name".into())
+        .ok()
+        .and_then(|name| name.as_string())
+}
+
+pub(crate) fn js_error_message(error: &JsValue) -> String {
+    js_sys::Reflect::get(error, &"message".into())
+        .ok()
+        .and_then(|message| message.as_string())
+        .or_else(|| error.as_string())
+        .unwrap_or_else(|| "unknown browser error".to_string())
+}
+
+fn log_clipboard_entry_error(mime_type: &str, error: &JsValue) {
+    log::warn!(
+        "failed to read clipboard entry with type {mime_type}: {}",
+        js_error_message(error)
+    );
 }
 
 fn cursor_restore_listeners(

@@ -1,7 +1,8 @@
 use std::sync::Arc;
+use std::time::Duration;
 
-use gpui::Transformation;
 use gpui::{App, IntoElement, Rems, RenderOnce, Size, Styled, Window, svg};
+use gpui::{TimedTransformation, Transformation};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString, IntoStaticStr};
 
@@ -42,6 +43,7 @@ pub struct Vector {
     color: Color,
     size: Size<Rems>,
     transformation: Transformation,
+    rotation_period: Option<Duration>,
 }
 
 impl Vector {
@@ -52,6 +54,7 @@ impl Vector {
             color: Color::default(),
             size: Size { width, height },
             transformation: Transformation::default(),
+            rotation_period: None,
         }
     }
 
@@ -79,6 +82,11 @@ impl Transformable for Vector {
         self.transformation = transformation;
         self
     }
+
+    fn animate_rotation(mut self, period: Duration) -> Self {
+        self.rotation_period = Some(period);
+        self
+    }
 }
 
 impl RenderOnce for Vector {
@@ -95,6 +103,12 @@ impl RenderOnce for Vector {
             .path(self.path)
             .text_color(self.color.color(cx))
             .with_transformation(self.transformation)
+            .when_some(self.rotation_period, |svg, period| {
+                svg.with_timed_transformation(TimedTransformation::rotation(
+                    period,
+                    self.transformation,
+                ))
+            })
     }
 }
 
@@ -112,7 +126,7 @@ impl Component for Vector {
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
-        let size = rems_from_px(60.);
+        let size = rems_from_px(60_f32);
 
         v_flex()
             .gap_6()
@@ -127,12 +141,12 @@ impl Component for Vector {
                         single_example(
                             "Custom Size",
                             h_flex()
-                                .h(rems_from_px(120.))
+                                .h(rems_from_px(120_f32))
                                 .justify_center()
                                 .child(Vector::new(
                                     VectorName::ZedLogo,
-                                    rems_from_px(120.),
-                                    rems_from_px(200.),
+                                    rems_from_px(120_f32),
+                                    rems_from_px(200_f32),
                                 ))
                                 .into_any_element(),
                         ),
@@ -159,7 +173,7 @@ impl Component for Vector {
                     "Different Vectors",
                     vec![single_example(
                         "Zed X Copilot",
-                        Vector::square(VectorName::ZedXCopilot, rems_from_px(100.))
+                        Vector::square(VectorName::ZedXCopilot, rems_from_px(100_f32))
                             .into_any_element(),
                     )],
                 ),

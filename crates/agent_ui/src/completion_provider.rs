@@ -7,7 +7,7 @@ use std::sync::atomic::AtomicBool;
 use crate::DEFAULT_THREAD_TITLE;
 use crate::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore};
 use acp_thread::MentionUri;
-use agent_client_protocol::schema::v1 as acp;
+use agent_client_protocol::v2::schema as acp;
 use anyhow::Result;
 use editor::{CompletionProvider, Editor, code_context_menus::COMPLETION_MENU_MAX_WIDTH};
 use futures::FutureExt as _;
@@ -376,7 +376,7 @@ fn skill_completion_documentation(skill: &AvailableSkill) -> CompletionDocumenta
 #[derive(Debug, Clone)]
 pub struct AvailableCommand {
     pub name: Arc<str>,
-    pub description: Arc<str>,
+    pub documentation: CompletionDocumentation,
     pub requires_argument: bool,
     pub source: Option<SharedString>,
     /// Source category used to group the command in the slash popup. `None`
@@ -1582,11 +1582,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     replace_range: source_range.clone(),
                                     new_text,
                                     label,
-                                    documentation: Some(
-                                        CompletionDocumentation::MultiLinePlainText(
-                                            command.description.into(),
-                                        ),
-                                    ),
+                                    documentation: Some(command.documentation),
                                     source: project::CompletionSource::Custom,
                                     icon_path,
                                     icon_color: None,

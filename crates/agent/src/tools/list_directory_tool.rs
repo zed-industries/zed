@@ -1,13 +1,11 @@
 use super::tool_permissions::{
     ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
-    resolve_global_skill_path, resolve_project_path,
+    resolve_project_path,
 };
-use crate::{AgentTool, ToolCallEventStream, ToolInput};
-use agent_client_protocol::schema::v1 as acp;
+use crate::{AgentTool, GlobalSkillFiles, ToolCallEventStream, ToolInput};
+use agent_client_protocol::v2::schema as acp;
 use anyhow::{Context as _, Result, anyhow};
-use fs::Fs;
-use futures::StreamExt as _;
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{App, AsyncApp, Entity, SharedString, Task};
 use project::{Project, ProjectPath, WorktreeSettings};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -59,38 +57,29 @@ impl ListDirectoryTool {
         Self { project }
     }
 
-    /// List the contents of a directory under the global skills tree directly
-    /// via the filesystem. Used for skill resources that live outside any
-    /// worktree.
+    /// List the contents of a directory under the global skills tree, which
+    /// is outside any worktree.
     async fn list_global_skill_directory(
         canonical_path: &Path,
-        fs: &dyn Fs,
+        global_skill_files: &GlobalSkillFiles,
         input_path: &str,
+        cx: &mut AsyncApp,
     ) -> Result<String, String> {
-        let mut entries = fs
-            .read_dir(canonical_path)
+        let entries = global_skill_files
+            .list_directory(canonical_path, cx)
             .await
             .map_err(|err| err.to_string())?;
 
         let mut folders = Vec::new();
         let mut files = Vec::new();
-        while let Some(entry) = entries.next().await {
-            let Ok(entry_path) = entry else {
-                continue;
-            };
-            let display = entry_path.to_string_lossy().into_owned();
-            // Use a metadata call rather than `is_dir` so we can short-circuit
-            // on missing entries (e.g. dangling symlinks).
-            let Ok(Some(metadata)) = fs.metadata(&entry_path).await else {
-                continue;
-            };
-            if metadata.is_dir {
+        for entry in entries {
+            let display = entry.path.to_string_lossy().into_owned();
+            if entry.is_dir {
                 folders.push(display);
             } else {
                 files.push(display);
             }
         }
-
         folders.sort();
         files.sort();
 
@@ -241,13 +230,16 @@ impl AgentTool for ListDirectoryTool {
             // Fast path: a global skill resource lives outside any worktree, so
             // standard project-path resolution would refuse it. If the path
             // expands and resolves under the global skills tree, list it directly.
-            if let Some(skill_path) =
-                resolve_global_skill_path(Path::new(&input.path), fs.as_ref()).await
+            let global_skill_files = cx.update(|cx| GlobalSkillFiles::for_project(&project, cx));
+            if let Some(skill_path) = global_skill_files
+                .resolve(Path::new(&input.path), cx)
+                .await
             {
                 return Self::list_global_skill_directory(
                     &skill_path,
-                    fs.as_ref(),
+                    &global_skill_files,
                     &input.path,
+                    cx,
                 )
                 .await;
             }
@@ -270,21 +262,21 @@ impl AgentTool for ListDirectoryTool {
                 let worktree = project
                     .worktree_for_id(project_path.worktree_id, cx)
                     .with_context(|| {
-                        format!("{} is not in a known worktree", &input.path)
+                        format!("{} is not in a known worktree", input.path)
                     })?;
 
                 let global_settings = WorktreeSettings::get_global(cx);
                 if global_settings.is_path_excluded(&project_path.path) {
                     anyhow::bail!(
                         "Cannot list directory because its path matches the user's global `file_scan_exclusions` setting: {}",
-                        &input.path
+                        input.path
                     );
                 }
 
                 if global_settings.is_path_private(&project_path.path) {
                     anyhow::bail!(
                         "Cannot list directory because its path matches the user's global `private_files` setting: {}",
-                        &input.path
+                        input.path
                     );
                 }
 
@@ -292,14 +284,14 @@ impl AgentTool for ListDirectoryTool {
                 if worktree_settings.is_path_excluded(&project_path.path) {
                     anyhow::bail!(
                         "Cannot list directory because its path matches the user's worktree `file_scan_exclusions` setting: {}",
-                        &input.path
+                        input.path
                     );
                 }
 
                 if worktree_settings.is_path_private(&project_path.path) {
                     anyhow::bail!(
                         "Cannot list directory because its path matches the user's worktree `private_paths` setting: {}",
-                        &input.path
+                        input.path
                     );
                 }
 
@@ -338,11 +330,12 @@ impl AgentTool for ListDirectoryTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fs::Fs as _;
     use gpui::{TestAppContext, UpdateGlobal};
     use indoc::indoc;
     use project::{FakeFs, Project};
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{SettingsStore, SplicingVec};
     use std::path::PathBuf;
     use util::path;
 
@@ -578,11 +571,11 @@ mod tests {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
-                    settings.project.worktree.file_scan_exclusions = Some(vec![
+                    settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![
                         "**/.secretdir".to_string(),
                         "**/.mymetadata".to_string(),
                         "**/.hidden_subdir".to_string(),
-                    ]);
+                    ]));
                     settings.project.worktree.private_files = Some(
                         vec![
                             "**/.mysecrets".to_string(),
@@ -740,8 +733,10 @@ mod tests {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
-                    settings.project.worktree.file_scan_exclusions =
-                        Some(vec!["**/.git".to_string(), "**/node_modules".to_string()]);
+                    settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![
+                        "**/.git".to_string(),
+                        "**/node_modules".to_string(),
+                    ]));
                     settings.project.worktree.private_files =
                         Some(vec!["**/.env".to_string()].into());
                 });
@@ -910,7 +905,11 @@ mod tests {
         });
 
         let auth = event_rx.expect_authorization().await;
-        let title = auth.tool_call.fields.title.as_deref().unwrap_or("");
+        let title = auth
+            .tool_call
+            .title
+            .value()
+            .expect("expected authorization title");
         assert!(
             title.contains("points outside the project"),
             "Authorization title should mention symlink escape, got: {title}",

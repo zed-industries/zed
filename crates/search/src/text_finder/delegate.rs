@@ -28,15 +28,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::{ops::Range, time::Duration};
 
 use collections::{HashMap, HashSet};
-use editor::{MultiBufferSnapshot, PathKey, multibuffer_context_lines};
+use editor::{Editor, MultiBufferSnapshot, PathKey, multibuffer_context_lines};
 use file_icons::FileIcons;
 use futures::StreamExt;
 use gpui::{
-    AnyElement, AppContext, AsyncApp, ClickEvent, DismissEvent, EntityId, HighlightStyle,
+    AnyElement, App, AppContext, AsyncApp, ClickEvent, DismissEvent, EntityId, HighlightStyle,
     Modifiers, StyledText, Task, TextStyle, prelude::*,
 };
 use gpui::{Entity, FocusHandle, WeakEntity};
-use language::{Buffer, LanguageAwareStyling};
+use language::{Buffer, Language, LanguageAwareStyling};
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectPath, Search};
 use project::{SearchResults, search::SearchQuery, search::SearchResult};
@@ -88,6 +88,8 @@ pub struct Delegate {
     pub(crate) max_line_number: u32,
     pub(crate) selected_matches: Vec<SelectedMatch>,
     pub(crate) collapsed_paths: HashSet<ProjectPath>,
+    pub(crate) query_editor: Option<Entity<Editor>>,
+    pub(crate) regex_language: Option<Arc<Language>>,
 }
 
 /// Wrapper with Eq is path + range equality
@@ -327,6 +329,8 @@ impl Delegate {
                 max_line_number: 0,
                 selected_matches: Vec::new(),
                 collapsed_paths: HashSet::default(),
+                query_editor: None,
+                regex_language: None,
             });
 
             this
@@ -346,7 +350,7 @@ impl Delegate {
             .get(&project.downgrade())
             .cloned();
 
-        let search = cx.new(|cx| ProjectSearch::new(project, cx));
+        let search = cx.new(|cx| ProjectSearch::new(project, weak_workspace.clone(), cx));
         let project_search =
             cx.new(|cx| ProjectSearchView::new(weak_workspace, search, window, cx, settings));
         cx.spawn(async move |_, cx| Self::new_from_project_search(project_search, cx).await)
@@ -593,6 +597,43 @@ impl Delegate {
         .detach();
         cx.emit(DismissEvent);
     }
+
+    pub(crate) fn adjust_query_regex_language(&self, cx: &mut App) {
+        let Some(query_buffer) = self
+            .query_editor
+            .as_ref()
+            .and_then(|query_editor| query_editor.read(cx).buffer().read(cx).as_singleton())
+        else {
+            return;
+        };
+        let language = if self.search_options.contains(SearchOptions::REGEX) {
+            self.regex_language.clone()
+        } else {
+            None
+        };
+        query_buffer.update(cx, |query_buffer, cx| {
+            query_buffer.set_language(language, cx);
+        });
+    }
+
+    fn clear_results(&mut self) {
+        self.matches.clear();
+        self.entries.clear();
+        self.unique_files.clear();
+        self.collapsed_paths.clear();
+        self.selected_index = 0;
+    }
+}
+
+pub(crate) fn toggle_search_option(
+    picker: &mut Picker<Delegate>,
+    options: SearchOptions,
+    window: &mut Window,
+    cx: &mut Context<Picker<Delegate>>,
+) {
+    picker.delegate.search_options.toggle(options);
+    picker.delegate.adjust_query_regex_language(cx);
+    picker.refresh(window, cx);
 }
 
 pub(crate) enum PopulateProjectSearch {
@@ -680,9 +721,9 @@ pub(crate) async fn matches_to_multibuffer(
     PopulateProjectSearch::Completed
 }
 
-const SEARCH_DEBOUNCE_MS: u64 = 100;
-const CLICK_THRESHOLD_MS: u128 = 50;
-const DOUBLE_CLICK_THRESHOLD_MS: u128 = 300;
+const SEARCH_DEBOUNCE: Duration = Duration::from_millis(100);
+const CLICK_THRESHOLD: Duration = Duration::from_millis(50);
+const DOUBLE_CLICK_THRESHOLD: Duration = Duration::from_millis(300);
 const SEARCH_RESULTS_BATCH_SIZE: usize = 256;
 const MAX_MATCH_CONTEXT_BYTES: usize = 512;
 
@@ -729,8 +770,7 @@ impl PickerDelegate for Delegate {
             .tooltip(move |_window, cx| Tooltip::for_action_in(label, action, &focus_handle, cx))
             .on_click(move |_, window, cx| {
                 picker.update(cx, |picker, cx| {
-                    picker.delegate.search_options.toggle(options);
-                    picker.refresh(window, cx);
+                    toggle_search_option(picker, options, window, cx);
                 });
             })
         });
@@ -837,11 +877,8 @@ impl PickerDelegate for Delegate {
             if query.is_empty() && imported_from_project_search {
                 return Task::ready(());
             }
-            self.matches.clear();
-            self.entries.clear();
-            self.unique_files.clear();
-            self.collapsed_paths.clear();
-            self.selected_index = 0;
+
+            self.clear_results();
             self.active_query = None;
             self.prepend_selected_matches();
             self.rebuild_entries();
@@ -862,9 +899,7 @@ impl PickerDelegate for Delegate {
         let (signal_done, match_updating_done) = futures::channel::oneshot::channel();
         self.in_progress_search =
             InProgressSearch::Connected(cx.spawn_in(window, async move |picker, cx| {
-                cx.background_executor()
-                    .timer(Duration::from_millis(SEARCH_DEBOUNCE_MS))
-                    .await;
+                cx.background_executor().timer(SEARCH_DEBOUNCE).await;
 
                 if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
                     return None;
@@ -902,15 +937,14 @@ impl PickerDelegate for Delegate {
         let now = std::time::Instant::now();
         let is_click = self
             .last_selection_change_time
-            .map(|t| now.duration_since(t).as_millis() < CLICK_THRESHOLD_MS)
+            .map(|t| now.duration_since(t) < CLICK_THRESHOLD)
             .unwrap_or(false);
 
         if is_click {
             let is_double_click = self
                 .last_click
                 .map(|(ix, t)| {
-                    ix == self.selected_index
-                        && now.duration_since(t).as_millis() < DOUBLE_CLICK_THRESHOLD_MS
+                    ix == self.selected_index && now.duration_since(t) < DOUBLE_CLICK_THRESHOLD
                 })
                 .unwrap_or(false);
             self.last_click = Some((self.selected_index, now));
@@ -1250,11 +1284,7 @@ async fn stream_results_to_picker(
                 let delegate = &mut picker.delegate;
 
                 if clear_existing {
-                    delegate.matches.clear();
-                    delegate.entries.clear();
-                    delegate.unique_files.clear();
-                    delegate.collapsed_paths.clear();
-                    delegate.selected_index = 0;
+                    delegate.clear_results();
                     clear_existing = false;
                 }
 
@@ -1284,6 +1314,20 @@ async fn stream_results_to_picker(
 
         smol::future::yield_now().await;
     }
+
+    // An empty stream never enters the loop above, leaving the previous results
+    // visible. Clear them unless this search was cancelled.
+    if clear_existing && !cancel_flag.load(Ordering::SeqCst) {
+        picker
+            .update(cx, |picker, cx| {
+                picker.delegate.clear_results();
+                picker.delegate.prepend_selected_matches();
+                picker.delegate.rebuild_entries();
+                cx.notify();
+            })
+            .log_err();
+    }
+
     None
 }
 
@@ -1472,13 +1516,14 @@ impl Delegate {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{AppContext, TestAppContext};
+    use gpui::{AppContext, TestAppContext, VisualTestContext};
     use project::search::{SearchQuery, SearchResult};
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
     use util::paths::PathMatcher;
+    use workspace::MultiWorkspace;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -1499,8 +1544,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_finder_caps_matches_on_long_line(cx: &mut TestAppContext) {
-        use workspace::MultiWorkspace;
-
         init_test(cx);
 
         let line = "return ".repeat(Search::MAX_SEARCH_RESULT_RANGES * 2);
@@ -1512,27 +1555,21 @@ mod tests {
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
 
-        let delegate = window
-            .update(cx, |_mw, window, cx| {
-                workspace.update(cx, |workspace, cx| Delegate::new(workspace, window, cx))
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let delegate = workspace
+            .update_in(cx, |workspace, window, cx| {
+                Delegate::new(workspace, window, cx)
             })
-            .unwrap()
             .await;
-        let picker = window
-            .update(cx, |_mw, window, cx| {
-                cx.new(|cx| Picker::list(delegate, window, cx))
-            })
-            .unwrap();
+        let picker = cx.new_window_entity(|window, cx| Picker::list(delegate, window, cx));
 
-        window
-            .update(cx, |_mw, window, cx| {
-                picker.update(cx, |picker, cx| picker.set_query("return", window, cx))
-            })
-            .unwrap();
+        picker.update_in(cx, |picker, window, cx| {
+            picker.set_query("return", window, cx)
+        });
 
         // Search is debounced; advance past the debounce and let results stream in.
         cx.executor()
-            .advance_clock(std::time::Duration::from_millis(SEARCH_DEBOUNCE_MS + 50));
+            .advance_clock(SEARCH_DEBOUNCE + Duration::from_millis(50));
         cx.run_until_parked();
 
         picker.read_with(cx, |picker, _| {
@@ -1599,6 +1636,53 @@ mod tests {
             let match_range = 8..11; // "foo"
             let window = matched_line_window(&snapshot, &match_range, match_range.start as u32);
             assert_eq!(window, 0..snapshot.len());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_no_matches_clears_previous_results(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let project = project_with_file(cx, "Fruits – Banana, Apple, Mango".to_string()).await;
+        let duration = SEARCH_DEBOUNCE + Duration::from_millis(50);
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let delegate = workspace
+            .update_in(cx, |workspace, window, cx| {
+                Delegate::new(workspace, window, cx)
+            })
+            .await;
+        let picker = cx.new_window_entity(|window, cx| Picker::list(delegate, window, cx));
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.set_query("Banana", window, cx);
+        });
+
+        // Since search is debounced, we need to advance the clock and let the
+        // results stream in.
+        cx.executor().advance_clock(duration);
+        cx.run_until_parked();
+        picker.read_with(cx, |picker, _cx| {
+            assert_eq!(picker.delegate.matches.len(), 1);
+        });
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.set_query("Pear", window, cx);
+        });
+
+        // Since search is debounced, we need to advance the clock and let the
+        // results stream in.
+        cx.executor().advance_clock(duration);
+        cx.run_until_parked();
+        picker.read_with(cx, |picker, _cx| {
+            assert!(picker.delegate.matches.is_empty());
+            assert!(picker.delegate.entries.is_empty());
+            assert!(picker.delegate.unique_files.is_empty());
         });
     }
 }

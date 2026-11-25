@@ -80,10 +80,6 @@ impl Anchor {
         let min = Self::min_for_buffer(buffer_id);
         min..min
     }
-    pub fn max_max_range_for_buffer(buffer_id: BufferId) -> std::ops::Range<Self> {
-        let max = Self::max_for_buffer(buffer_id);
-        max..max
-    }
     pub fn min_max_range_for_buffer(buffer_id: BufferId) -> std::ops::Range<Self> {
         Self::min_for_buffer(buffer_id)..Self::max_for_buffer(buffer_id)
     }
@@ -148,10 +144,10 @@ impl Anchor {
 
     /// Returns true when the [`Anchor`] is located inside a visible fragment.
     pub fn is_valid(&self, buffer: &BufferSnapshot) -> bool {
-        if self.is_min() || self.is_max() {
-            true
-        } else if self.buffer_id != buffer.remote_id {
+        if self.buffer_id != buffer.remote_id {
             false
+        } else if self.is_min() || self.is_max() {
+            true
         } else {
             let Some(fragment_id) = buffer.try_fragment_id_for_anchor(self) else {
                 return false;

@@ -10,9 +10,8 @@ workspace = true
 
 [lib]
 path = "src/feedback.rs"
-
-[features]
-test-support = []
+test = false
+doctest = false
 
 [dependencies]
 extension_host.workspace = true

@@ -13,7 +13,6 @@ pub struct TreeViewItem {
     selected: bool,
     disabled: bool,
     focused: bool,
-    default_expanded: bool,
     root_item: bool,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
@@ -34,7 +33,6 @@ impl TreeViewItem {
             selected: false,
             disabled: false,
             focused: false,
-            default_expanded: false,
             root_item: false,
             tooltip: None,
             on_click: None,
@@ -87,11 +85,6 @@ impl TreeViewItem {
         self
     }
 
-    pub fn default_expanded(mut self, default_expanded: bool) -> Self {
-        self.default_expanded = default_expanded;
-        self
-    }
-
     pub fn on_toggle(
         mut self,
         on_toggle: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -138,7 +131,7 @@ impl RenderOnce for TreeViewItem {
         let selected_border = cx.theme().colors().border.opacity(0.4);
         let focused_border = cx.theme().colors().border_focused;
 
-        let item_size = rems_from_px(28.);
+        let item_size = rems_from_px(28_f32);
         let indentation_line = h_flex()
             .h(item_size)
             .w(px(22.))

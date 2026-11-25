@@ -11,6 +11,7 @@ workspace = true
 [lib]
 path = "src/test_extension.rs"
 crate-type = ["cdylib"]
+test = false
 
 [dependencies]
 zed_extension_api = { path = "../../crates/extension_api" }

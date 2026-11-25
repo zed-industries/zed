@@ -361,9 +361,7 @@ impl TelemetryLogView {
             .border_b_1()
             .hover(|this| this.bg(element_background.opacity(0.5)))
             .on_click(cx.listener(move |this, _, _, cx| {
-                if this.expanded.contains(&event_index) {
-                    this.expanded.remove(&event_index);
-                } else {
+                if !this.expanded.remove(&event_index) {
                     this.expanded.insert(event_index);
                     if let Some(filtered_idx) = this
                         .filtered_indices

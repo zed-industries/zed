@@ -1,0 +1,39 @@
+{"Put":{"state":"lˇet x let"}}
+{"Key":"*"}
+{"Get":{"state":"let x ˇlet","mode":"Normal"}}
+{"Put":{"state":"ˇlet x let"}}
+{"Key":"*"}
+{"Get":{"state":"let x ˇlet","mode":"Normal"}}
+{"Put":{"state":"ˇ let x let"}}
+{"Key":"*"}
+{"Get":{"state":" let x ˇlet","mode":"Normal"}}
+{"Put":{"state":"(ˇ[ tmp ([tmp"}}
+{"Key":"*"}
+{"Get":{"state":"([ tmp ([ˇtmp","mode":"Normal"}}
+{"Put":{"state":"tmp(ˇ[ (["}}
+{"Key":"*"}
+{"Get":{"state":"tmp([ ˇ([","mode":"Normal"}}
+{"Put":{"state":"tmpˇ([ (["}}
+{"Key":"*"}
+{"Get":{"state":"tmp([ ˇ([","mode":"Normal"}}
+{"Key":"#"}
+{"Get":{"state":"tmpˇ([ ([","mode":"Normal"}}
+{"Put":{"state":"tmp([ ˇ([ ([ (["}}
+{"Key":"2"}
+{"Key":"*"}
+{"Get":{"state":"tmp([ ([ ([ ˇ([","mode":"Normal"}}
+{"Key":"2"}
+{"Key":"#"}
+{"Get":{"state":"tmp([ ˇ([ ([ ([","mode":"Normal"}}
+{"Put":{"state":"ˇhi highlight hi"}}
+{"Key":"*"}
+{"Get":{"state":"hi highlight ˇhi","mode":"Normal"}}
+{"Key":"#"}
+{"Get":{"state":"ˇhi highlight hi","mode":"Normal"}}
+{"Key":"g"}
+{"Key":"*"}
+{"Get":{"state":"hi ˇhighlight hi","mode":"Normal"}}
+{"Put":{"state":"hi highlight ˇhi"}}
+{"Key":"g"}
+{"Key":"#"}
+{"Get":{"state":"hi ˇhighlight hi","mode":"Normal"}}

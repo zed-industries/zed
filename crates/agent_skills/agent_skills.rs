@@ -1,8 +1,12 @@
-use anyhow::{Context as _, Result};
+mod global_skill_paths;
+
+use anyhow::{Context as _, Result, anyhow};
+use collections::HashMap;
 use const_format::{concatcp, formatcp};
 use fs::Fs;
 use futures::StreamExt;
-use gpui::{App, Global, SharedString};
+pub use global_skill_paths::*;
+use gpui::{App, EntityId, Global, SharedString};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -64,8 +68,37 @@ impl SkillLoadWarning {
                 actual_len,
                 max_len,
             } => format!(
-                "Skill description is {actual_len} bytes, exceeding the {max_len}-byte limit. The skill was loaded, but long descriptions may consume more model-context tokens."
+                "Skill description is {actual_len} characters, exceeding the {max_len}-character limit. The skill was loaded, but long descriptions may consume more model-context tokens."
             ),
+        }
+    }
+
+    pub fn to_proto(&self) -> proto::GlobalSkillLoadWarning {
+        use proto::global_skill_load_warning::{DescriptionTooLong, Variant};
+
+        let variant = match self {
+            Self::DescriptionTooLong {
+                actual_len,
+                max_len,
+            } => Variant::DescriptionTooLong(DescriptionTooLong {
+                actual_len: *actual_len as u64,
+                max_len: *max_len as u64,
+            }),
+        };
+        proto::GlobalSkillLoadWarning {
+            variant: Some(variant),
+        }
+    }
+
+    /// Returns `None` for a warning this version doesn't know about.
+    pub fn from_proto(warning: proto::GlobalSkillLoadWarning) -> Option<Self> {
+        use proto::global_skill_load_warning::Variant;
+
+        match warning.variant? {
+            Variant::DescriptionTooLong(warning) => Some(Self::DescriptionTooLong {
+                actual_len: warning.actual_len as usize,
+                max_len: warning.max_len as usize,
+            }),
         }
     }
 }
@@ -90,6 +123,45 @@ pub struct Skill {
     /// this holds the full SKILL.md body so the skill tool can serve it
     /// without a filesystem read.
     pub embedded_body: Option<&'static str>,
+}
+
+impl Skill {
+    pub fn to_proto(&self) -> proto::GlobalSkill {
+        debug_assert!(
+            self.source == SkillSource::Global,
+            "only global skills are sent over the wire"
+        );
+        proto::GlobalSkill {
+            name: self.name.clone(),
+            description: self.description.clone(),
+            skill_file_path: self.skill_file_path.to_string_lossy().into_owned(),
+            directory_path: self.directory_path.to_string_lossy().into_owned(),
+            disable_model_invocation: self.disable_model_invocation,
+            load_warnings: self
+                .load_warnings
+                .iter()
+                .map(SkillLoadWarning::to_proto)
+                .collect(),
+        }
+    }
+
+    /// Only global skills are sent over the wire.
+    pub fn from_proto(skill: proto::GlobalSkill) -> Self {
+        Self {
+            name: skill.name,
+            description: skill.description,
+            source: SkillSource::Global,
+            directory_path: PathBuf::from(skill.directory_path),
+            skill_file_path: PathBuf::from(skill.skill_file_path),
+            load_warnings: skill
+                .load_warnings
+                .into_iter()
+                .filter_map(SkillLoadWarning::from_proto)
+                .collect(),
+            disable_model_invocation: skill.disable_model_invocation,
+            embedded_body: None,
+        }
+    }
 }
 
 /// Indicates where a skill was loaded from.
@@ -183,7 +255,10 @@ impl SkillSource {
 /// by any UI that needs to display the skill list (e.g. Settings UI).
 #[derive(Default)]
 pub struct SkillIndex {
+    /// From this machine's `~/.agents/skills`.
     pub global_skills: Vec<Skill>,
+    /// From each remote project's machine, keyed by the project's entity id.
+    pub remote_global_skills: HashMap<EntityId, Vec<Skill>>,
     pub project_skills: Vec<ProjectSkillGroup>,
 }
 
@@ -252,6 +327,22 @@ impl std::fmt::Display for SkillLoadError {
 }
 
 impl std::error::Error for SkillLoadError {}
+
+impl SkillLoadError {
+    pub fn to_proto(&self) -> proto::GlobalSkillLoadError {
+        proto::GlobalSkillLoadError {
+            path: self.path.to_string_lossy().into_owned(),
+            message: self.message.clone(),
+        }
+    }
+
+    pub fn from_proto(error: proto::GlobalSkillLoadError) -> Self {
+        Self {
+            path: PathBuf::from(error.path),
+            message: error.message,
+        }
+    }
+}
 
 /// Parse the frontmatter of a SKILL.md file into a `Skill` struct.
 ///
@@ -330,9 +421,10 @@ fn validate_description_for_loading(
     }
 
     let mut warnings = Vec::new();
-    if description.len() > MAX_SKILL_DESCRIPTION_LEN {
+    let description_len = description.chars().count();
+    if description_len > MAX_SKILL_DESCRIPTION_LEN {
         warnings.push(SkillLoadWarning::DescriptionTooLong {
-            actual_len: description.len(),
+            actual_len: description_len,
             max_len: MAX_SKILL_DESCRIPTION_LEN,
         });
     }
@@ -416,13 +508,9 @@ fn extract_frontmatter(content: &str) -> Result<(SkillMetadata, &str)> {
 /// by [`validate_name`].
 pub const MAX_SKILL_NAME_LEN: usize = 64;
 
-/// Maximum recommended length (in bytes) for a skill description. The
+/// Maximum recommended length (in Unicode scalar values) for a skill description. The
 /// create-skill UI enforces this as a hard limit, while the loader emits a
 /// warning and still loads longer descriptions.
-///
-/// Byte-based rather than char-based because that's what `.len()` returns
-/// and what every caller currently measures; the UI also surfaces this
-/// limit as a byte count so the editor's counter matches the validator.
 pub const MAX_SKILL_DESCRIPTION_LEN: usize = 1024;
 
 /// Convert an arbitrary human-readable string into a valid skill name, or
@@ -532,9 +620,9 @@ pub fn validate_description(description: &str) -> Result<(), &'static str> {
     if description.trim().is_empty() {
         return Err("Skill description cannot be empty");
     }
-    if description.len() > MAX_SKILL_DESCRIPTION_LEN {
+    if description.chars().count() > MAX_SKILL_DESCRIPTION_LEN {
         return Err(formatcp!(
-            "Skill description must be at most {MAX_SKILL_DESCRIPTION_LEN} bytes"
+            "Skill description must be at most {MAX_SKILL_DESCRIPTION_LEN} characters"
         ));
     }
     Ok(())
@@ -748,14 +836,158 @@ pub fn builtin_skill_content(skill_file_path: &Path) -> Option<&'static str> {
 /// location, so a Zed installation may have skills here even before the
 /// rest of Zed's skills support ships.
 ///
-/// In test builds, `paths::home_dir()` is hardcoded to a fixed path
-/// (e.g. `/Users/zed`), so all tests using this function operate on the
-/// same simulated home directory. Each test should use its own `FakeFs`
-/// instance to keep skill setups from leaking across tests.
+/// Tests see the real home directory here, so they should resolve this path
+/// against their own `FakeFs` instance rather than the real filesystem.
 pub fn global_skills_dir() -> PathBuf {
     paths::home_dir()
         .join(AGENTS_DIR_NAME)
         .join(SKILLS_DIR_NAME)
+}
+
+/// Watches a skills directory and calls `on_change` once per batch of changes,
+/// until `on_change` returns `false` or the events stop. Returns `true` when it
+/// stopped because `skills_dir` itself was removed.
+pub async fn watch_skills_dir(
+    fs: Arc<dyn Fs>,
+    skills_dir: PathBuf,
+    mut on_change: impl FnMut() -> bool,
+) -> bool {
+    let (mut events, watcher) = fs
+        .watch(&skills_dir, std::time::Duration::from_millis(500))
+        .await;
+
+    // Linux's inotify backend is non-recursive, so a watch on
+    // `skills_dir` only fires for direct children. Skill discovery
+    // is intentionally one level deep (`<skills_dir>/<skill>/SKILL.md`),
+    // so we only register watches on each immediate child directory
+    // and deliberately do NOT recurse: a stray `node_modules`,
+    // `target`, or `.git` inside a skill folder would otherwise
+    // register watches for tens of thousands of subdirectories.
+    // These per-child adds are cheap no-ops on macOS/Windows where
+    // the OS-level watch is already recursive.
+    if let Ok(mut entries) = fs.read_dir(&skills_dir).await {
+        while let Some(entry) = entries.next().await {
+            let Ok(path) = entry else { continue };
+            if let Ok(Some(metadata)) = fs.metadata(&path).await
+                && metadata.is_dir
+            {
+                watcher.add(&path).ok();
+            }
+        }
+    }
+
+    while let Some(events) = events.next().await {
+        // When a new immediate child directory of `skills_dir` is
+        // created, add a single watch for it so changes to its
+        // `SKILL.md` are observed on Linux. We intentionally do not
+        // recurse into the new directory — skill discovery is only
+        // one level deep.
+        for event in &events {
+            if event.kind == Some(fs::PathEventKind::Created)
+                && event.path.parent() == Some(skills_dir.as_path())
+                && fs.is_dir(&event.path).await
+            {
+                watcher.add(&event.path).ok();
+            }
+        }
+
+        let watched_root_removed = events.iter().any(|event| {
+            event.path == skills_dir && event.kind == Some(fs::PathEventKind::Removed)
+        });
+
+        if !on_change() {
+            return false;
+        }
+        if watched_root_removed {
+            return true;
+        }
+    }
+    false
+}
+
+/// Serialize the SKILL.md file to disk at `<skills_dir>/<name>/SKILL.md`.
+///
+/// Refuses to overwrite an existing directory at `<skills_dir>/<name>`. The
+/// caller surfaces the resulting error to the user, who picks a different
+/// name.
+pub async fn write_skill_to_disk(
+    fs: &dyn Fs,
+    skills_dir: &Path,
+    name: &str,
+    description: &str,
+    body: &str,
+    disable_model_invocation: bool,
+) -> Result<PathBuf> {
+    let skill_dir = skills_dir.join(name);
+    match fs.metadata(&skill_dir).await {
+        Ok(Some(metadata)) => {
+            return Err(existing_skill_path_error(name, &skill_dir, metadata.is_dir));
+        }
+        Ok(None) => {}
+        Err(err) => {
+            return Err(err).with_context(|| {
+                format!(
+                    "failed to check whether {} already exists",
+                    skill_dir.display()
+                )
+            });
+        }
+    }
+
+    let content = format_skill_file(name, description, body, disable_model_invocation)?;
+
+    fs.create_dir(&skill_dir)
+        .await
+        .with_context(|| format!("failed to create skill directory {}", skill_dir.display()))?;
+    let skill_file_path = skill_dir.join(SKILL_FILE_NAME);
+    fs.write(&skill_file_path, content.as_bytes())
+        .await
+        .with_context(|| format!("failed to write {}", skill_file_path.display()))?;
+
+    Ok(skill_file_path)
+}
+
+pub fn existing_skill_path_error(name: &str, skill_dir: &Path, is_dir: bool) -> anyhow::Error {
+    if is_dir {
+        anyhow!(
+            "A skill named \"{name}\" already exists at {}. Pick a different name.",
+            skill_dir.display()
+        )
+    } else {
+        // Without this check, creating the directory fails with a vague "File exists" error.
+        anyhow!(
+            "A file (not a skill directory) already exists at {}. \
+             Delete it or pick a different skill name.",
+            skill_dir.display()
+        )
+    }
+}
+
+pub fn format_skill_file(
+    name: &str,
+    description: &str,
+    body: &str,
+    disable_model_invocation: bool,
+) -> Result<String> {
+    let metadata = SkillMetadata {
+        name: name.to_string(),
+        description: description.to_string(),
+        disable_model_invocation,
+    };
+    let frontmatter = serde_yaml_ng::to_string(&metadata)
+        .context("failed to serialize skill frontmatter as YAML")?;
+
+    let mut content = String::with_capacity(frontmatter.len() + body.len() + 16);
+    content.push_str("---\n");
+    content.push_str(&frontmatter);
+    content.push_str("---\n");
+    let trimmed_body = body.trim();
+    if !trimmed_body.is_empty() {
+        content.push('\n');
+        content.push_str(trimmed_body);
+        content.push('\n');
+    }
+    Ok(content)
 }
 
 /// Project-local skills live at this path relative to a worktree root,
@@ -1374,8 +1606,32 @@ Content.
     }
 
     #[test]
+    fn test_parse_unicode_description_at_limit_loads_without_warning() {
+        let description = "中".repeat(MAX_SKILL_DESCRIPTION_LEN);
+        let content = format!(
+            r#"---
+name: test
+description: {description}
+---
+
+Content.
+"#
+        );
+
+        let skill = parse_skill_frontmatter(
+            Path::new("/skills/test/SKILL.md"),
+            &content,
+            SkillSource::Global,
+        )
+        .expect("descriptions at the character limit should load without a warning");
+
+        assert_eq!(skill.description, description);
+        assert!(skill.load_warnings.is_empty());
+    }
+
+    #[test]
     fn test_parse_description_too_long_loads_with_warning() {
-        let long_desc = "a".repeat(MAX_SKILL_DESCRIPTION_LEN + 1);
+        let long_desc = "中".repeat(MAX_SKILL_DESCRIPTION_LEN + 1);
         let content = format!(
             r#"---
 name: test
@@ -1406,7 +1662,7 @@ Content.
 
     #[test]
     fn test_parse_skill_file_content_rejects_description_too_long() {
-        let long_desc = "a".repeat(MAX_SKILL_DESCRIPTION_LEN + 1);
+        let long_desc = "中".repeat(MAX_SKILL_DESCRIPTION_LEN + 1);
         let content = format!(
             r#"---
 name: test
@@ -1419,7 +1675,7 @@ Content.
 
         let result = parse_skill_file_content(&content);
         assert!(result.is_err());
-        let expected = format!("at most {MAX_SKILL_DESCRIPTION_LEN} bytes");
+        let expected = format!("at most {MAX_SKILL_DESCRIPTION_LEN} characters");
         assert!(result.unwrap_err().to_string().contains(&expected));
     }
 
@@ -2133,16 +2389,12 @@ description: A skill with no body content
     }
 
     #[test]
-    fn validate_description_length_is_measured_in_bytes() {
-        // "é" is 2 bytes in UTF-8. A string of MAX/2 + 1 "é" characters has
-        // only ~MAX/2 + 1 chars but exceeds MAX bytes, so it must be
-        // rejected by a byte-based validator (and accepted by a char-based
-        // one). This regression-tests the byte semantics that strict
-        // validation and load-time warnings both rely on.
-        let chars = MAX_SKILL_DESCRIPTION_LEN / 2 + 1;
-        let description = "é".repeat(chars);
-        assert!(description.chars().count() <= MAX_SKILL_DESCRIPTION_LEN);
+    fn validate_description_length_is_measured_in_characters() {
+        let description = "中".repeat(MAX_SKILL_DESCRIPTION_LEN);
         assert!(description.len() > MAX_SKILL_DESCRIPTION_LEN);
+        assert!(validate_description(&description).is_ok());
+
+        let description = "中".repeat(MAX_SKILL_DESCRIPTION_LEN + 1);
         assert!(validate_description(&description).is_err());
     }
 
@@ -2183,5 +2435,140 @@ description: A skill with no body content
         assert!(decode_skill_share_link("zed://skill").is_err());
         assert!(decode_skill_share_link("zed://skill?other=1").is_err());
         assert!(decode_skill_share_link("zed://skill?data=!!!notbase64").is_err());
+    }
+
+    #[test]
+    fn format_skill_file_round_trips_through_parser() {
+        let content =
+            format_skill_file("draft-pr", "Push a draft PR", "Do the thing.", false).unwrap();
+        let skill = parse_skill_frontmatter(
+            Path::new("/skills/draft-pr/SKILL.md"),
+            &content,
+            SkillSource::Global,
+        )
+        .expect("generated frontmatter must round-trip through parse_skill_frontmatter");
+        assert_eq!(skill.name, "draft-pr");
+        assert_eq!(skill.description, "Push a draft PR");
+        assert!(!skill.disable_model_invocation);
+    }
+
+    #[test]
+    fn format_skill_file_writes_disable_model_invocation_true() {
+        let content = format_skill_file("my-skill", "description", "body", true).unwrap();
+        assert!(content.contains("disable-model-invocation: true"));
+    }
+
+    #[test]
+    fn format_skill_file_omits_body_when_empty() {
+        let content = format_skill_file("my-skill", "description", "   ", false).unwrap();
+        // The trailing closing-delimiter newline is the last byte.
+        assert!(content.ends_with("---\n"));
+    }
+
+    #[test]
+    fn format_skill_file_escapes_yaml_specials_in_description() {
+        // serde_yaml_ng must quote/escape descriptions that contain YAML
+        // specials so the file round-trips. If we ever swap formatters,
+        // this test will catch a regression.
+        let tricky = "contains: a colon, # a hash, and a \"quote\"";
+        let content = format_skill_file("weird-skill", tricky, "body", false).unwrap();
+        let skill = parse_skill_frontmatter(
+            Path::new("/skills/weird-skill/SKILL.md"),
+            &content,
+            SkillSource::Global,
+        )
+        .expect("YAML-special characters must round-trip");
+        assert_eq!(skill.description, tricky);
+    }
+
+    #[gpui::test]
+    async fn write_skill_to_disk_creates_directory_and_file(cx: &mut gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/skills", serde_json::json!({})).await;
+
+        let path = write_skill_to_disk(
+            fs.as_ref(),
+            Path::new("/skills"),
+            "draft-pr",
+            "Push a draft PR",
+            "Body of the skill.",
+            false,
+        )
+        .await
+        .expect("write should succeed");
+
+        assert_eq!(path, Path::new("/skills/draft-pr/SKILL.md"));
+        let content = fs.load(&path).await.expect("file should exist");
+        let skill = parse_skill_frontmatter(&path, &content, SkillSource::Global)
+            .expect("written file should be parseable");
+        assert_eq!(skill.name, "draft-pr");
+        assert_eq!(skill.description, "Push a draft PR");
+    }
+
+    #[gpui::test]
+    async fn write_skill_to_disk_refuses_to_overwrite(cx: &mut gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/skills",
+            serde_json::json!({
+                "draft-pr": {
+                    "SKILL.md": "---\nname: draft-pr\ndescription: existing\n---\nbody\n"
+                }
+            }),
+        )
+        .await;
+
+        let err = write_skill_to_disk(
+            fs.as_ref(),
+            Path::new("/skills"),
+            "draft-pr",
+            "Push a draft PR",
+            "Body of the skill.",
+            false,
+        )
+        .await
+        .expect_err("writing over an existing skill must fail");
+        assert!(
+            err.to_string().contains("already exists"),
+            "error message should mention the conflict, got: {err}"
+        );
+    }
+
+    #[gpui::test]
+    async fn write_skill_to_disk_rejects_non_directory_at_skill_path(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = FakeFs::new(cx.executor());
+        // A *file* (not a directory) sitting at `/skills/draft-pr`. With the
+        // old `is_dir` check this slipped through and we ended up surfacing
+        // the underlying "File exists" OS error.
+        fs.insert_tree(
+            "/skills",
+            serde_json::json!({ "draft-pr": "i am a stray file" }),
+        )
+        .await;
+
+        let err = write_skill_to_disk(
+            fs.as_ref(),
+            Path::new("/skills"),
+            "draft-pr",
+            "Push a draft PR",
+            "Body of the skill.",
+            false,
+        )
+        .await
+        .expect_err("writing where a file already lives must fail");
+        let message = err.to_string();
+        assert!(
+            message.contains("not a skill directory"),
+            "error should explain the conflict is a non-directory, got: {message}"
+        );
+        // Path separator differs between platforms
+        let expected_path = Path::new("/skills").join("draft-pr");
+        let expected_path = expected_path.display().to_string();
+        assert!(
+            message.contains(&expected_path),
+            "error should include the conflicting path {expected_path:?}, got: {message}"
+        );
     }
 }

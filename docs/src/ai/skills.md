@@ -119,11 +119,11 @@ Step-by-step instructions for the agent...
 
 #### Frontmatter Fields {#frontmatter-fields}
 
-| Field                      | Required | Description                                                                                                                       |
-| -------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `name`                     | Yes      | Lowercase letters, numbers, and hyphens only. Max 64 characters. Should match the folder name.                                    |
-| `description`              | Yes      | What the skill does and when to use it. Keep it under 1024 bytes; skills with longer descriptions still load, but with a warning. |
-| `disable-model-invocation` | No       | Set to `true` to hide from the agent's catalog (invocable via slash command or @-mention only).                                   |
+| Field                      | Required | Description                                                                                                                              |
+| -------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                     | Yes      | Lowercase letters, numbers, and hyphens only. Max 64 characters. Should match the folder name.                                           |
+| `description`              | Yes      | What the skill does and when to use it. Keep it at most 1024 characters; skills with longer descriptions still load, but with a warning. |
+| `disable-model-invocation` | No       | Set to `true` to hide from the agent's catalog (invocable via slash command or @-mention only).                                          |
 
 > **Tip:** Write descriptions that help the agent recognize when a skill is relevant. Include specific task types and trigger phrases: "Use when handling PDFs, extracting text, or filling forms" is better than "Helps with PDFs."
 
@@ -174,6 +174,12 @@ Zed loads skills from two locations:
 
 Each skill is a direct child of the skills root. Nesting skills inside subfolders is not supported.
 
+### Remote Projects {#remote-projects}
+
+In a remote project (SSH, WSL, or a dev container), global skills come from `~/.agents/skills/` on the remote machine, not your local one. The **User** tab of the skills page lists, creates, and deletes skills on the remote machine. The agent also reads, creates, and edits global skills there.
+
+Skills [migrated from Rules](./instructions.md#migrating-from-rules) live on your local machine, so they aren't available in remote projects. Copy them to the remote's `~/.agents/skills/` to use them there.
+
 ### Project-local Skills and Trust {#project-local-trust}
 
 Project-local skills only load from [trusted worktrees](../worktree-trust.md). Skills from a freshly cloned or untrusted project are excluded from the catalog and slash commands until you grant trust.
@@ -190,7 +196,7 @@ The agent cannot edit `SKILL.md` files or their bundled resources without your e
 
 ## Agent Path Boundaries {#agent-path-boundaries}
 
-Zed Skills apply to the Zed Agent. External Agents and Terminal Threads may have their own native skills, prompts, or instruction systems. Configure those in the External Agent or CLI.
+Zed Skills apply to the Zed Agent. [External Agents](./external-agents.md) and Terminal Threads may have their own native skills, prompts, or instruction systems. Configure those in the External Agent or CLI.
 
 ## Limitations {#limitations}
 

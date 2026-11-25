@@ -10,6 +10,8 @@ workspace = true
 
 [lib]
 path = "src/web_search_providers.rs"
+test = false
+doctest = false
 
 [dependencies]
 anyhow.workspace = true
@@ -21,6 +23,5 @@ futures.workspace = true
 gpui.workspace = true
 http_client.workspace = true
 language_model.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 web_search.workspace = true

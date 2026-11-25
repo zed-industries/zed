@@ -5,18 +5,6 @@ use gpui::SharedString;
 
 use crate::Appearance;
 
-/// A family of icon themes.
-pub struct IconThemeFamily {
-    /// The unique ID for the icon theme family.
-    pub id: String,
-    /// The name of the icon theme family.
-    pub name: SharedString,
-    /// The author of the icon theme family.
-    pub author: SharedString,
-    /// The list of icon themes in the family.
-    pub themes: Vec<IconTheme>,
-}
-
 /// An icon theme.
 #[derive(Debug, PartialEq)]
 pub struct IconTheme {
@@ -66,7 +54,7 @@ pub struct IconDefinition {
 }
 
 const FILE_STEMS_BY_ICON_KEY: &[(&str, &[&str])] = &[
-    ("docker", &["Containerfile", "Dockerfile"]),
+    ("docker", &["Containerfile", "Dockerfile", ".dockerignore"]),
     ("ruby", &["Podfile"]),
     ("heroku", &["Procfile"]),
 ];
@@ -230,8 +218,8 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
         "storage",
         &[
             "accdb", "csv", "dat", "db", "dbf", "dll", "fmp", "fp7", "frm", "gdb", "ib", "ldf",
-            "mdb", "mdf", "myd", "myi", "pdb", "RData", "rdata", "sav", "sdf", "sql", "sqlite",
-            "tsv",
+            "mdb", "mdf", "myd", "myi", "pdb", "psv", "RData", "rdata", "sav", "sdf", "sql",
+            "sqlite", "ssv", "tsv",
         ],
     ),
     (
@@ -264,6 +252,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
             "bash_logout",
             "bash_profile",
             "bashrc",
+            "brushrc",
             "fish",
             "nu",
             "profile",

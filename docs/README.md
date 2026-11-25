@@ -88,19 +88,7 @@ You can see how the actions and keybindings are templated in `crates/docs_prepro
 
 ## Consent Banner
 
-We pre-bundle the `c15t` package because the docs pipeline does not include a JS bundler. If you need to update `c15t` and rebuild the bundle, use:
-
-```
-mkdir c15t-bundle && cd c15t-bundle
-npm init -y
-npm install c15t@<version> esbuild
-echo "import { getOrCreateConsentRuntime } from 'c15t'; window.c15t = { getOrCreateConsentRuntime };" > entry.js
-npx esbuild entry.js --bundle --format=iife --minify --outfile=c15t@<version>.js
-cp c15t@<version>.js ../theme/c15t@<version>.js
-cd .. && rm -rf c15t-bundle
-```
-
-Replace `<version>` with the new version of `c15t` you are installing. Then update `book.toml` to reference the new bundle filename.
+The consent banner is the markup in `theme/index.hbs`, driven by `theme/analytics.js`. That script loads `c15t.js` from our Inth backend (`DOCS_CONSENT_IO_INSTANCE`) with c15t's stock UI turned off. Inth serves the c15t version our hosted backend runs, so there is no bundle to update in this repo. The banner only appears when `DOCS_CONSENT_IO_INSTANCE` is set.
 
 ### References
 
@@ -110,7 +98,7 @@ Replace `<version>` with the new version of `c15t` you are installing. Then upda
 
 ## Postprocessor
 
-A postprocessor is implemented as a sub-command of `docs_preprocessor` that wraps the built-in HTML renderer and applies post-processing to the HTML files, to add support for page-specific title and `meta` tag description values.
+A postprocessor is implemented as a sub-command of `docs-preprocessor` that wraps the built-in HTML renderer and applies post-processing to the HTML files, to add support for page-specific title and `meta` tag description values.
 
 An example of the syntax can be found in `git.md`, as well as below:
 
@@ -140,7 +128,7 @@ If no front matter is provided, or if one or both keys aren't provided, the `tit
 ### Implementation details
 
 Unfortunately, mdBook does not support post-processing like it does pre-processing, and only supports defining one description to put in the `meta` tag per book rather than per file.
-So in order to apply post-processing (necessary to modify the HTML `head` tags) the global book description is set to a marker value `#description#` and the HTML renderer is replaced with a sub-command of `docs_preprocessor` that wraps the built-in HTML renderer and applies post-processing to the HTML files, replacing the marker value and the `<title>(.*)</title>` with the contents of the front matter if there is one.
+So in order to apply post-processing (necessary to modify the HTML `head` tags) the global book description is set to a marker value `#description#` and the HTML renderer is replaced with a sub-command of `docs-preprocessor` that wraps the built-in HTML renderer and applies post-processing to the HTML files, replacing the marker value and the `<title>(.*)</title>` with the contents of the front matter if there is one.
 
 ### Known limitations
 

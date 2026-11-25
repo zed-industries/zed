@@ -2,6 +2,9 @@
 
 //! Demonstrates posting, replacing, dismissing, and responding to system notifications.
 
+#[path = "example_support/fonts.rs"]
+mod example_support;
+
 use gpui::{
     App, Bounds, Context, Div, SharedString, Stateful, SystemNotification,
     SystemNotificationAction, SystemNotificationResponse, Window, WindowBounds, WindowOptions, div,
@@ -60,7 +63,7 @@ impl Render for SystemNotificationExample {
                     )))
                     .child(
                         button("dismiss", "Dismiss").on_click(cx.listener(|this, _, _, cx| {
-                            cx.dismiss_system_notification(NOTIFICATION_TAG);
+                            cx.dismiss_system_notification(NOTIFICATION_TAG).detach();
                             this.status = "Dismissed the notification".into();
                             cx.notify();
                         })),
@@ -97,6 +100,9 @@ fn button(id: &'static str, label: &'static str) -> Stateful<Div> {
 
 fn run_example() {
     application().run(|cx: &mut App| {
+        if !example_support::load_fonts(cx) {
+            return;
+        }
         cx.set_app_identity("dev.zed.gpui.system-notifications", "GPUI Notifications");
 
         let view = cx.new(|_| SystemNotificationExample {

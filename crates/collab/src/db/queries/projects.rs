@@ -53,14 +53,14 @@ impl Database {
                 .await?
                 .context("could not find participant")?;
             if participant.room_id != room_id {
-                return Err(anyhow!("shared project on unexpected room"))?;
+                Err(anyhow!("shared project on unexpected room"))?;
             }
             if !participant
                 .role
                 .unwrap_or(ChannelRole::Member)
                 .can_edit_projects()
             {
-                return Err(anyhow!("guests cannot share projects"))?;
+                Err(anyhow!("guests cannot share projects"))?;
             }
 
             let project = project::ActiveModel {
@@ -233,7 +233,7 @@ impl Database {
         if update.removed_entries.len() > proto::MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE
             || update.updated_entries.len() > proto::MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE
         {
-            return Err(anyhow!(
+            Err(anyhow!(
                 "invalid worktree update. removed entries: {}, updated entries: {}",
                 update.removed_entries.len(),
                 update.updated_entries.len()
@@ -276,7 +276,7 @@ impl Database {
 
             if !update.updated_entries.is_empty() {
                 worktree_entry::Entity::insert_many(update.updated_entries.iter().map(|entry| {
-                    let mtime = entry.mtime.clone().unwrap_or_default();
+                    let mtime = entry.mtime.unwrap_or_default();
                     worktree_entry::ActiveModel {
                         project_id: ActiveValue::set(project_id),
                         worktree_id: ActiveValue::set(worktree_id),
@@ -294,6 +294,7 @@ impl Database {
                         is_hidden: ActiveValue::set(entry.is_hidden),
                         scan_id: ActiveValue::set(update.scan_id as i64),
                         is_fifo: ActiveValue::set(entry.is_fifo),
+                        is_unloaded: ActiveValue::set(entry.is_unloaded),
                     }
                 }))
                 .on_conflict(
@@ -312,6 +313,7 @@ impl Database {
                         worktree_entry::Column::IsIgnored,
                         worktree_entry::Column::IsHidden,
                         worktree_entry::Column::ScanId,
+                        worktree_entry::Column::IsUnloaded,
                     ])
                     .to_owned(),
                 )
@@ -528,7 +530,7 @@ impl Database {
                 .await?
                 .context("no such project")?;
             if project.host_connection()? != connection {
-                return Err(anyhow!("can't update a project hosted by someone else"))?;
+                Err(anyhow!("can't update a project hosted by someone else"))?;
             }
 
             // Update summary.
@@ -578,7 +580,7 @@ impl Database {
                 .await?
                 .context("no such project")?;
             if project.host_connection()? != connection {
-                return Err(anyhow!("can't update a project hosted by someone else"))?;
+                Err(anyhow!("can't update a project hosted by someone else"))?;
             }
 
             // Add the newly-started language server.
@@ -620,7 +622,8 @@ impl Database {
     ) -> Result<TransactionGuard<Vec<ConnectionId>>> {
         let project_id = ProjectId::from_proto(update.project_id);
         let kind = match update.kind {
-            Some(kind) => proto::LocalSettingsKind::from_i32(kind)
+            Some(kind) => proto::LocalSettingsKind::try_from(kind)
+                .ok()
                 .with_context(|| format!("unknown worktree settings kind: {kind}"))?,
             None => proto::LocalSettingsKind::Settings,
         };
@@ -632,7 +635,7 @@ impl Database {
                 .await?
                 .context("no such project")?;
             if project.host_connection()? != connection {
-                return Err(anyhow!("can't update a project hosted by someone else"))?;
+                Err(anyhow!("can't update a project hosted by someone else"))?;
             }
 
             if let Some(content) = &update.content {
@@ -809,6 +812,7 @@ impl Database {
                         // on number of files only. That shouldn't be a huge deal in practice.
                         size: None,
                         is_fifo: db_entry.is_fifo,
+                        is_unloaded: db_entry.is_unloaded,
                     });
                 }
             }
@@ -894,6 +898,7 @@ impl Database {
                         head_commit_details,
                         branch_list: Vec::new(),
                         branch_list_error: None,
+                        remote_default_branch: None,
                         scan_id: db_repository_entry.scan_id as u64,
                         is_last_update: true,
                         merge_message: db_repository_entry.merge_message,
@@ -1131,12 +1136,12 @@ impl Database {
         match capability {
             Capability::ReadWrite => {
                 if !role.can_edit_projects() {
-                    return Err(anyhow!("not authorized to edit projects"))?;
+                    Err(anyhow!("not authorized to edit projects"))?;
                 }
             }
             Capability::ReadOnly => {
                 if !role.can_read_projects() {
-                    return Err(anyhow!("not authorized to read projects"))?;
+                    Err(anyhow!("not authorized to read projects"))?;
                 }
             }
         }

@@ -14,7 +14,7 @@ pub enum SelectionGoal {
     WrappedHorizontalPosition((u32, f32)),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Selection<T> {
     pub id: usize,
     pub start: T,
@@ -113,14 +113,6 @@ impl<T: Copy + Ord> Selection<T> {
             self.end = head;
         }
         self.goal = new_goal;
-    }
-
-    pub fn swap_head_tail(&mut self) {
-        if self.reversed {
-            self.reversed = false;
-        } else {
-            std::mem::swap(&mut self.start, &mut self.end);
-        }
     }
 }
 

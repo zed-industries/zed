@@ -1,12 +1,13 @@
 use anyhow::{Result, anyhow};
 use collections::HashMap;
+use futures::stream::BoxStream;
 use futures::{Stream, StreamExt};
 use language_model_core::{
     CompactedContext, CompactionUpdate, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest,
     LanguageModelRequestToolInput, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolUse, LanguageModelToolUseInput, MessageContent, ProviderCompactionState, Role,
-    SharedString, StopReason, TokenUsage,
+    LanguageModelToolUse, LanguageModelToolUseInput, LanguageModelVendor, MessageContent,
+    ProviderCompactionState, Role, SharedString, StopReason, TokenUsage,
     util::{fix_streamed_json, parse_tool_arguments},
 };
 use std::pin::Pin;
@@ -16,9 +17,9 @@ use std::sync::Arc;
 use crate::{
     AdaptiveThinkingDisplay, AnthropicError, AnthropicModelMode, CacheControl, CacheControlType,
     CacheTtl, CompactionTrigger, ContentDelta, ContextManagement, ContextManagementEdit, Event,
-    ImageSource, Message, RequestContent, ResponseContent, StringOrContents, Thinking, Tool,
-    ToolChoice, ToolResultContent, ToolResultPart, Usage, completion_error_from_anthropic,
-    completion_error_from_anthropic_api,
+    ImageSource, Message, PrefixMismatchBehavior, RequestContent, ResponseContent,
+    StringOrContents, Thinking, ThinkingBlockBinding, Tool, ToolChoice, ToolResultContent,
+    ToolResultPart, Usage, completion_error_from_anthropic, completion_error_from_anthropic_api,
 };
 
 pub const COMPACTION_STATE_FORMAT: &str = "anthropic.messages.encrypted-content.v1";
@@ -59,6 +60,63 @@ pub fn provider_compaction_encrypted_content(
         ));
     }
     Ok(Some(state.payload().into()))
+}
+
+/// Collects one paused compaction stream into replacement context and usage.
+///
+/// # Errors
+///
+/// Returns an error when the stream fails, ends without finalized replacement
+/// context, or reports that the provider abandoned compaction.
+pub async fn collect_compaction_result(
+    mut stream: BoxStream<
+        'static,
+        Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+    >,
+    provider_name: LanguageModelProviderName,
+) -> Result<(CompactedContext, TokenUsage), LanguageModelCompletionError> {
+    let mut context = None;
+    let mut usage = TokenUsage::default();
+    while let Some(event) = stream.next().await {
+        match event? {
+            LanguageModelCompletionEvent::Compaction(CompactionUpdate::Finished(
+                compacted_context,
+            )) => {
+                context = Some(compacted_context);
+            }
+            LanguageModelCompletionEvent::Compaction(CompactionUpdate::Failed) => {
+                return Err(LanguageModelCompletionError::Other(anyhow!(
+                    "{provider_name} abandoned compaction without producing replacement context"
+                )));
+            }
+            LanguageModelCompletionEvent::UsageUpdate(updated_usage) => {
+                usage = updated_usage;
+            }
+            LanguageModelCompletionEvent::Stop(_) => {
+                return context.map(|context| (context, usage)).ok_or(
+                    LanguageModelCompletionError::StreamEndedUnexpectedly {
+                        provider: provider_name,
+                    },
+                );
+            }
+            LanguageModelCompletionEvent::Queued { .. }
+            | LanguageModelCompletionEvent::Started
+            | LanguageModelCompletionEvent::Text(_)
+            | LanguageModelCompletionEvent::Thinking { .. }
+            | LanguageModelCompletionEvent::RedactedThinking { .. }
+            | LanguageModelCompletionEvent::ToolUse(_)
+            | LanguageModelCompletionEvent::ToolUseJsonParseError { .. }
+            | LanguageModelCompletionEvent::StartMessage { .. }
+            | LanguageModelCompletionEvent::ReasoningDetails(_)
+            | LanguageModelCompletionEvent::InputTransformations(_)
+            | LanguageModelCompletionEvent::Compaction(CompactionUpdate::Started)
+            | LanguageModelCompletionEvent::Compaction(CompactionUpdate::SummaryDelta(_)) => {}
+        }
+    }
+
+    Err(LanguageModelCompletionError::StreamEndedUnexpectedly {
+        provider: provider_name,
+    })
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -134,9 +192,7 @@ fn to_anthropic_content(
             text: thinking,
             signature,
         } => {
-            if let Some(signature) = signature
-                && !thinking.is_empty()
-            {
+            if let Some(signature) = signature {
                 Ok(Some(RequestContent::Thinking {
                     thinking,
                     signature,
@@ -220,7 +276,8 @@ fn to_anthropic_content(
                 cache_control: None,
             }))
         }
-        MessageContent::Compaction(CompactedContext::ProviderState(_)) => Ok(None),
+        MessageContent::Compaction(CompactedContext::ProviderState(_))
+        | MessageContent::ReasoningEffort { .. } => Ok(None),
     }
 }
 
@@ -230,22 +287,70 @@ pub fn into_anthropic(
     default_temperature: f32,
     max_output_tokens: u64,
     mode: AnthropicModelMode,
+    thinking_types: Option<&crate::ThinkingTypes>,
+    allows_per_message_effort: bool,
     cache_mode: AnthropicPromptCacheMode,
     compaction_state_owner: &LanguageModelProviderId,
 ) -> Result<crate::Request> {
+    let mode = if let Some(types) = thinking_types {
+        if types.adaptive.supported {
+            AnthropicModelMode::AdaptiveThinking
+        } else if types.enabled.supported {
+            match mode {
+                AnthropicModelMode::Thinking { .. } => mode,
+                _ => AnthropicModelMode::Thinking {
+                    budget_tokens: Some(4_096),
+                },
+            }
+        } else {
+            AnthropicModelMode::Default
+        }
+    } else if crate::requires_adaptive_thinking(&model) {
+        AnthropicModelMode::AdaptiveThinking
+    } else {
+        mode
+    };
+    let max_output_tokens = request
+        .max_output_tokens
+        .map_or(max_output_tokens, |limit| limit.min(max_output_tokens));
     let mut new_messages: Vec<Message> = Vec::new();
     let mut system_message = String::new();
     let mut any_message_wants_cache = false;
+    let supports_system_updates = crate::supports_mid_conversation_system_messages(&model);
 
-    for message in request.messages {
-        if message.contents_empty() {
-            continue;
+    let opt_out = if request.thinking_allowed {
+        None
+    } else if let Some(types) = thinking_types
+        && (types.disabled.is_some() || types.between_tools.is_some())
+    {
+        if types.disabled.as_ref().is_some_and(|mode| mode.supported) {
+            Some(Thinking::Disabled)
+        } else if types
+            .between_tools
+            .as_ref()
+            .is_some_and(|mode| mode.supported)
+        {
+            Some(Thinking::BetweenTools)
+        } else {
+            None
         }
-
-        any_message_wants_cache |= message.cache;
-
+    } else {
+        crate::thinking_opt_out_fallback(&model)
+    };
+    let between_tools = matches!(opt_out, Some(Thinking::BetweenTools));
+    let replay_effort = allows_per_message_effort
+        && crate::supports_per_message_effort(&model)
+        && (request.thinking_allowed || between_tools)
+        && matches!(mode, AnthropicModelMode::AdaptiveThinking);
+    let mut baseline_effort = None;
+    let mut effective_effort = None;
+    for message in request.messages {
         match message.role {
             Role::User | Role::Assistant => {
+                if message.contents_empty() {
+                    continue;
+                }
+                any_message_wants_cache |= message.cache;
                 let mut anthropic_message_content = Vec::new();
                 for content in message.content {
                     if let Some(content) = to_anthropic_content(content, compaction_state_owner)? {
@@ -281,13 +386,70 @@ pub fn into_anthropic(
                 new_messages.push(Message {
                     role: anthropic_role,
                     content: anthropic_message_content,
+                    output_config: None,
                 });
             }
             Role::System => {
-                if !system_message.is_empty() {
-                    system_message.push_str("\n\n");
+                if !supports_system_updates || new_messages.is_empty() {
+                    if !message.contents_empty() {
+                        any_message_wants_cache |= message.cache;
+                        if !system_message.is_empty() {
+                            system_message.push_str("\n\n");
+                        }
+                        system_message.push_str(&message.string_contents());
+                    }
+                    continue;
                 }
-                system_message.push_str(&message.string_contents());
+                let mut text = String::new();
+                let mut effort = None;
+                for block in message.content {
+                    match block {
+                        MessageContent::Text(block) => text.push_str(&block),
+                        MessageContent::ReasoningEffort {
+                            model_vendor,
+                            effort: value,
+                        } => {
+                            if replay_effort
+                                && model_vendor == LanguageModelVendor::Anthropic
+                                && let Ok(value) = value.parse::<crate::Effort>()
+                            {
+                                baseline_effort.get_or_insert(value);
+                                effort = Some(value);
+                            }
+                        }
+                        _ => anyhow::bail!(
+                            "Anthropic system updates must contain only text or effort"
+                        ),
+                    }
+                }
+                // Only the last selection at this boundary governs the reply.
+                let output_config = effort.and_then(|effort| {
+                    let previous = effective_effort.replace(effort).or(baseline_effort);
+                    (previous != Some(effort)).then_some(crate::OutputConfig {
+                        effort: Some(effort),
+                    })
+                });
+
+                let mut content = Vec::new();
+                if !text.chars().all(char::is_whitespace) {
+                    any_message_wants_cache |= message.cache;
+                    content.push(RequestContent::Text {
+                        text,
+                        cache_control: (cache_mode == AnthropicPromptCacheMode::Legacy
+                            && message.cache)
+                            .then_some(CacheControl {
+                                cache_type: CacheControlType::Ephemeral,
+                                ttl: None,
+                            }),
+                    });
+                }
+                if !content.is_empty() || output_config.is_some() {
+                    new_messages.push(Message {
+                        role: crate::Role::System,
+                        content,
+                        output_config,
+                    });
+                }
             }
         }
     }
@@ -348,20 +510,22 @@ pub fn into_anthropic(
             }
             AnthropicModelMode::AdaptiveThinking => Some(Thinking::Adaptive {
                 display: Some(AdaptiveThinkingDisplay::Summarized),
+                block_binding: crate::binds_thinking_blocks_to_prefix(&model).then_some(
+                    ThinkingBlockBinding {
+                        prefix_mismatch_behavior: PrefixMismatchBehavior::DropBlock,
+                    },
+                ),
             }),
             AnthropicModelMode::Default => None,
         }
-    } else if crate::requires_explicit_thinking_opt_out(&model) {
-        // On Claude Opus 5, omitting the `thinking` field no longer means
-        // "off": the model runs adaptive thinking by default, so features
-        // that suppress thinking (e.g. inline assist) must opt out
-        // explicitly. `disabled` is only accepted at effort `high` or below;
-        // that holds here because `output_config` is never sent when thinking
-        // is disallowed, and the server-side default effort is `high`.
-        // <https://platform.claude.com/docs/en/about-claude/models/migration-guide#migrating-to-claude-opus-5>
-        Some(Thinking::Disabled)
     } else {
+        opt_out
+    };
+
+    let temperature = if crate::rejects_custom_temperature(&model) {
         None
+    } else {
+        request.temperature.or(Some(default_temperature))
     };
 
     Ok(crate::Request {
@@ -387,33 +551,27 @@ pub fn into_anthropic(
             LanguageModelToolChoice::None => ToolChoice::None,
         }),
         metadata: None,
-        output_config: if request.thinking_allowed
-            && matches!(mode, AnthropicModelMode::AdaptiveThinking)
-        {
-            request.thinking_effort.as_deref().and_then(|effort| {
-                let effort = match effort {
-                    "low" => Some(crate::Effort::Low),
-                    "medium" => Some(crate::Effort::Medium),
-                    "high" => Some(crate::Effort::High),
-                    "xhigh" => Some(crate::Effort::XHigh),
-                    "max" => Some(crate::Effort::Max),
-                    _ => None,
-                };
-                effort.map(|effort| crate::OutputConfig {
-                    effort: Some(effort),
-                })
+        output_config: baseline_effort
+            .or_else(|| {
+                if request.thinking_allowed && matches!(mode, AnthropicModelMode::AdaptiveThinking)
+                {
+                    request.thinking_effort.as_deref()?.parse().ok()
+                } else {
+                    None
+                }
             })
-        } else {
-            None
-        },
+            .map(|effort| crate::OutputConfig {
+                effort: Some(effort),
+            }),
         stop_sequences: Vec::new(),
         speed: request.speed.map(Into::into),
-        temperature: request.temperature.or(Some(default_temperature)),
+        temperature,
         top_k: None,
         top_p: None,
         context_management: request.compact_at_tokens.map(|value| ContextManagement {
             edits: vec![ContextManagementEdit::Compact {
                 trigger: Some(CompactionTrigger::InputTokens { value }),
+                pause_after_compaction: None,
             }],
         }),
     })
@@ -639,14 +797,20 @@ impl AnthropicEventMapper {
             }
             Event::MessageStart { message } => {
                 update_usage(&mut self.usage, &message.usage);
-                vec![
+                let mut events = vec![
                     Ok(LanguageModelCompletionEvent::UsageUpdate(convert_usage(
                         &self.usage,
                     ))),
                     Ok(LanguageModelCompletionEvent::StartMessage {
                         message_id: message.id,
                     }),
-                ]
+                ];
+                if !message.input_transformations.is_empty() {
+                    events.push(Ok(LanguageModelCompletionEvent::InputTransformations(
+                        message.input_transformations,
+                    )));
+                }
+                events
             }
             Event::MessageDelta { delta, usage } => {
                 update_usage(&mut self.usage, &usage);
@@ -655,7 +819,19 @@ impl AnthropicEventMapper {
                         "end_turn" => StopReason::EndTurn,
                         "max_tokens" => StopReason::MaxTokens,
                         "tool_use" => StopReason::ToolUse,
-                        "refusal" => StopReason::Refusal,
+                        "refusal" => {
+                            StopReason::Refusal(Some(language_model_core::RefusalDetails {
+                                reason: "refusal".into(),
+                                categories: delta
+                                    .stop_details
+                                    .and_then(|details| details.category)
+                                    .into_iter()
+                                    .collect(),
+                                // Classifier timing does not identify which content triggered it.
+                                stage: None,
+                            }))
+                        }
+                        "compaction" => StopReason::EndTurn,
                         _ => {
                             log::error!("Unexpected anthropic stop_reason: {stop_reason}");
                             StopReason::EndTurn
@@ -678,7 +854,9 @@ impl AnthropicEventMapper {
                         "Anthropic ended the stream without finishing its compaction summary"
                     )))];
                 }
-                vec![Ok(LanguageModelCompletionEvent::Stop(self.stop_reason))]
+                vec![Ok(LanguageModelCompletionEvent::Stop(
+                    self.stop_reason.clone(),
+                ))]
             }
             Event::Error { error } => {
                 vec![Err(completion_error_from_anthropic_api(
@@ -717,9 +895,32 @@ fn update_usage(usage: &mut Usage, new: &Usage) {
     if let Some(cache_read_input_tokens) = new.cache_read_input_tokens {
         usage.cache_read_input_tokens = Some(cache_read_input_tokens);
     }
+    if let Some(iterations) = &new.iterations {
+        usage.iterations = Some(iterations.clone());
+    }
 }
 
 fn convert_usage(usage: &Usage) -> TokenUsage {
+    if let Some(iterations) = usage.iterations.as_deref() {
+        return iterations
+            .iter()
+            .fold(TokenUsage::default(), |mut total, iteration| {
+                total.input_tokens = total
+                    .input_tokens
+                    .saturating_add(iteration.input_tokens.unwrap_or(0));
+                total.output_tokens = total
+                    .output_tokens
+                    .saturating_add(iteration.output_tokens.unwrap_or(0));
+                total.cache_creation_input_tokens = total
+                    .cache_creation_input_tokens
+                    .saturating_add(iteration.cache_creation_input_tokens.unwrap_or(0));
+                total.cache_read_input_tokens = total
+                    .cache_read_input_tokens
+                    .saturating_add(iteration.cache_read_input_tokens.unwrap_or(0));
+                total
+            });
+    }
+
     TokenUsage {
         input_tokens: usage.input_tokens.unwrap_or(0),
         output_tokens: usage.output_tokens.unwrap_or(0),
@@ -732,10 +933,155 @@ fn convert_usage(usage: &Usage) -> TokenUsage {
 mod tests {
     use super::*;
     use crate::{AnthropicModelMode, UsageIteration, UsageIterationType};
+    use futures::executor::block_on;
     use language_model_core::{
-        ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, LanguageModelImage,
-        LanguageModelRequestMessage, MessageContent,
+        ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, LanguageModelCompletionEvent,
+        LanguageModelImage, LanguageModelRequestMessage, MessageContent, TokenUsage,
     };
+
+    #[test]
+    fn test_collect_compaction_result_returns_context_and_usage() {
+        let context = CompactedContext::Summary {
+            content: "Summary of the conversation.".into(),
+            provider_state: None,
+        };
+        let usage = TokenUsage {
+            input_tokens: 60_000,
+            output_tokens: 1_000,
+            ..Default::default()
+        };
+        let stream = futures::stream::iter([
+            Ok(LanguageModelCompletionEvent::Compaction(
+                CompactionUpdate::Started,
+            )),
+            Ok(LanguageModelCompletionEvent::Compaction(
+                CompactionUpdate::Finished(context.clone()),
+            )),
+            Ok(LanguageModelCompletionEvent::UsageUpdate(usage)),
+            Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)),
+        ])
+        .boxed();
+
+        let result = block_on(collect_compaction_result(stream, ANTHROPIC_PROVIDER_NAME)).unwrap();
+
+        assert_eq!(result, (context, usage));
+    }
+
+    #[test]
+    fn test_collect_compaction_result_rejects_abandoned_compaction() {
+        let stream = futures::stream::iter([Ok(LanguageModelCompletionEvent::Compaction(
+            CompactionUpdate::Failed,
+        ))])
+        .boxed();
+
+        let error =
+            block_on(collect_compaction_result(stream, ANTHROPIC_PROVIDER_NAME)).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("abandoned compaction without producing replacement context")
+        );
+    }
+
+    #[test]
+    fn system_updates_combine_text_with_the_latest_effort() -> Result<()> {
+        let message = |role, content| LanguageModelRequestMessage {
+            role,
+            content,
+            cache: false,
+            reasoning_details: None,
+        };
+        let effort = |model_vendor, effort: &str| MessageContent::ReasoningEffort {
+            model_vendor,
+            effort: effort.into(),
+        };
+        let sonnet = "claude-sonnet-5-5";
+        let shared_request = LanguageModelRequest {
+            thinking_allowed: true,
+            thinking_effort: Some("medium".into()),
+            messages: vec![
+                message(Role::User, vec!["First".into()]),
+                message(
+                    Role::System,
+                    vec![
+                        effort(LanguageModelVendor::OpenAi, "medium"),
+                        effort(LanguageModelVendor::Anthropic, "low"),
+                    ],
+                ),
+                message(Role::Assistant, vec!["Answer".into()]),
+                message(Role::User, vec!["Next".into()]),
+                message(
+                    Role::System,
+                    vec![
+                        "Opus instructions".into(),
+                        effort(LanguageModelVendor::Anthropic, "low"),
+                        effort(LanguageModelVendor::Anthropic, "high"),
+                    ],
+                ),
+                message(Role::Assistant, vec!["Opus answer".into()]),
+                message(Role::User, vec!["Back to Sonnet".into()]),
+                message(
+                    Role::System,
+                    vec![
+                        "Before".into(),
+                        effort(LanguageModelVendor::Anthropic, "low"),
+                        "After".into(),
+                        effort(LanguageModelVendor::Anthropic, "medium"),
+                    ],
+                ),
+            ],
+            ..Default::default()
+        };
+        let convert = |request| {
+            into_anthropic(
+                request,
+                sonnet.into(),
+                1.0,
+                4096,
+                AnthropicModelMode::AdaptiveThinking,
+                None,
+                true,
+                AnthropicPromptCacheMode::Automatic,
+                &ANTHROPIC_PROVIDER_ID,
+            )
+        };
+        let request = convert(shared_request.clone())?;
+        let wire = serde_json::to_value(request)?;
+        assert_eq!(wire["output_config"], serde_json::json!({"effort":"low"}));
+        assert_eq!(
+            wire["messages"],
+            serde_json::json!([
+                {"role":"user","content":[{"type":"text","text":"First"}]},
+                {"role":"assistant","content":[{"type":"text","text":"Answer"}]},
+                {"role":"user","content":[{"type":"text","text":"Next"}]},
+                {"role":"system","content":[{"type":"text","text":"Opus instructions"}],"output_config":{"effort":"high"}},
+                {"role":"assistant","content":[{"type":"text","text":"Opus answer"}]},
+                {"role":"user","content":[{"type":"text","text":"Back to Sonnet"}]},
+                {"role":"system","content":[{"type":"text","text":"BeforeAfter"}],"output_config":{"effort":"medium"}}
+            ])
+        );
+
+        let mut between_tools = shared_request;
+        between_tools.thinking_allowed = false;
+        between_tools.thinking_effort = None;
+        between_tools.messages.extend([
+            message(Role::Assistant, vec!["Sonnet answer".into()]),
+            message(Role::User, vec!["Use a tool".into()]),
+        ]);
+        let request = convert(between_tools)?;
+        assert!(matches!(request.thinking, Some(Thinking::BetweenTools)));
+        let off_wire = serde_json::to_value(request)?;
+        assert_eq!(off_wire["output_config"], wire["output_config"]);
+        assert!(
+            off_wire["messages"]
+                .as_array()
+                .unwrap()
+                .starts_with(wire["messages"].as_array().unwrap())
+        );
+
+        Ok(())
+    }
 
     #[test]
     fn test_caching_uses_top_level_auto_and_long_lived_prefix() {
@@ -757,8 +1103,15 @@ mod tests {
                     cache: true,
                     reasoning_details: None,
                 },
+                LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text("Prefer terse answers.\n".into())],
+                    cache: true,
+                    reasoning_details: None,
+                },
             ],
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             stop: vec![],
@@ -774,23 +1127,34 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: Some(1024),
         };
 
         let anthropic_request = into_anthropic(
-            request,
-            "claude-3-5-sonnet".to_string(),
+            request.clone(),
+            "claude-opus-4-8".to_string(),
             0.7,
             4096,
             AnthropicModelMode::Default,
+            None,
+            false,
             AnthropicPromptCacheMode::Automatic,
             &ANTHROPIC_PROVIDER_ID,
         )
         .unwrap();
 
+        assert_eq!(
+            serde_json::to_value(&anthropic_request).unwrap()["max_tokens"],
+            1024
+        );
         // No message content block should carry cache_control anymore; the
         // conversation breakpoint is set via top-level automatic caching.
-        assert_eq!(anthropic_request.messages.len(), 1);
-        for block in &anthropic_request.messages[0].content {
+        assert_eq!(anthropic_request.messages.len(), 2);
+        for block in anthropic_request
+            .messages
+            .iter()
+            .flat_map(|message| &message.content)
+        {
             let cache_control = match block {
                 RequestContent::Text { cache_control, .. }
                 | RequestContent::Thinking { cache_control, .. }
@@ -818,6 +1182,15 @@ mod tests {
 
         // System prompt is emitted in array form with a long-TTL breakpoint on
         // the final text block.
+        let serialized = serde_json::to_value(&anthropic_request).unwrap();
+        assert_eq!(serialized["system"][0]["text"], "You are helpful.");
+        assert_eq!(
+            serialized["messages"][1],
+            serde_json::json!({
+                "role": "system",
+                "content": [{"type": "text", "text": "Prefer terse answers.\n"}]
+            }),
+        );
         match anthropic_request.system {
             Some(StringOrContents::Content(ref blocks)) => {
                 assert_eq!(blocks.len(), 1);
@@ -844,6 +1217,55 @@ mod tests {
                 ttl: Some(CacheTtl::OneHour),
             })
         ));
+
+        let mut later_user_message = request.clone();
+        later_user_message
+            .messages
+            .push(LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Another user message.".into())],
+                cache: true,
+                reasoning_details: None,
+            });
+        let later_user_message = into_anthropic(
+            later_user_message,
+            "claude-opus-4-8".to_string(),
+            0.7,
+            4096,
+            AnthropicModelMode::Default,
+            None,
+            false,
+            AnthropicPromptCacheMode::Automatic,
+            &ANTHROPIC_PROVIDER_ID,
+        )
+        .unwrap();
+        assert_eq!(
+            later_user_message
+                .messages
+                .iter()
+                .map(|message| &message.role)
+                .collect::<Vec<_>>(),
+            vec![&crate::Role::User, &crate::Role::System, &crate::Role::User],
+        );
+
+        let legacy_request = into_anthropic(
+            request,
+            "claude-3-5-sonnet".to_string(),
+            0.7,
+            4096,
+            AnthropicModelMode::Default,
+            None,
+            false,
+            AnthropicPromptCacheMode::Automatic,
+            &ANTHROPIC_PROVIDER_ID,
+        )
+        .unwrap();
+        let serialized = serde_json::to_value(&legacy_request).unwrap();
+        assert_eq!(
+            serialized["system"][0]["text"],
+            "You are helpful.\n\nPrefer terse answers.\n"
+        );
+        assert_eq!(legacy_request.messages.len(), 1);
     }
 
     #[test]
@@ -867,6 +1289,7 @@ mod tests {
                 },
             ],
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             stop: vec![],
@@ -882,6 +1305,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: Some(8192),
         };
 
         let anthropic_request = into_anthropic(
@@ -890,11 +1314,17 @@ mod tests {
             0.7,
             4096,
             AnthropicModelMode::Default,
+            None,
+            false,
             AnthropicPromptCacheMode::Legacy,
             &ANTHROPIC_PROVIDER_ID,
         )
         .unwrap();
 
+        assert_eq!(
+            serde_json::to_value(&anthropic_request).unwrap()["max_tokens"],
+            4096
+        );
         assert!(anthropic_request.cache_control.is_none());
         assert!(matches!(
             anthropic_request.system,
@@ -932,6 +1362,7 @@ mod tests {
                 reasoning_details: None,
             }],
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             stop: vec![],
@@ -942,6 +1373,7 @@ mod tests {
             thinking_effort: Some("xhigh".into()),
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -950,6 +1382,8 @@ mod tests {
             1.0,
             128_000,
             AnthropicModelMode::AdaptiveThinking,
+            None,
+            false,
             AnthropicPromptCacheMode::Automatic,
             &ANTHROPIC_PROVIDER_ID,
         )
@@ -964,35 +1398,204 @@ mod tests {
     }
 
     #[test]
-    fn test_thinking_disallowed_sends_explicit_opt_out_only_where_required() {
-        // (model, expects_explicit_opt_out): Claude Opus 5 thinks by default
-        // when the `thinking` field is omitted, so suppressing thinking
-        // requires sending `{"type": "disabled"}`. Earlier Opus models treat
-        // omission as "off", and Fable rejects `disabled` outright, so both
-        // must keep omitting the field.
-        for (model, expects_explicit_opt_out) in [
-            ("claude-opus-5", true),
-            ("claude-opus-4-8", false),
+    fn test_advertised_thinking_types() {
+        for (types, thinking_allowed, expected) in [
+            (
+                serde_json::json!({"adaptive": {"supported": true}}),
+                true,
+                Some("adaptive"),
+            ),
+            (
+                serde_json::json!({"enabled": {"supported": true}}),
+                true,
+                Some("enabled"),
+            ),
+            (serde_json::json!({}), true, None),
+            (
+                serde_json::json!({"disabled": {"supported": true}}),
+                false,
+                Some("disabled"),
+            ),
+            (
+                serde_json::json!({
+                    "disabled": {"supported": true},
+                    "between_tools": {"supported": true}
+                }),
+                false,
+                Some("disabled"),
+            ),
+            (
+                serde_json::json!({
+                    "disabled": {"supported": false},
+                    "between_tools": {"supported": true}
+                }),
+                false,
+                Some("between_tools"),
+            ),
+            (
+                serde_json::json!({
+                    "disabled": {"supported": false},
+                    "between_tools": {"supported": false}
+                }),
+                false,
+                None,
+            ),
+        ] {
+            let types = serde_json::from_value(types).expect("valid thinking types");
+            for model in ["unknown-model", "claude-opus-5-5"] {
+                let request = LanguageModelRequest {
+                    thinking_allowed,
+                    thinking_effort: Some("max".into()),
+                    ..Default::default()
+                };
+                let request = into_anthropic(
+                    request,
+                    model.to_string(),
+                    1.0,
+                    64_000,
+                    AnthropicModelMode::Default,
+                    Some(&types),
+                    false,
+                    AnthropicPromptCacheMode::Automatic,
+                    &ANTHROPIC_PROVIDER_ID,
+                )
+                .expect("request should use a supported thinking mode or the model default");
+                let json = serde_json::to_value(&request).expect("valid request");
+                assert_eq!(json["thinking"]["type"].as_str(), expected);
+                if expected.is_none() {
+                    assert!(json.get("thinking").is_none());
+                }
+                if !thinking_allowed {
+                    assert!(request.output_config.is_none());
+                    assert!(json["thinking"]["block_binding"].is_null());
+                }
+                let count = serde_json::to_value(request.into_count_tokens_request())
+                    .expect("valid token count request");
+                assert_eq!(count["thinking"], json["thinking"]);
+            }
+        }
+    }
+
+    #[test]
+    fn test_model_fallback_thinking_and_sampling_restrictions() {
+        for (model, requires_adaptive, accepts_temperature) in [
+            ("claude-fable-5-2", true, false),
+            ("claude-mythos-5-2", true, false),
+            ("claude-fable-5-1", true, false),
+            ("claude-mythos-5-1", true, false),
+            ("claude-fable-5", true, false),
+            ("claude-mythos-5", true, false),
+            ("claude-opus-5-5", true, false),
+            ("claude-opus-5", true, false),
+            ("claude-opus-4-8", true, false),
+            ("claude-opus-4-7", true, false),
+            ("claude-sonnet-5-5", true, false),
+            ("claude-sonnet-5", true, false),
+            ("claude-haiku-5-5", true, false),
+            ("claude-mythos-preview", false, false),
+            ("claude-opus-4-6", false, true),
+            ("claude-haiku-5-4", false, true),
+            ("claude-opus-4-10", true, false),
+            ("claude-sonnet-6", true, false),
+            ("claude-haiku-6", true, false),
+            ("claude-fable-6", true, false),
+            ("claude-mythos-6", true, false),
+            ("claude-unknown-6", false, true),
+            ("claude-opus-latest", false, true),
+        ] {
+            for thinking_allowed in [false, true] {
+                let request = into_anthropic(
+                    LanguageModelRequest {
+                        thinking_allowed,
+                        temperature: Some(0.7),
+                        ..Default::default()
+                    },
+                    model.to_string(),
+                    1.0,
+                    16_000,
+                    AnthropicModelMode::Thinking {
+                        budget_tokens: Some(4_096),
+                    },
+                    None,
+                    false,
+                    AnthropicPromptCacheMode::Automatic,
+                    &ANTHROPIC_PROVIDER_ID,
+                )
+                .expect("fallback request");
+                assert_eq!(
+                    request.temperature,
+                    accepts_temperature.then_some(0.7),
+                    "{model}, thinking_allowed={thinking_allowed}"
+                );
+                if thinking_allowed {
+                    assert!(
+                        matches!(
+                            (requires_adaptive, request.thinking),
+                            (true, Some(Thinking::Adaptive { .. }))
+                                | (false, Some(Thinking::Enabled { .. }))
+                        ),
+                        "{model}, requires_adaptive={requires_adaptive}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_latest_models_preserve_system_updates() {
+        for model in ["claude-fable-5-2", "claude-mythos-5-2"] {
+            let request = into_anthropic(
+                LanguageModelRequest {
+                    messages: [Role::User, Role::System]
+                        .into_iter()
+                        .map(|role| LanguageModelRequestMessage {
+                            role,
+                            content: vec![MessageContent::Text("Update".into())],
+                            cache: false,
+                            reasoning_details: None,
+                        })
+                        .collect(),
+                    thinking_allowed: true,
+                    ..Default::default()
+                },
+                model.to_string(),
+                1.0,
+                16_000,
+                AnthropicModelMode::Default,
+                None,
+                false,
+                AnthropicPromptCacheMode::Automatic,
+                &ANTHROPIC_PROVIDER_ID,
+            )
+            .expect("request with system update");
+            assert!(request.system.is_none());
+            assert_eq!(
+                request
+                    .messages
+                    .iter()
+                    .map(|message| &message.role)
+                    .collect::<Vec<_>>(),
+                vec![&crate::Role::User, &crate::Role::System],
+                "{model}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_block_binding_sent_only_for_prefix_binding_models() {
+        // Opt into dropping invalidated blocks only on models that check the prefix.
+        for (model, expects_block_binding) in [
+            ("claude-fable-5-2", true),
+            ("claude-mythos-5-2", true),
+            ("claude-opus-5-5", true),
+            ("claude-fable-5-1", true),
             ("claude-fable-5", false),
+            ("claude-mythos-5-1", true),
+            ("claude-opus-5", false),
         ] {
             let request = LanguageModelRequest {
-                messages: vec![LanguageModelRequestMessage {
-                    role: Role::User,
-                    content: vec![MessageContent::Text("Hi".to_string())],
-                    cache: false,
-                    reasoning_details: None,
-                }],
-                thread_id: None,
-                prompt_id: None,
-                intent: None,
-                stop: vec![],
-                temperature: None,
-                tools: vec![],
-                tool_choice: None,
-                thinking_allowed: false,
-                thinking_effort: None,
-                speed: None,
-                compact_at_tokens: None,
+                thinking_allowed: true,
+                ..Default::default()
             };
 
             let anthropic_request = into_anthropic(
@@ -1001,6 +1604,69 @@ mod tests {
                 1.0,
                 128_000,
                 AnthropicModelMode::AdaptiveThinking,
+                None,
+                false,
+                AnthropicPromptCacheMode::Automatic,
+                &ANTHROPIC_PROVIDER_ID,
+            )
+            .unwrap();
+
+            let thinking_json =
+                serde_json::to_value(anthropic_request.thinking.as_ref().unwrap()).unwrap();
+            let Some(Thinking::Adaptive { block_binding, .. }) = anthropic_request.thinking else {
+                panic!("{model} should send adaptive thinking");
+            };
+            if expects_block_binding {
+                assert_eq!(
+                    thinking_json,
+                    serde_json::json!({
+                        "type": "adaptive",
+                        "display": "summarized",
+                        "block_binding": {
+                            "prefix_mismatch_behavior": "drop_block",
+                        },
+                    }),
+                    "{model} should opt into dropping invalidated thinking blocks"
+                );
+            } else {
+                assert_eq!(
+                    block_binding, None,
+                    "{model} must not send the block_binding beta field"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_thinking_disallowed_sends_explicit_opt_out_only_where_required() {
+        // (model, expects_explicit_opt_out): Claude Opus 5 thinks by default
+        // when the `thinking` field is omitted, so suppressing thinking
+        // requires sending `{"type": "disabled"}`. Earlier Opus models treat
+        // omission as "off", while Opus 5.5 and Fable reject `disabled`
+        // outright, so those models must keep omitting the field.
+        for (model, expects_explicit_opt_out) in [
+            ("claude-opus-5", true),
+            ("claude-sonnet-5", true),
+            ("claude-haiku-5-5", true),
+            ("claude-fable-5-2", false),
+            ("claude-mythos-5-2", false),
+            ("claude-opus-5-5", false),
+            ("claude-opus-4-8", false),
+            ("claude-fable-5", false),
+        ] {
+            let request = LanguageModelRequest {
+                thinking_effort: Some("max".into()),
+                ..Default::default()
+            };
+
+            let anthropic_request = into_anthropic(
+                request,
+                model.to_string(),
+                1.0,
+                128_000,
+                AnthropicModelMode::AdaptiveThinking,
+                None,
+                false,
                 AnthropicPromptCacheMode::Automatic,
                 &ANTHROPIC_PROVIDER_ID,
             )
@@ -1027,6 +1693,61 @@ mod tests {
     }
 
     #[test]
+    fn test_thinking_disallowed_sends_between_tools_for_sonnet_5_5() {
+        // Claude Sonnet 5.5 thinks by default but rejects `disabled`, so
+        // suppressing thinking must send its lowest setting instead.
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hi".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            thread_id: None,
+            prompt_cache_key: None,
+            prompt_id: None,
+            intent: None,
+            stop: vec![],
+            temperature: None,
+            tools: vec![],
+            tool_choice: None,
+            thinking_allowed: false,
+            thinking_effort: None,
+            speed: None,
+            compact_at_tokens: None,
+            max_output_tokens: None,
+        };
+
+        let anthropic_request = into_anthropic(
+            request,
+            "claude-sonnet-5-5".to_string(),
+            1.0,
+            128_000,
+            AnthropicModelMode::AdaptiveThinking,
+            None,
+            false,
+            AnthropicPromptCacheMode::Automatic,
+            &ANTHROPIC_PROVIDER_ID,
+        )
+        .unwrap();
+
+        let request_json = serde_json::to_value(&anthropic_request).unwrap();
+        assert_eq!(
+            request_json["thinking"],
+            serde_json::json!({ "type": "between_tools" })
+        );
+        assert!(anthropic_request.output_config.is_none());
+        assert!(anthropic_request.temperature.is_none());
+
+        let count_tokens_json =
+            serde_json::to_value(anthropic_request.into_count_tokens_request()).unwrap();
+        assert_eq!(
+            count_tokens_json["thinking"],
+            serde_json::json!({ "type": "between_tools" })
+        );
+    }
+
+    #[test]
     fn test_no_cache_control_when_caching_disabled() {
         let request = LanguageModelRequest {
             messages: vec![
@@ -1044,6 +1765,7 @@ mod tests {
                 },
             ],
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             stop: vec![],
@@ -1059,6 +1781,7 @@ mod tests {
             thinking_effort: None,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
 
         let anthropic_request = into_anthropic(
@@ -1067,11 +1790,17 @@ mod tests {
             0.7,
             4096,
             AnthropicModelMode::Default,
+            None,
+            false,
             AnthropicPromptCacheMode::Automatic,
             &ANTHROPIC_PROVIDER_ID,
         )
         .unwrap();
 
+        assert_eq!(
+            serde_json::to_value(&anthropic_request).unwrap()["max_tokens"],
+            4096
+        );
         assert!(anthropic_request.cache_control.is_none());
         assert!(matches!(
             anthropic_request.system,
@@ -1090,6 +1819,7 @@ mod tests {
             }],
             thinking_effort: None,
             thread_id: None,
+            prompt_cache_key: None,
             prompt_id: None,
             intent: None,
             stop: vec![],
@@ -1099,6 +1829,7 @@ mod tests {
             thinking_allowed: true,
             speed: None,
             compact_at_tokens: None,
+            max_output_tokens: None,
         };
         request.messages.push(LanguageModelRequestMessage {
             role: Role::Assistant,
@@ -1114,6 +1845,8 @@ mod tests {
             AnthropicModelMode::Thinking {
                 budget_tokens: Some(10000),
             },
+            None,
+            false,
             AnthropicPromptCacheMode::Automatic,
             &ANTHROPIC_PROVIDER_ID,
         )
@@ -1176,6 +1909,27 @@ mod tests {
     }
 
     #[test]
+    fn test_signed_thinking_with_omitted_text_survives_serialization() {
+        let result = request_with_assistant_content(vec![MessageContent::Thinking {
+            text: String::new(),
+            signature: Some("valid-signature".to_string()),
+        }]);
+
+        let messages = serde_json::to_value(&result.messages).expect("serialize request messages");
+        assert_eq!(
+            messages.get(1),
+            Some(&serde_json::json!({
+                "role": "assistant",
+                "content": [{
+                    "type": "thinking",
+                    "thinking": "",
+                    "signature": "valid-signature",
+                }],
+            }))
+        );
+    }
+
+    #[test]
     fn test_only_unsigned_thinking_block_omits_entire_message() {
         let result = request_with_assistant_content(vec![MessageContent::Thinking {
             text: "Cancelled before any text or signature".to_string(),
@@ -1215,6 +1969,8 @@ mod tests {
             1.0,
             4096,
             AnthropicModelMode::Default,
+            None,
+            false,
             AnthropicPromptCacheMode::Disabled,
             &ANTHROPIC_PROVIDER_ID,
         )
@@ -1226,6 +1982,61 @@ mod tests {
                 "edits": [{
                     "type": "compact_20260112",
                     "trigger": { "type": "input_tokens", "value": 100_000 }
+                }]
+            })
+        );
+    }
+
+    #[test]
+    fn test_compact_request_pauses_at_minimum_trigger() {
+        let mut request =
+            request_with_assistant_content(vec![MessageContent::Text("Response".to_string())]);
+        request.tools.push(crate::Tool {
+            name: "search".to_string(),
+            description: "Search the project.".to_string(),
+            input_schema: serde_json::json!({"type": "object"}),
+            eager_input_streaming: false,
+            cache_control: None,
+        });
+        request.tool_choice = Some(crate::ToolChoice::Auto);
+        let request = request.into_compact_request();
+
+        assert_eq!(
+            serde_json::to_value(
+                request
+                    .messages
+                    .last()
+                    .expect("compact request should contain a final message")
+            )
+            .expect("compact request message should serialize"),
+            serde_json::json!({
+                "role": "user",
+                "content": [{
+                    "type": "text",
+                    "text": "Compact the conversation so far."
+                }]
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(&request.tools).expect("compact request tools should serialize"),
+            serde_json::json!([{
+                "name": "search",
+                "description": "Search the project.",
+                "input_schema": {"type": "object"}
+            }])
+        );
+        assert_eq!(
+            serde_json::to_value(&request.tool_choice)
+                .expect("compact request tool choice should serialize"),
+            serde_json::json!({"type": "none"})
+        );
+        assert_eq!(
+            serde_json::to_value(&request.context_management).unwrap(),
+            serde_json::json!({
+                "edits": [{
+                    "type": "compact_20260112",
+                    "trigger": { "type": "input_tokens", "value": 50_000 },
+                    "pause_after_compaction": true
                 }]
             })
         );
@@ -1476,6 +2287,105 @@ mod tests {
     }
 
     #[test]
+    fn refusal_stop_carries_metadata_without_explanation_text() {
+        for category in [serde_json::json!("cyber"), serde_json::Value::Null] {
+            let mut mapper =
+                AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME, ANTHROPIC_PROVIDER_ID);
+            let event = serde_json::from_value(serde_json::json!({
+                "type": "message_delta",
+                "delta": {
+                    "stop_reason": "refusal",
+                    "stop_sequence": null,
+                    "stop_details": {
+                        "type": "refusal",
+                        "category": category,
+                        "explanation": "private user content"
+                    }
+                },
+                "usage": {"output_tokens": 0}
+            }))
+            .unwrap();
+            let events = mapper
+                .map_event(event)
+                .into_iter()
+                .chain(mapper.map_event(Event::MessageStop))
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            assert!(
+                matches!(&events[1], LanguageModelCompletionEvent::Stop(StopReason::Refusal(Some(details)))
+                if details.categories == category.as_str().map(str::to_owned).into_iter().collect::<Vec<_>>()
+                    && details.stage.is_none() && details.reason == "refusal")
+            );
+            assert!(
+                !serde_json::to_string(&events)
+                    .unwrap()
+                    .contains("private user content")
+            );
+        }
+    }
+
+    #[test]
+    fn test_event_mapper_preserves_all_input_transformations() {
+        let mut mapper = AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME, ANTHROPIC_PROVIDER_ID);
+        let start_event: Event = serde_json::from_value(serde_json::json!({
+            "type": "message_start",
+            "message": {
+                "id": "msg_1",
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "model": "claude-fable-5-1",
+                "usage": { "input_tokens": 10, "output_tokens": 0 },
+                "input_transformations": [
+                    {
+                        "type": "thinking_dropped",
+                        "path": "messages.1.content.0",
+                        "reason": "prefix_binding_mismatch"
+                    },
+                    {
+                        "type": "thinking_mismatch_allowed",
+                        "path": "messages.3.content.0",
+                        "reason": "prefix_binding_mismatch"
+                    },
+                    {
+                        "type": "some_future_transformation",
+                        "path": "messages.5.content.0",
+                        "reason": "some_future_reason"
+                    }
+                ]
+            }
+        }))
+        .unwrap();
+
+        let events = mapper
+            .map_event(start_event)
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(
+            events.last(),
+            Some(&LanguageModelCompletionEvent::InputTransformations(vec![
+                crate::InputTransformation {
+                    kind: "thinking_dropped".into(),
+                    path: "messages.1.content.0".into(),
+                    reason: "prefix_binding_mismatch".into(),
+                },
+                crate::InputTransformation {
+                    kind: "thinking_mismatch_allowed".into(),
+                    path: "messages.3.content.0".into(),
+                    reason: "prefix_binding_mismatch".into(),
+                },
+                crate::InputTransformation {
+                    kind: "some_future_transformation".into(),
+                    path: "messages.5.content.0".into(),
+                    reason: "some_future_reason".into(),
+                },
+            ]))
+        );
+    }
+
+    #[test]
     fn test_event_mapper_rejects_compaction_delta_before_start() {
         let mut mapper = AnthropicEventMapper::new(ANTHROPIC_PROVIDER_NAME, ANTHROPIC_PROVIDER_ID);
         let delta_event: Event = serde_json::from_value(serde_json::json!({
@@ -1533,7 +2443,7 @@ mod tests {
     }
 
     #[test]
-    fn test_usage_iterations_parsed_from_message_delta() {
+    fn test_usage_iterations_aggregated_from_message_delta() {
         let event: Event = serde_json::from_value(serde_json::json!({
             "type": "message_delta",
             "delta": { "stop_reason": "end_turn", "stop_sequence": null },
@@ -1568,5 +2478,13 @@ mod tests {
                 ..
             }
         ));
+        assert_eq!(
+            convert_usage(&usage),
+            TokenUsage {
+                input_tokens: 180_100,
+                output_tokens: 1_239,
+                ..Default::default()
+            }
+        );
     }
 }

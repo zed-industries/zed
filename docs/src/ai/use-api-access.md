@@ -43,7 +43,7 @@ agent paths and model access paths.
 
 Most API-access providers can be configured on the **Settings → AI → LLM Providers** page with {#action agent::OpenSettings}. Keys saved through Zed are stored in the system keychain, not in `settings.json`.
 
-Zed also reads provider-specific environment variables. Non-empty environment variables take precedence over keychain values. If a key comes from an environment variable, unset the variable and restart Zed to stop using it.
+Zed also reads provider-specific environment variables. Non-empty [environment variables](../environment.md) take precedence over keychain values. If a key comes from an environment variable, unset the variable and restart Zed to stop using it.
 
 | Provider          | Environment variable                                  |
 | ----------------- | ----------------------------------------------------- |
@@ -80,7 +80,7 @@ Configure them with `language_models.<provider>.custom_headers`:
 }
 ```
 
-`custom_headers` is supported by Amazon Bedrock, Anthropic, DeepSeek, Google AI, LM Studio, Mistral, Ollama, OpenAI, OpenAI-compatible providers, OpenCode, OpenRouter, Vercel AI Gateway, and xAI.
+`custom_headers` is supported by Amazon Bedrock, Anthropic, DeepSeek, Google AI, LM Studio, Mistral, Ollama, OpenAI, OpenAI-compatible providers, OpenCode, OpenRouter, [Vercel AI Gateway](./use-a-gateway.md), and xAI.
 
 Headers managed by Zed for each provider, such as `Authorization`, `Content-Type`, `Accept`, and provider-specific authentication headers, are ignored with a warning if you try to override them.
 
@@ -188,7 +188,7 @@ You must provide the model's context window in `max_tokens`. For reasoning-focus
 Use Google AI API access when you have a Gemini API key.
 
 1. Go to Google AI Studio and [create an API key](https://aistudio.google.com/app/apikey).
-2. Open Agent Settings with {#action agent::OpenSettings} and go to the Google AI section.
+2. Open [Agent Settings](./agent-settings.md) with {#action agent::OpenSettings} and go to the Google AI section.
 3. Enter your Google AI API key.
 
 Zed reads `GEMINI_API_KEY`, falling back to `GOOGLE_AI_API_KEY`, from the local Zed process environment.
@@ -285,8 +285,8 @@ limits, or a custom endpoint.
       "api_url": "https://api.deepseek.com/v1",
       "available_models": [
         {
-          "name": "deepseek-v4-flash",
-          "display_name": "DeepSeek V4 Flash",
+          "name": "deepseek-flash",
+          "display_name": "DeepSeek V4.1 Flash",
           "max_tokens": 1000000,
           "max_output_tokens": 384000
         },
@@ -349,32 +349,34 @@ Use OpenCode API access when you have an OpenCode API key. OpenCode Zen and Go a
 Zed does not sign in to OpenCode with OAuth or detect your OpenCode subscription; it uses an OpenCode API key saved in the system keychain or `OPENCODE_API_KEY`.
 
 1. Visit [OpenCode Console](https://opencode.ai/auth) and create an account.
-2. Free models are available without payment. To use Zen or Go models, make sure you have enough credits or an active subscription.
+2. To use Zen or Go models, make sure you have enough credits or an active
+   subscription. OpenCode Free models are not available when using OpenCode as a
+   provider in Zed's Agent. You can use them in Zed by running OpenCode as an
+   [external agent through ACP](https://zed.dev/acp/agent/opencode).
 3. Generate an API key from the API Keys section in the OpenCode Console.
 4. Open Agent Settings with {#action agent::OpenSettings} and go to the OpenCode section.
 5. Enter your OpenCode API key.
 
 Zed also reads `OPENCODE_API_KEY` from the local Zed process environment.
 
-By default, models from all OpenCode subscription types are shown. You can hide subscriptions that are not relevant to you in the provider UI or in settings:
+Zed fetches the available Zen and Go models and their capabilities from OpenCode. OpenCode Free models are excluded since they are only allowed to be used from within OpenCode.
+
+By default, both Zen and Go models are shown. You can hide Zen or Go models by adding this to your settings file:
 
 ```json [settings]
 {
   "language_models": {
     "opencode": {
       "show_zen_models": true,
-      "show_go_models": false,
-      "show_free_models": false
+      "show_go_models": true
     }
   }
 }
 ```
 
-**Note:** Zed only bundles configuration for long-term OpenCode Free models. Free models that are available for a limited time are not included in Zed. To use those models, add a custom OpenCode model with configuration from [the OpenCode website](https://opencode.ai/docs/zen#pricing) and [models.dev](https://github.com/anomalyco/models.dev/tree/dev/providers/opencode/models).
-
 #### Custom OpenCode Models {#opencode-custom-models}
 
-The Zed Agent comes preconfigured with OpenCode models. Add custom OpenCode models when you need newer models, limited-time Free models, or models with custom endpoints.
+Add a custom OpenCode model to use a custom endpoint or configure a model that discovery does not include. A custom entry overrides a fetched model with the same `name` and `subscription`.
 
 Add custom models in your settings file:
 
@@ -409,7 +411,7 @@ The available configuration options for custom OpenCode models are:
 - `protocol` (optional, default `"openai_chat"`): model API protocol, one of `"anthropic"`, `"openai_responses"`, `"openai_chat"`, or `"google"`
 - `reasoning_effort_levels` (optional): list of supported reasoning effort levels, such as `["none", "low", "medium", "high", "xhigh", "max"]`. The last value in the list is used as the default
 - `interleaved_reasoning` (optional, default `false`): whether thinking tokens are sent as a dedicated `reasoning_content` field. Applies only when using the `openai_chat` protocol
-- `subscription` (optional): `"zen"`, `"go"`, or `"free"`; defaults to `"zen"`
+- `subscription` (optional): `"zen"` or `"go"`; defaults to `"zen"`
 - `custom_model_api_url` (optional): custom API base URL to use instead of the default OpenCode API
 
 Custom OpenCode models are listed in the model dropdown in the Agent Panel.
@@ -418,7 +420,7 @@ Custom OpenCode models are listed in the model dropdown in the Agent Panel.
 
 Use an Anthropic-compatible endpoint when a service implements Anthropic's [Messages API](https://docs.anthropic.com/en/api/messages) (`/v1/messages`) and gives you a custom base URL, model ID, and API key.
 
-You can add a custom Anthropic-compatible provider from Agent Settings with {#action agent::OpenSettings}. Look for `Add Provider` in the LLM Providers section, choose `Anthropic`, and fill in the provider name, API URL, model ID, and context window.
+You can add a custom Anthropic-compatible provider from Agent Settings with {#action agent::OpenSettings}. Look for `Add Provider` in the [LLM Providers](./llm-providers.md) section, choose `Anthropic`, and fill in the provider name, API URL, model ID, and context window.
 
 You can also configure the provider in your settings file:
 

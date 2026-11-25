@@ -38,8 +38,8 @@ use crate::kernels::{
 use crate::notebook::MovementDirection;
 use crate::repl_store::ReplStore;
 
+use jupyter_protocol::{ExecuteRequest, JupyterMessage, JupyterMessageContent};
 use picker::Picker;
-use runtimelib::{ExecuteRequest, JupyterMessage, JupyterMessageContent};
 use ui::PopoverMenuHandle;
 use zed_actions::editor::{MoveDown, MoveUp};
 use zed_actions::notebook::{
@@ -61,10 +61,7 @@ enum SelectionMode {
     SelectAndMove,
 }
 
-pub(crate) const MAX_TEXT_BLOCK_WIDTH: f32 = 9999.0;
-pub(crate) const SMALL_SPACING_SIZE: f32 = 8.0;
 pub(crate) const MEDIUM_SPACING_SIZE: f32 = 12.0;
-pub(crate) const LARGE_SPACING_SIZE: f32 = 16.0;
 pub(crate) const GUTTER_WIDTH: f32 = 19.0;
 pub(crate) const CODE_BLOCK_INSET: f32 = MEDIUM_SPACING_SIZE;
 pub(crate) const CONTROL_SIZE: f32 = 20.0;
@@ -107,6 +104,11 @@ pub struct NotebookEditor {
     kernel_specification: Option<KernelSpecification>,
     execution_requests: HashMap<String, CellId>,
     kernel_picker_handle: PopoverMenuHandle<Picker<KernelPickerDelegate>>,
+}
+
+enum SaveDestination {
+    CurrentPath,
+    NewPath(ProjectPath),
 }
 
 impl NotebookEditor {
@@ -337,6 +339,56 @@ impl NotebookEditor {
         cx.notify();
     }
 
+    fn save_impl(
+        &mut self,
+        destination: SaveDestination,
+        project: Entity<Project>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let notebook = self.to_notebook(cx);
+        let project_path = self.notebook_item.read(cx).project_path.clone();
+
+        self.mark_as_saved(cx);
+
+        cx.spawn(async move |this, cx| {
+            let json =
+                serde_json::to_string_pretty(&notebook).context("Failed to serialize notebook")?;
+            let buffer = project
+                .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                .await?;
+            buffer.update(cx, |buffer, cx| buffer.set_text(json, cx));
+
+            match destination {
+                SaveDestination::CurrentPath => {
+                    project
+                        .update(cx, |project, cx| project.save_buffer(buffer, cx))
+                        .await
+                }
+                SaveDestination::NewPath(new_path) => {
+                    project
+                        .update(cx, |project, cx| {
+                            project.save_buffer_as(buffer, new_path.clone(), cx)
+                        })
+                        .await?;
+
+                    // The buffer now lives at the new path, so the notebook has
+                    // to follow it or the next save writes to the old file.
+                    let entry_id = project.read_with(cx, |project, cx| {
+                        project.entry_for_path(&new_path, cx).map(|entry| entry.id)
+                    });
+                    this.update(cx, |this, cx| {
+                        this.notebook_item.update(cx, |notebook_item, _| {
+                            notebook_item.project_path = new_path;
+                            if let Some(entry_id) = entry_id {
+                                notebook_item.id = entry_id;
+                            }
+                        })
+                    })
+                }
+            }
+        })
+    }
+
     fn launch_kernel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let spec = self.kernel_specification.clone().or_else(|| {
             ReplStore::global(cx)
@@ -510,7 +562,7 @@ impl NotebookEditor {
         cx: &mut Context<Self>,
     ) {
         if let Kernel::RunningKernel(kernel) = &self.kernel {
-            let interrupt_request = runtimelib::InterruptRequest {};
+            let interrupt_request = jupyter_protocol::InterruptRequest {};
             let message: JupyterMessage = interrupt_request.into();
             kernel.request_tx().try_send(message).ok();
             cx.notify();
@@ -847,6 +899,7 @@ impl NotebookEditor {
 
     fn add_code_block(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let new_cell_id: CellId = Uuid::new_v4().into();
+        let languages = self.languages.clone();
         let notebook_language = self.notebook_language.clone();
         let metadata: nbformat::v4::CellMetadata =
             serde_json::from_str("{}").expect("empty object should parse");
@@ -857,6 +910,7 @@ impl NotebookEditor {
                 new_cell_id.clone(),
                 metadata,
                 String::new(),
+                languages,
                 notebook_language,
                 window,
                 cx,
@@ -1401,7 +1455,7 @@ impl NotebookEditor {
 
 impl Render for NotebookEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut key_context = KeyContext::new_with_defaults();
+        let mut key_context = KeyContext::new_with_defaults(cx.platform_info().os);
         key_context.add("NotebookEditor");
         key_context.set(
             "notebook_mode",
@@ -1578,7 +1632,6 @@ impl Focusable for NotebookEditor {
 
 // Intended to be a NotebookBuffer
 pub struct NotebookItem {
-    path: PathBuf,
     project_path: ProjectPath,
     languages: Arc<LanguageRegistry>,
     // Raw notebook data
@@ -1595,7 +1648,6 @@ impl project::ProjectItem for NotebookItem {
     ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
         let path = path.clone();
         let project = project.clone();
-        let fs = project.read(cx).fs().clone();
         let languages = project.read(cx).languages().clone();
 
         // For single-file worktrees the relative path is empty, so fall back
@@ -1609,9 +1661,6 @@ impl project::ProjectItem for NotebookItem {
 
         if is_notebook {
             Some(cx.spawn(async move |cx| {
-                let abs_path =
-                    abs_path.with_context(|| format!("finding the absolute path of {path:?}"))?;
-
                 // todo: watch for changes to the file
                 let buffer = project
                     .update(cx, |project, cx| project.open_buffer(path.clone(), cx))
@@ -1646,19 +1695,7 @@ impl project::ProjectItem for NotebookItem {
                         }
                     };
 
-                    match notebook {
-                        nbformat::Notebook::V4(notebook) => notebook,
-                        // 4.1 - 4.4 are converted to 4.5
-                        nbformat::Notebook::Legacy(legacy_notebook) => {
-                            // TODO: Decide if we want to mutate the notebook by including Cell IDs
-                            // and any other conversions
-
-                            nbformat::upgrade_legacy_notebook(legacy_notebook)?
-                        }
-                        nbformat::Notebook::V3(v3_notebook) => {
-                            nbformat::upgrade_v3_notebook(v3_notebook)?
-                        }
-                    }
+                    upgrade_notebook(notebook)?
                 };
 
                 let id = project
@@ -1668,7 +1705,6 @@ impl project::ProjectItem for NotebookItem {
                     .context("Entry not found")?;
 
                 Ok(cx.new(|_| NotebookItem {
-                    path: abs_path,
                     project_path: path,
                     languages,
                     notebook,
@@ -1862,18 +1898,7 @@ impl Item for NotebookEditor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let notebook = self.to_notebook(cx);
-        let path = self.notebook_item.read(cx).path.clone();
-        let fs = project.read(cx).fs().clone();
-
-        self.mark_as_saved(cx);
-
-        cx.spawn(async move |_this, _cx| {
-            let json =
-                serde_json::to_string_pretty(&notebook).context("Failed to serialize notebook")?;
-            fs.atomic_write(path, json).await?;
-            Ok(())
-        })
+        self.save_impl(SaveDestination::CurrentPath, project, cx)
     }
 
     fn save_as(
@@ -1883,20 +1908,7 @@ impl Item for NotebookEditor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let notebook = self.to_notebook(cx);
-        let fs = project.read(cx).fs().clone();
-
-        let abs_path = project.read(cx).absolute_path(&path, cx);
-
-        self.mark_as_saved(cx);
-
-        cx.spawn(async move |_this, _cx| {
-            let abs_path = abs_path.context("Failed to get absolute path")?;
-            let json =
-                serde_json::to_string_pretty(&notebook).context("Failed to serialize notebook")?;
-            fs.atomic_write(abs_path, json).await?;
-            Ok(())
-        })
+        self.save_impl(SaveDestination::NewPath(path), project, cx)
     }
 
     fn reload(
@@ -1929,19 +1941,9 @@ impl Item for NotebookEditor {
             }
             let file_content = serde_json::to_string(&json)?;
 
-            let notebook = nbformat::parse_notebook(&file_content);
-            let notebook = match notebook {
-                Ok(nbformat::Notebook::V4(notebook)) => notebook,
-                Ok(nbformat::Notebook::Legacy(legacy_notebook)) => {
-                    nbformat::upgrade_legacy_notebook(legacy_notebook)?
-                }
-                Ok(nbformat::Notebook::V3(v3_notebook)) => {
-                    nbformat::upgrade_v3_notebook(v3_notebook)?
-                }
-                Err(e) => {
-                    anyhow::bail!("Failed to parse notebook: {:?}", e);
-                }
-            };
+            let notebook = nbformat::parse_notebook(&file_content)
+                .context("Failed to parse notebook")
+                .and_then(upgrade_notebook)?;
 
             this.update_in(cx, |this, window, cx| {
                 let mut cell_order = vec![];
@@ -2026,6 +2028,19 @@ impl KernelSession for NotebookEditor {
     }
 }
 
+fn upgrade_notebook(notebook: nbformat::Notebook) -> anyhow::Result<nbformat::v4::Notebook> {
+    match notebook {
+        nbformat::Notebook::V4(notebook) => Ok(notebook),
+        nbformat::Notebook::V4QuirksMode(notebook) => {
+            log::warn!("Repairing notebook cell IDs: {:?}", notebook.quirks());
+            Ok(notebook.repair())
+        }
+        nbformat::Notebook::Legacy(notebook) => nbformat::upgrade_legacy_notebook(notebook),
+        nbformat::Notebook::V3(notebook) => nbformat::upgrade_v3_notebook(notebook),
+        _ => anyhow::bail!("Unsupported notebook format"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2060,6 +2075,39 @@ mod tests {
             }
         ]
     }"#;
+
+    #[test]
+    fn test_upgrade_notebook_repairs_missing_cell_ids() -> anyhow::Result<()> {
+        let mut value: serde_json::Value = serde_json::from_str(NOTEBOOK_WITH_ONE_CODE_CELL)?;
+        value["cells"][0]
+            .as_object_mut()
+            .context("cell is not an object")?
+            .remove("id");
+        let notebook = nbformat::parse_notebook(&serde_json::to_string(&value)?)?;
+        assert!(matches!(notebook, nbformat::Notebook::V4QuirksMode(_)));
+        let repaired = upgrade_notebook(notebook)?;
+        let serialized = nbformat::serialize_notebook(&nbformat::Notebook::V4(repaired))?;
+        assert!(matches!(
+            nbformat::parse_notebook(&serialized)?,
+            nbformat::Notebook::V4(_)
+        ));
+        let saved: serde_json::Value = serde_json::from_str(&serialized)?;
+        assert_eq!(saved["cells"][0]["source"], value["cells"][0]["source"]);
+        assert!(
+            saved["cells"][0]["id"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_upgrade_notebook_preserves_cell_ids() -> anyhow::Result<()> {
+        let notebook = upgrade_notebook(nbformat::parse_notebook(NOTEBOOK_WITH_ONE_CODE_CELL)?)?;
+        let value = serde_json::to_value(notebook)?;
+        assert_eq!(value["cells"][0]["id"], "cell-one");
+        Ok(())
+    }
 
     /// When the configured interpreter doesn't exist (e.g. Python isn't installed),
     /// running a cell must not leave it stuck in the executing state. It should
@@ -2245,6 +2293,98 @@ mod tests {
 
         notebook_item.read_with(cx, |item, _| {
             assert_eq!(item.notebook.cells.len(), 1);
+        });
+    }
+
+    /// Notebooks must be saved through the project rather than through the
+    /// client's own filesystem, otherwise a remote notebook's path is resolved
+    /// against the local machine and the save fails.
+    #[gpui::test]
+    async fn test_save_goes_through_the_project(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/notebooks"),
+            json!({ "test.ipynb": NOTEBOOK_WITH_ONE_CODE_CELL }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/notebooks").as_ref()], cx).await;
+        cx.update(|cx| ReplStore::init(fs.clone(), cx));
+
+        let project_path = project.read_with(cx, |project, cx| ProjectPath {
+            worktree_id: project.worktrees(cx).next().unwrap().read(cx).id(),
+            path: rel_path("test.ipynb").into(),
+        });
+
+        let notebook_item = cx
+            .update(|cx| {
+                NotebookItem::try_open(&project, &project_path, cx)
+                    .expect("ipynb files should be openable as notebooks")
+            })
+            .await
+            .expect("notebook should parse");
+
+        // Held across the save: a save that bypasses the project writes the file
+        // behind this buffer's back, leaving it stale.
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer(project_path.clone(), cx)
+            })
+            .await
+            .expect("notebook buffer should open");
+
+        // Rendering the notebook animates the kernel status icon, which makes
+        // `run_until_parked` spin forever; only the editor entity is needed here.
+        let cx = cx.add_empty_window();
+        let notebook_editor = cx.update(|window, cx| {
+            cx.new(|cx| NotebookEditor::new(project.clone(), notebook_item, window, cx))
+        });
+
+        let cell_editor = notebook_editor.read_with(cx, |notebook_editor, cx| {
+            let cell_id = notebook_editor
+                .cell_order
+                .first()
+                .expect("notebook has one cell");
+            let Some(Cell::Code(cell)) = notebook_editor.cell_map.get(cell_id) else {
+                panic!("expected a code cell");
+            };
+            cell.read(cx).editor().clone()
+        });
+        cell_editor.update_in(cx, |cell_editor, window, cx| {
+            cell_editor.set_text("print('goodbye')", window, cx);
+        });
+
+        notebook_editor
+            .update_in(cx, |notebook_editor, window, cx| {
+                notebook_editor.save(SaveOptions::default(), project.clone(), window, cx)
+            })
+            .await
+            .expect("saving the notebook should succeed");
+
+        let saved = String::from_utf8(
+            fs.read_file_sync(path!("/notebooks/test.ipynb"))
+                .expect("notebook should still exist"),
+        )
+        .expect("notebook should be valid UTF-8");
+        assert!(
+            saved.contains("print('goodbye')"),
+            "the edited cell should be written to the notebook, got: {saved}"
+        );
+
+        buffer.read_with(cx, |buffer, _| {
+            assert_eq!(
+                buffer.text(),
+                saved,
+                "the project's buffer should hold the saved notebook"
+            );
+            assert!(!buffer.is_dirty(), "saving should leave the buffer clean");
         });
     }
 }

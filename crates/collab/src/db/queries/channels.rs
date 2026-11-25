@@ -939,7 +939,7 @@ impl Database {
             let root_id = channel.root_id();
             let new_parent_path = new_parent.path();
             let old_path = format!("{}{}/", channel.parent_path, channel.id);
-            let new_path = format!("{}{}/", &new_parent_path, channel.id);
+            let new_path = format!("{}{}/", new_parent_path, channel.id);
             let new_order = max_order(&new_parent_path, &tx).await? + 1;
 
             let mut model = channel.into_active_model();

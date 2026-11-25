@@ -6,7 +6,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
 use ui::{Avatar, ListItem, ListItemSpacing, prelude::*};
-use util::{ResultExt as _, TryFutureExt};
+use util::TryFutureExt;
 use workspace::ModalView;
 
 pub struct ContactFinder {
@@ -133,9 +133,7 @@ impl PickerDelegate for ContactFinderDelegate {
     }
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
-        self.parent
-            .update(cx, |_, cx| cx.emit(DismissEvent))
-            .log_err();
+        self.parent.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
     }
 
     fn render_match(

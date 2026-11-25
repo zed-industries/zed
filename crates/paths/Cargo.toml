@@ -13,6 +13,7 @@ test-support = []
 
 [lib]
 path = "src/paths.rs"
+doctest = false
 
 [dependencies]
 const_format.workspace = true

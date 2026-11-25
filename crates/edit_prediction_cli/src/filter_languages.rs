@@ -24,18 +24,15 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
+// Dev builds read grammars' language configs from the checkout at runtime
+// instead of embedding them, so no build-time path is baked into the binary.
 #[cfg(not(feature = "dynamic_prompts"))]
-mod language_configs_embedded {
-    use rust_embed::RustEmbed;
-
-    #[derive(RustEmbed)]
-    #[folder = "../grammars/src/"]
-    #[include = "*/config.toml"]
-    pub struct LanguageConfigs;
+util::fs_embed! {
+    struct LanguageConfigs,
+    crate_relative = "../grammars/src/",
+    root_relative = "crates/grammars/src",
+    include = ["*/config.toml"],
 }
-
-#[cfg(not(feature = "dynamic_prompts"))]
-use language_configs_embedded::LanguageConfigs;
 
 #[derive(Debug, Deserialize)]
 struct LanguageConfig {
@@ -100,7 +97,7 @@ pub struct FilterLanguagesArgs {
 fn build_extension_to_language_map() -> HashMap<String, String> {
     let mut map = HashMap::default();
 
-    for file_path in LanguageConfigs::iter() {
+    for file_path in LanguageConfigs::iter().filter(|path| path.ends_with("config.toml")) {
         if let Some(content) = LanguageConfigs::get(&file_path) {
             let content_str = match std::str::from_utf8(&content.data) {
                 Ok(s) => s,
@@ -135,10 +132,6 @@ fn build_extension_to_language_map() -> HashMap<String, String> {
 
     for entry in entries.flatten() {
         let config_path = entry.path().join("config.toml");
-        if !config_path.exists() {
-            continue;
-        }
-
         let content_str = match std::fs::read_to_string(&config_path) {
             Ok(s) => s,
             Err(_) => continue,
@@ -285,14 +278,12 @@ pub fn run_filter_languages(
         .map(|(lang, _)| (lang.to_lowercase(), lang))
         .collect();
 
-    if !allowed_languages.is_empty() {
-        for lang in &allowed_languages {
-            if !language_name_lower_map.contains_key(lang) {
-                eprintln!(
-                    "Warning: '{}' is not a recognized language name. Use --list to see available languages.",
-                    lang
-                );
-            }
+    for lang in &allowed_languages {
+        if !language_name_lower_map.contains_key(lang) {
+            eprintln!(
+                "Warning: '{}' is not a recognized language name. Use --list to see available languages.",
+                lang
+            );
         }
     }
 
@@ -509,11 +500,8 @@ mod tests {
             detect_language("project/PKGBUILD", &map),
             Some("Shell Script".to_string())
         );
-        // .env files are also Shell Script
-        assert_eq!(
-            detect_language(".env", &map),
-            Some("Shell Script".to_string())
-        );
+        // .env files hold data, not shell scripts
+        assert_eq!(detect_language(".env", &map), Some("Env".to_string()));
         // Gentoo ebuild files are a subset of bash
         assert_eq!(
             detect_language("app-editors/zed-1.5.4.ebuild", &map),

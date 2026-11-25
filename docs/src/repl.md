@@ -13,15 +13,7 @@ Zed's built-in REPL uses [Jupyter kernels](https://docs.jupyter.org/en/latest/pr
     <video loop controls playsinline>
         <source
             src="https://customer-snccc0j9v3kfzkif.cloudflarestream.com/aec66e79f23d6d1a0bee5e388a3f17cc/downloads/default.mp4"
-            type='video/webm; codecs="vp8.0, vorbis"'
-        />
-        <source
-            src="https://customer-snccc0j9v3kfzkif.cloudflarestream.com/aec66e79f23d6d1a0bee5e388a3f17cc/downloads/default.mp4"
             type='video/mp4; codecs="avc1.4D401E, mp4a.40.2"'
-        />
-        <source
-          src="https://zed.dev/img/post/repl/typescript-deno-kernel-markdown.png"
-          type="image/png"
         />
     </video>
 </figure>
@@ -40,6 +32,8 @@ Zed supports running code in multiple languages. To get started, you need to ins
 - [Scala (Almond)](#scala)
 
 Once installed, you can start using the REPL in the respective language files, or other places those languages are supported, such as Markdown. If you recently added the kernels, run the {#action repl::RefreshKernelspecs} command to make them available in the editor.
+
+![Markdown documents become notebooks](https://images.zed.dev/blog/repl/typescript-deno-kernel-markdown.png)
 
 ## Using the REPL
 

@@ -73,6 +73,99 @@ fn test_compute_metadata_from_bytes() {
     assert_eq!(metadata.width, 1);
     assert_eq!(metadata.height, 1);
     assert_eq!(metadata.file_size, png_bytes.len() as u64);
-    assert_eq!(metadata.format, image::ImageFormat::Png);
+    assert_eq!(
+        metadata.format,
+        ImageFormat::Raster(image::ImageFormat::Png)
+    );
     assert!(metadata.colors.is_some());
+}
+
+#[test]
+fn test_svg_metadata_from_contents() {
+    for prefix in [
+        "",
+        "<?xml version=\"1.0\"?>\n",
+        "\u{feff}",
+        "<!-- image -->\n",
+    ] {
+        let content = format!(
+            "{prefix}<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 100\"><rect width=\"200\" height=\"100\" fill=\"red\"/></svg>"
+        );
+        let metadata = ImageItem::compute_metadata_from_bytes(content.as_bytes())
+            .expect("SVG metadata should load regardless of the XML prefix");
+        assert_eq!(metadata.format, ImageFormat::Svg);
+        assert_eq!((metadata.width, metadata.height), (200, 100));
+        assert_eq!(metadata.file_size, content.len() as u64);
+        assert!(metadata.colors.is_none());
+    }
+}
+
+#[test]
+fn test_invalid_svg_metadata() {
+    for content in [
+        "",
+        "not an image",
+        "<svg",
+        "<html><body>SVG</body></html>",
+        "<!-- <svg xmlns=\"http://www.w3.org/2000/svg\"/> -->",
+    ] {
+        assert!(ImageItem::compute_metadata_from_bytes(content.as_bytes()).is_err());
+    }
+}
+
+#[gpui::test]
+async fn test_open_svg_image_by_contents(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "image.bin": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"20\" height=\"10\"/>",
+            "broken.svg": "<svg",
+            "html.svg": "<html><body>not an SVG</body></html>"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, ["/root".as_ref()], cx).await;
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project
+            .worktrees(cx)
+            .next()
+            .expect("worktree")
+            .read(cx)
+            .id()
+    });
+    let image = project
+        .update(cx, |project, cx| {
+            project.open_image(
+                ProjectPath {
+                    worktree_id,
+                    path: rel_path("image.bin").into(),
+                },
+                cx,
+            )
+        })
+        .await
+        .expect("ImageStore should identify SVG by contents");
+    image.read_with(cx, |image, _| {
+        assert_eq!(image.image.format(), gpui::ImageFormat::Svg);
+        let metadata = image.image_metadata.expect("SVG should have metadata");
+        assert_eq!(metadata.format, ImageFormat::Svg);
+        assert_eq!((metadata.width, metadata.height), (20, 10));
+    });
+
+    for image_path in ["broken.svg", "html.svg"] {
+        let result = project
+            .update(cx, |project, cx| {
+                project.open_image(
+                    ProjectPath {
+                        worktree_id,
+                        path: rel_path(image_path).into(),
+                    },
+                    cx,
+                )
+            })
+            .await;
+        assert!(result.is_err(), "{image_path}");
+    }
 }

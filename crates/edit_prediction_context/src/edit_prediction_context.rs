@@ -15,8 +15,6 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use util::paths::PathStyle;
-use util::rel_path::RelPath;
 use util::{RangeExt as _, ResultExt};
 
 mod assemble_excerpts;
@@ -160,75 +158,38 @@ impl RelatedExcerptStore {
             .map(|related| (related.related_file(cx), related.buffer.clone()))
     }
 
-    pub fn set_related_files(&mut self, files: Vec<RelatedFile>, cx: &App) {
-        self.related_buffers = files
-            .into_iter()
-            .filter_map(|file| {
-                let project = self.project.upgrade()?;
-                let project = project.read(cx);
-                let worktree = project.worktrees(cx).find(|wt| {
-                    let root_name = wt.read(cx).root_name().as_unix_str();
-                    file.path
-                        .components()
-                        .next()
-                        .is_some_and(|c| c.as_os_str() == root_name)
-                })?;
-                let worktree = worktree.read(cx);
-                let relative_path = file
-                    .path
-                    .strip_prefix(worktree.root_name().as_unix_str())
-                    .ok()?;
-                let relative_path = RelPath::new(relative_path, PathStyle::Unix).ok()?;
-                let project_path = ProjectPath {
-                    worktree_id: worktree.id(),
-                    path: relative_path.into_owned().into(),
-                };
-                let buffer = project.get_open_buffer(&project_path, cx)?;
-                let snapshot = buffer.read(cx).snapshot();
-                let mut anchor_ranges = Vec::with_capacity(file.excerpts.len());
-                let mut excerpt_orders = Vec::with_capacity(file.excerpts.len());
-                for excerpt in &file.excerpts {
-                    let start = snapshot.anchor_before(Point::new(excerpt.row_range.start, 0));
-                    let end_row = excerpt.row_range.end;
-                    let end_col = snapshot.line_len(end_row);
-                    let end = snapshot.anchor_after(Point::new(end_row, end_col));
-                    anchor_ranges.push(start..end);
-                    excerpt_orders.push(excerpt.order);
-                }
-                Some(RelatedBuffer {
-                    buffer,
-                    path: file.path.clone(),
-                    anchor_ranges,
-                    excerpt_orders,
-                    cached_file: None,
-                })
-            })
-            .collect();
-    }
-
     async fn fetch_excerpts(
         this: WeakEntity<Self>,
         buffer: Entity<Buffer>,
         position: Anchor,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        let (project, snapshot, identifier_line_count) = this.read_with(cx, |this, cx| {
-            (
-                this.project.upgrade(),
-                buffer.read(cx).snapshot(),
-                this.identifier_line_count,
-            )
-        })?;
+        let (project, snapshot, file_extension, identifier_line_count) =
+            this.read_with(cx, |this, cx| {
+                let snapshot = buffer.read(cx).snapshot();
+                let file_extension = snapshot
+                    .file()
+                    .and_then(|file| {
+                        Some(
+                            Path::new(file.file_name(cx))
+                                .extension()?
+                                .to_string_lossy()
+                                .into_owned(),
+                        )
+                    })
+                    .unwrap_or_default();
+                (
+                    this.project.upgrade(),
+                    snapshot,
+                    file_extension,
+                    this.identifier_line_count,
+                )
+            })?;
         let Some(project) = project else {
             return Ok(());
         };
 
         let file = snapshot.file().cloned();
-        let file_extension = file
-            .as_ref()
-            .and_then(|file| file.path().extension())
-            .unwrap_or("")
-            .to_string();
         if let Some(file) = &file {
             log::debug!("retrieving_context buffer:{}", file.path().as_unix_str());
         }
@@ -644,11 +605,11 @@ fn identifiers_for_position(
         if let Some(body_range) = item.body_range(&buffer) {
             ranges.push(item.range.start..body_range.start.to_offset(&buffer));
         } else {
-            ranges.push(item.range.clone());
+            ranges.push(item.range);
         }
     }
 
-    ranges.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
+    ranges.sort_unstable_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
     ranges.dedup_by(|a, b| {
         if a.start <= b.end {
             b.start = b.start.min(a.start);

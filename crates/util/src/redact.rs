@@ -20,6 +20,13 @@ pub fn should_redact(env_var_name: &str) -> bool {
         .any(|suffix| env_var_name.ends_with(suffix))
 }
 
+pub fn is_valid_environment_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|character| character != '=' && !character.is_control())
+}
+
 /// Redact a string which could include a command with environment variables
 pub fn redact_command(command: &str) -> String {
     REDACT_REGEX

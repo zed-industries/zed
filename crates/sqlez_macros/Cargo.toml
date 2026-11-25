@@ -12,8 +12,11 @@ workspace = true
 path = "src/sqlez_macros.rs"
 proc-macro = true
 doctest = false
+test = false
 
 [dependencies]
-sqlez.workspace = true
 sqlformat.workspace = true
 syn.workspace = true
+
+[target.'cfg(not(any(target_os = "linux", target_os = "freebsd")))'.dependencies]
+sqlez.workspace = true

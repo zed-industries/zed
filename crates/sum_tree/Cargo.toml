@@ -16,19 +16,19 @@ doctest = false
 [dependencies]
 heapless.workspace = true
 rayon.workspace = true
-log.workspace = true
 ztracing.workspace = true
 tracing.workspace = true
 proptest = { workspace = true, optional = true }
 
 [dev-dependencies]
+log.workspace = true
 ctor.workspace = true
 rand.workspace = true
 proptest.workspace = true
 zlog.workspace = true
 
 
-[package.metadata.cargo-machete]
+[package.metadata.cargo-shear]
 ignored = ["tracing"]
 
 [features]

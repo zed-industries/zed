@@ -6,7 +6,7 @@ description: "Overview of programming language support in Zed, including built-i
 # Language Support in Zed
 
 Zed supports hundreds of programming languages and text formats.
-Some work out-of-the-box and others rely on 3rd party extensions.
+Some work out-of-the-box and others rely on [3rd party extensions](./extensions/installing-extensions.md).
 
 > The ones included out-of-the-box, natively built into Zed, are marked with \*.
 
@@ -29,6 +29,7 @@ Some work out-of-the-box and others rely on 3rd party extensions.
 - [Elixir](./languages/elixir.md)
 - [Elm](./languages/elm.md)
 - [Emmet](./languages/emmet.md)
+- [Env](./languages/env.md) \*
 - [Erlang](./languages/erlang.md)
 - [Fish](./languages/fish.md)
 - [GDScript](./languages/gdscript.md)
@@ -77,7 +78,7 @@ Some work out-of-the-box and others rely on 3rd party extensions.
 - [Vue](./languages/vue.md)
 - [XML](./languages/xml.md)
 - [YAML](./languages/yaml.md) \*
-- [Yara](./languages/yarn.md)
+- [YARA](./languages/yara.md)
 - [Yarn](./languages/yarn.md)
 - [Zig](./languages/zig.md)
 
@@ -113,7 +114,6 @@ Some work out-of-the-box and others rely on 3rd party extensions.
 - [Exograph](https://github.com/exograph/zed-extension)
 - [Fortran](https://github.com/Xavier-Maruff/zed-fortran)
 - [F#](https://github.com/nathanjcollins/zed-fsharp)
-- [Gemini gemtext](https://github.com/clseibold/gemini-zed)
 - [Git Firefly](https://github.com/d1y/git_firefly)
 - [GraphQL](https://github.com/11bit/zed-extension-graphql)
 - [Groq](https://github.com/juice49/zed-groq)
@@ -129,8 +129,8 @@ Some work out-of-the-box and others rely on 3rd party extensions.
 - [Lox](https://github.com/arian81/zed-lox)
 - [Markdown Oxide](https://github.com/Feel-ix-343/markdown-oxide-zed)
 - [Marksman](https://github.com/vitallium/zed-marksman)
-- [Matlab](https://github.com/rzukic/zed-matlab)
-- [Meson](https://github.com/hqnna/zed-meson)
+- [Matlab](https://github.com/zed-extensions/matlab)
+- [Meson](https://github.com/jobpaardekooper/zed-meson)
 - [Navi](https://github.com/navi-language/zed-navi)
 - [NeoCMake](https://github.com/k0tran/zed_neocmake)
 - [Nginx](https://github.com/d1y/nginx-zed)
@@ -138,7 +138,7 @@ Some work out-of-the-box and others rely on 3rd party extensions.
 - [Nix](https://github.com/zed-extensions/nix)
 - [Noir](https://github.com/shuklaayush/zed-noir)
 - [Nu](https://github.com/zed-extensions/nu)
-- [Odin](https://github.com/rxptr/zed-odin)
+- [Odin](https://github.com/zed-extensions/odin)
 - [Pact](https://github.com/kadena-community/pact-zed)
 - [Pest](https://github.com/pest-parser/zed-pest)
 - [PICA200 assembly](https://github.com/Squareheron942/zed-pica200)
@@ -146,7 +146,7 @@ Some work out-of-the-box and others rely on 3rd party extensions.
 - [PlaydateSDK](https://github.com/notpeter/playdate-zed-extension)
 - [QML](https://github.com/lkroll/zed-qml)
 - [Rainbow CSV](https://github.com/weartist/zed-rainbow-csv)
-- [Rego](https://github.com/StyraInc/zed-rego)
+- [Rego](https://github.com/open-policy-agent/zed-rego)
 - [Rescript](https://github.com/humaans/rescript-zed)
 - [Roclang](https://github.com/h2000/zed-roc)
 - [Ron](https://github.com/onbjerg/zed-ron)

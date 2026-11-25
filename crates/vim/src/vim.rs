@@ -75,10 +75,6 @@ struct Number(usize);
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
-struct SelectRegister(String);
-
-#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
-#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushObject {
     around: bool,
@@ -188,8 +184,6 @@ actions!(
         Tab,
         /// Inserts a newline.
         Enter,
-        /// Selects inner text object.
-        InnerObject,
         /// Maximizes the current pane.
         MaximizePane,
         /// Resets all pane sizes to default.
@@ -987,6 +981,9 @@ impl Vim {
                     }
                     _ => {
                         vim.update_editor(cx, |_, editor, cx| editor.paste(&Paste, window, cx));
+                        if vim.mode == Mode::HelixSelect {
+                            vim.switch_mode(Mode::HelixNormal, true, window, cx);
+                        }
                     }
                 },
             );
@@ -1266,6 +1263,17 @@ impl Vim {
             }
         }
 
+        // Multi-key bindings in Insert mode temporarily insert their pending keys
+        // and remove them only after the action runs. Refresh the selection anchors
+        // afterward so they re-attach to the remaining text.
+        if last_mode == Mode::Insert && matches!(self.mode, Mode::Normal | Mode::HelixNormal) {
+            cx.defer_in(window, |vim, _window, cx| {
+                vim.update_editor(cx, |_, editor, cx| {
+                    editor.refresh_selection_anchors(cx);
+                });
+            })
+        }
+
         if leave_selections {
             return;
         }
@@ -1526,6 +1534,12 @@ impl Vim {
             || mode == "helix_select"
         {
             context.add("VimControl");
+        }
+        // `vim_mode` is replaced by "operator"/"waiting" while an operator is
+        // pending, so expose helix-ness separately to allow Helix-specific
+        // bindings in those states (e.g. text objects after `mi`/`ma`).
+        if self.mode.is_helix() {
+            context.add("helix_mode");
         }
         context.set("vim_mode", mode);
         context.set("vim_operator", operator_id);
@@ -2004,7 +2018,7 @@ impl Vim {
             return;
         }
 
-        let newest = editor.read(cx).selections.newest_anchor().clone();
+        let newest = *editor.read(cx).selections.newest_anchor();
         let is_multicursor = editor.read(cx).selections.count() > 1;
         if self.mode == Mode::Insert && self.current_tx.is_some() {
             if let Some(current_anchor) = &self.current_anchor {

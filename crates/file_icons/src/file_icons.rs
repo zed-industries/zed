@@ -2,12 +2,20 @@ use std::sync::Arc;
 use std::{path::Path, str};
 
 use gpui::{App, SharedString};
+use settings_content::FolderIndicator;
 use theme::{GlobalTheme, IconTheme, ThemeRegistry};
 use util::paths::PathExt;
 
 #[derive(Debug)]
 pub struct FileIcons {
     icon_theme: Arc<IconTheme>,
+}
+
+/// What a panel draws ahead of a directory's name, in render order.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct FolderIndicators {
+    pub chevron: Option<SharedString>,
+    pub icon: Option<SharedString>,
 }
 
 impl FileIcons {
@@ -38,14 +46,19 @@ impl FileIcons {
                 return maybe_path;
             }
 
-            // check if suffix based on first dot is in suffixes
-            // e.g. consider `module.js` as suffix to angular's module file named `auth.module.js`
-            while let Some((_, suffix)) = typ.split_once('.') {
+            let mut first_prefix = None;
+            while let Some((prefix, suffix)) = typ.split_once('.') {
+                first_prefix.get_or_insert(prefix);
                 let maybe_path = get_icon_from_suffix(suffix);
                 if maybe_path.is_some() {
                     return maybe_path;
                 }
                 typ = suffix;
+            }
+            if let Some(prefix) = first_prefix.and_then(get_icon_from_suffix) {
+                // check if stem (before first dot) is in stems
+                // e.g. catch file named `Dockerfile.prod` or `Podfile.lock`
+                return Some(prefix);
             }
         }
 
@@ -162,5 +175,139 @@ impl FileIcons {
             Self::default_icon_theme(cx)
                 .and_then(|icon_theme| get_chevron_icon(&icon_theme, expanded))
         })
+    }
+
+    /// Resolves what a panel should draw ahead of a directory's name. Shared by every
+    /// panel that exposes a `folder_indicator` setting so they stay in agreement.
+    pub fn get_folder_indicators(
+        indicator: FolderIndicator,
+        expanded: bool,
+        path: &Path,
+        cx: &App,
+    ) -> FolderIndicators {
+        let chevron = indicator
+            .shows_chevron()
+            .then(|| Self::get_chevron_icon(expanded, cx))
+            .flatten();
+        let icon = indicator
+            .shows_icon()
+            .then(|| Self::get_folder_icon(expanded, path, cx))
+            .flatten();
+
+        FolderIndicators { chevron, icon }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[gpui::test]
+    fn test_folder_indicators_per_setting(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            theme::init(theme::LoadThemes::JustBase, cx);
+        });
+
+        let path = PathBuf::from("src");
+
+        cx.update(|cx| {
+            let icon_only =
+                FileIcons::get_folder_indicators(FolderIndicator::Icon, false, &path, cx);
+            assert_eq!(icon_only.chevron, None);
+            assert_eq!(
+                icon_only.icon,
+                Some("icons/file_icons/folder.svg".into()),
+                "`icon` should draw the folder icon and no chevron"
+            );
+
+            let chevron_only =
+                FileIcons::get_folder_indicators(FolderIndicator::Chevron, false, &path, cx);
+            assert_eq!(
+                chevron_only.chevron,
+                Some("icons/file_icons/chevron_right.svg".into())
+            );
+            assert_eq!(
+                chevron_only.icon, None,
+                "`chevron` should draw the chevron and no folder icon"
+            );
+
+            let both = FileIcons::get_folder_indicators(FolderIndicator::Both, false, &path, cx);
+            assert_eq!(
+                both.chevron,
+                Some("icons/file_icons/chevron_right.svg".into())
+            );
+            assert_eq!(both.icon, Some("icons/file_icons/folder.svg".into()));
+        });
+    }
+
+    #[gpui::test]
+    fn test_folder_indicators_reflect_expanded_state(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            theme::init(theme::LoadThemes::JustBase, cx);
+        });
+
+        let path = PathBuf::from("src");
+
+        cx.update(|cx| {
+            let collapsed =
+                FileIcons::get_folder_indicators(FolderIndicator::Both, false, &path, cx);
+            assert_eq!(
+                collapsed.chevron,
+                Some("icons/file_icons/chevron_right.svg".into())
+            );
+            assert_eq!(collapsed.icon, Some("icons/file_icons/folder.svg".into()));
+
+            let expanded = FileIcons::get_folder_indicators(FolderIndicator::Both, true, &path, cx);
+            assert_eq!(
+                expanded.chevron,
+                Some("icons/file_icons/chevron_down.svg".into())
+            );
+            assert_eq!(
+                expanded.icon,
+                Some("icons/file_icons/folder_open.svg".into())
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_folder_indicator_default_is_icon(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            theme::init(theme::LoadThemes::JustBase, cx);
+        });
+
+        let path = PathBuf::from("src");
+
+        cx.update(|cx| {
+            let default =
+                FileIcons::get_folder_indicators(FolderIndicator::default(), false, &path, cx);
+            assert_eq!(
+                default,
+                FileIcons::get_folder_indicators(FolderIndicator::Icon, false, &path, cx),
+                "the default must stay `icon` so existing users see no change"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_suffix_matches_take_precedence_over_prefixes(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            theme::init(theme::LoadThemes::JustBase, cx);
+        });
+
+        cx.update(|cx| {
+            assert_eq!(
+                FileIcons::get_icon("mod.rs".as_ref(), cx),
+                Some("icons/file_icons/rust.svg".into())
+            );
+            assert_eq!(
+                FileIcons::get_icon("Dockerfile.rs".as_ref(), cx),
+                Some("icons/file_icons/rust.svg".into())
+            );
+            assert_eq!(
+                FileIcons::get_icon("go.mod".as_ref(), cx),
+                Some("icons/file_icons/go.svg".into())
+            );
+        });
     }
 }

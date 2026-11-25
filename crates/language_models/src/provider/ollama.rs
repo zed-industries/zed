@@ -2,23 +2,25 @@ use anyhow::{Result, anyhow};
 use collections::HashMap;
 use credentials_provider::CredentialsProvider;
 use fs::Fs;
-use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
+use futures::{FutureExt, StreamExt, future::BoxFuture};
 use futures::{Stream, TryFutureExt, stream};
 use gpui::{App, AsyncApp, Context, Entity, Task, TaskExt};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyState, AuthenticateError, DisabledReason, EnvVar, IconOrSvg, InlineDescription,
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModel, LanguageModelClient, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelCompletionStream, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestTool,
-    LanguageModelToolChoice, LanguageModelToolUse, LanguageModelToolUseId, MessageContent,
-    ProviderSettingsView, RateLimiter, Role, StopReason, SubPageProviderSettings, TokenUsage,
-    env_var,
+    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, ModelRateLimiters,
+    ProviderSettingsView, Role, StopReason, SubPageProviderSettings, TokenUsage, env_var,
+    unavailable_error,
 };
 use menu;
 use ollama::{
     ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, OLLAMA_API_URL, OllamaFunctionCall,
-    OllamaFunctionTool, OllamaToolCall, get_models, show_model, stream_chat_completion,
+    OllamaFunctionTool, OllamaToolCall, ThinkingValue, get_models, show_model,
+    stream_chat_completion,
 };
 pub use settings::OllamaAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore, update_settings_file};
@@ -29,6 +31,7 @@ use ui::{
     ButtonLike, ButtonLink, ConfiguredApiCard, Divider, List, ListBulletItem, Tooltip, prelude::*,
 };
 use ui_input::InputField;
+use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
 
@@ -54,6 +57,7 @@ pub struct OllamaSettings {
 pub struct OllamaLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
     state: Entity<State>,
+    request_limiters: ModelRateLimiters,
 }
 
 pub struct State {
@@ -61,7 +65,8 @@ pub struct State {
     credentials_provider: Arc<dyn CredentialsProvider>,
     http_client: Arc<dyn HttpClient>,
     fetched_models: Vec<ollama::Model>,
-    fetch_model_task: Option<Task<Result<()>>>,
+    fetch_model_task: Option<Task<()>>,
+    last_fetch_models_error: Option<String>,
 }
 
 impl State {
@@ -163,6 +168,7 @@ impl State {
                                     Some(model.supports_tools()),
                                     Some(model.supports_vision()),
                                     Some(model.supports_thinking()),
+                                    model.thinking,
                                 )
                             },
                         )
@@ -186,7 +192,16 @@ impl State {
     }
 
     fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
-        let task = self.fetch_models(cx);
+        let fetch_task = self.fetch_models(cx);
+        let task = cx.spawn(async move |this, cx| {
+            let result = fetch_task.await;
+            this.update(cx, |this, _cx| {
+                this.last_fetch_models_error =
+                    result.as_ref().err().map(|error| format!("{error:#}"));
+            })
+            .ok();
+            result.log_err();
+        });
         self.fetch_model_task.replace(task);
     }
 }
@@ -230,71 +245,23 @@ impl OllamaLanguageModelProvider {
                     http_client,
                     fetched_models: Default::default(),
                     fetch_model_task: None,
+                    last_fetch_models_error: None,
                     api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
                     credentials_provider,
                 }
             }),
+            request_limiters: ModelRateLimiters::default(),
         };
         this
     }
 
-    fn settings(cx: &App) -> &OllamaSettings {
-        &AllLanguageModelSettings::get_global(cx).ollama
-    }
-
-    fn api_url(cx: &App) -> SharedString {
-        let api_url = &Self::settings(cx).api_url;
-        if api_url.is_empty() {
-            OLLAMA_API_URL.into()
-        } else {
-            SharedString::new(api_url.as_str())
-        }
-    }
-
-    fn has_custom_url(cx: &App) -> bool {
-        Self::settings(cx).api_url != OLLAMA_API_URL
-    }
-}
-
-impl LanguageModelProviderState for OllamaLanguageModelProvider {
-    type ObservableEntity = State;
-
-    fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
-        Some(self.state.clone())
-    }
-}
-
-impl LanguageModelProvider for OllamaLanguageModelProvider {
-    fn id(&self) -> LanguageModelProviderId {
-        PROVIDER_ID
-    }
-
-    fn name(&self) -> LanguageModelProviderName {
-        PROVIDER_NAME
-    }
-
-    fn icon(&self) -> IconOrSvg {
-        IconOrSvg::Icon(IconName::AiOllama)
-    }
-
-    fn default_model(&self, _: &App) -> Option<Arc<dyn LanguageModel>> {
-        // We shouldn't try to select default model, because it might lead to a load call for an unloaded model.
-        // In a constrained environment where user might not have enough resources it'll be a bad UX to select something
-        // to load by default.
-        None
-    }
-
-    fn default_fast_model(&self, _: &App) -> Option<Arc<dyn LanguageModel>> {
-        // See explanation for default_model.
-        None
-    }
-
-    fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+    /// Every model this provider offers, keyed by id: the fetched list when
+    /// auto-discovery is on, with settings entries merged over it.
+    fn ollama_models(&self, cx: &App) -> HashMap<String, ollama::Model> {
         let mut models: HashMap<String, ollama::Model> = HashMap::default();
         let settings = OllamaLanguageModelProvider::settings(cx);
 
         if settings.auto_discover {
-            // Add models from the Ollama API
             for model in self.state.read(cx).fetched_models.iter() {
                 let mut model = model.clone();
                 if let Some(context_window) = settings.context_window {
@@ -304,68 +271,36 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
             }
         }
 
-        // Override with available models from settings
         merge_settings_into_models(
             &mut models,
             &settings.available_models,
             settings.context_window,
         );
 
-        let mut models = models
-            .into_values()
-            .map(|model| {
-                Arc::new(OllamaLanguageModel {
-                    id: LanguageModelId::from(model.name.clone()),
-                    disabled: model.disabled.as_ref().map(|d| DisabledReason::new(d)),
-                    model,
-                    http_client: self.http_client.clone(),
-                    request_limiter: RateLimiter::new(4),
-                    state: self.state.clone(),
-                }) as Arc<dyn LanguageModel>
-            })
-            .collect::<Vec<_>>();
-        models.sort_by_key(|model| model.name());
         models
     }
 
-    fn is_authenticated(&self, cx: &App) -> bool {
-        self.state.read(cx).is_authenticated()
+    /// The current configuration of `model`, if this provider still offers it.
+    fn config(
+        &self,
+        model: &LanguageModel,
+        cx: &App,
+    ) -> Result<ollama::Model, LanguageModelCompletionError> {
+        self.ollama_models(cx)
+            .remove(model.id.0.as_ref())
+            .ok_or_else(|| unavailable_error(model))
     }
 
-    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
-        self.state.update(cx, |state, cx| state.authenticate(cx))
-    }
-
-    fn settings_view(&self, _cx: &mut App) -> Option<ProviderSettingsView> {
-        let state = self.state.clone();
-        Some(ProviderSettingsView::SubPage(
-            SubPageProviderSettings::new(move |window, cx| {
-                cx.new(|cx| ConfigurationView::new(state.clone(), window, cx))
-                    .into()
-            })
-            .description(InlineDescription::Text(
-                "Run local models on your machine with Ollama.".into(),
-            )),
-        ))
-    }
-}
-
-pub struct OllamaLanguageModel {
-    id: LanguageModelId,
-    model: ollama::Model,
-    http_client: Arc<dyn HttpClient>,
-    request_limiter: RateLimiter,
-    state: Entity<State>,
-    disabled: Option<DisabledReason>,
-}
-
-impl OllamaLanguageModel {
-    fn to_ollama_request(&self, request: LanguageModelRequest) -> Result<ChatRequest> {
+    fn to_ollama_request(
+        config: &ollama::Model,
+        request: LanguageModelRequest,
+    ) -> Result<ChatRequest> {
         if request.contains_custom_tool_input() {
             anyhow::bail!("Ollama does not support custom tools");
         }
 
-        let supports_vision = self.model.supports_vision.unwrap_or(false);
+        let supports_vision = config.supports_vision.unwrap_or(false);
+        let think = ollama_thinking_value(config, &request);
 
         let mut messages = Vec::with_capacity(request.messages.len());
 
@@ -390,9 +325,18 @@ impl OllamaLanguageModel {
                     {
                         match tool_result {
                             MessageContent::ToolResult(tool_result) => {
+                                let images = tool_result
+                                    .images()
+                                    .map(|image| image.source.to_string())
+                                    .collect::<Vec<_>>();
                                 messages.push(ChatMessage::Tool {
                                     tool_name: tool_result.tool_name.to_string(),
                                     content: tool_result.text_contents(),
+                                    images: if images.is_empty() {
+                                        None
+                                    } else {
+                                        Some(images)
+                                    },
                                 })
                             }
                             _ => unreachable!("Only tool result should be extracted"),
@@ -459,12 +403,13 @@ impl OllamaLanguageModel {
             }
         }
         Ok(ChatRequest {
-            model: self.model.name.clone(),
+            model: config.name.clone(),
             messages,
-            keep_alive: self.model.keep_alive.clone().unwrap_or_default(),
+            keep_alive: config.keep_alive.clone().unwrap_or_default(),
             stream: true,
             options: Some(ChatOptions {
-                num_ctx: Some(self.model.max_tokens),
+                num_ctx: Some(config.max_tokens),
+                num_predict: request.max_output_tokens.map(isize::try_from).transpose()?,
                 // Only send stop tokens if explicitly provided. When empty/None,
                 // Ollama will use the model's default stop tokens from its Modelfile.
                 // Sending an empty array would override and disable the defaults.
@@ -476,11 +421,8 @@ impl OllamaLanguageModel {
                 temperature: request.temperature.or(Some(1.0)),
                 ..Default::default()
             }),
-            think: self
-                .model
-                .supports_thinking
-                .map(|supports_thinking| supports_thinking && request.thinking_allowed),
-            tools: if self.model.supports_tools.unwrap_or(false) {
+            think,
+            tools: if config.supports_tools.unwrap_or(false) {
                 request
                     .tools
                     .into_iter()
@@ -491,69 +433,109 @@ impl OllamaLanguageModel {
             },
         })
     }
-}
 
-impl LanguageModel for OllamaLanguageModel {
-    fn id(&self) -> LanguageModelId {
-        self.id.clone()
+    fn settings(cx: &App) -> &OllamaSettings {
+        &AllLanguageModelSettings::get_global(cx).ollama
     }
 
-    fn name(&self) -> LanguageModelName {
-        LanguageModelName::from(self.model.display_name().to_string())
-    }
-
-    fn provider_id(&self) -> LanguageModelProviderId {
-        PROVIDER_ID
-    }
-
-    fn provider_name(&self) -> LanguageModelProviderName {
-        PROVIDER_NAME
-    }
-
-    fn supports_tools(&self) -> bool {
-        self.model.supports_tools.unwrap_or(false)
-    }
-
-    fn supports_images(&self) -> bool {
-        self.model.supports_vision.unwrap_or(false)
-    }
-
-    fn supports_thinking(&self) -> bool {
-        self.model.supports_thinking.unwrap_or(false)
-    }
-
-    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
-        match choice {
-            LanguageModelToolChoice::Auto => false,
-            LanguageModelToolChoice::Any => false,
-            LanguageModelToolChoice::None => false,
+    fn api_url(cx: &App) -> SharedString {
+        let api_url = &Self::settings(cx).api_url;
+        if api_url.is_empty() {
+            OLLAMA_API_URL.into()
+        } else {
+            SharedString::new(api_url.as_str())
         }
     }
 
-    fn telemetry_id(&self) -> String {
-        format!("ollama/{}", self.model.id())
+    fn has_custom_url(cx: &App) -> bool {
+        Self::settings(cx).api_url != OLLAMA_API_URL
+    }
+}
+
+impl LanguageModelProviderState for OllamaLanguageModelProvider {
+    type ObservableEntity = State;
+
+    fn observable_entity(&self) -> Option<Entity<Self::ObservableEntity>> {
+        Some(self.state.clone())
+    }
+}
+
+impl LanguageModelProvider for OllamaLanguageModelProvider {
+    fn id(&self) -> LanguageModelProviderId {
+        PROVIDER_ID
     }
 
-    fn is_disabled(&self) -> Option<DisabledReason> {
-        self.disabled.clone()
+    fn name(&self) -> LanguageModelProviderName {
+        PROVIDER_NAME
     }
 
-    fn max_token_count(&self) -> u64 {
-        self.model.max_token_count()
+    fn icon(&self) -> IconOrSvg {
+        IconOrSvg::Icon(IconName::AiOllama)
     }
 
+    fn default_model(&self, _: &App) -> Option<LanguageModel> {
+        // We shouldn't try to select default model, because it might lead to a load call for an unloaded model.
+        // In a constrained environment where user might not have enough resources it'll be a bad UX to select something
+        // to load by default.
+        None
+    }
+
+    fn default_fast_model(&self, _: &App) -> Option<LanguageModel> {
+        // See explanation for default_model.
+        None
+    }
+
+    fn provided_models(&self, cx: &App) -> Vec<LanguageModel> {
+        let mut models = self
+            .ollama_models(cx)
+            .values()
+            .map(language_model)
+            .collect::<Vec<_>>();
+        models.sort_by_key(|model| model.name());
+        models
+    }
+
+    fn is_authenticated(&self, cx: &App) -> bool {
+        self.state.read(cx).is_authenticated()
+    }
+
+    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
+        self.state.update(cx, |state, cx| state.authenticate(cx))
+    }
+
+    fn refresh_models(&self, cx: &mut App) {
+        self.state
+            .update(cx, |state, cx| state.restart_fetch_models_task(cx));
+    }
+
+    fn settings_view(&self, _cx: &mut App) -> Option<ProviderSettingsView> {
+        let state = self.state.clone();
+        Some(ProviderSettingsView::SubPage(
+            SubPageProviderSettings::new(move |window, cx| {
+                cx.new(|cx| ConfigurationView::new(state.clone(), window, cx))
+                    .into()
+            })
+            .description(InlineDescription::Text(
+                "Run local models on your machine with Ollama.".into(),
+            )),
+        ))
+    }
+}
+
+impl LanguageModelClient for OllamaLanguageModelProvider {
     fn stream_completion(
         &self,
+        model: &LanguageModel,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<
-            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
-            LanguageModelCompletionError,
-        >,
-    > {
-        let request = match self.to_ollama_request(request) {
+    ) -> BoxFuture<'static, Result<LanguageModelCompletionStream, LanguageModelCompletionError>>
+    {
+        let config = match cx.update(|cx| self.config(model, cx)) {
+            Ok(config) => config,
+            Err(error) => return async move { Err(error) }.boxed(),
+        };
+        let request_limiter = self.request_limiters.for_model(&model.id);
+        let request = match Self::to_ollama_request(&config, request) {
             Ok(request) => request,
             Err(error) => return async move { Err(error.into()) }.boxed(),
         };
@@ -567,7 +549,7 @@ impl LanguageModel for OllamaLanguageModel {
             (state.api_key_state.key(&api_url), api_url, extra_headers)
         });
 
-        let future = self.request_limiter.stream(async move {
+        let future = request_limiter.stream(async move {
             let stream = stream_chat_completion(
                 http_client.as_ref(),
                 &api_url,
@@ -581,6 +563,25 @@ impl LanguageModel for OllamaLanguageModel {
         });
 
         future.map_ok(|f| f.boxed()).boxed()
+    }
+}
+
+fn language_model(model: &ollama::Model) -> LanguageModel {
+    LanguageModel {
+        supports_tools: model.supports_tools.unwrap_or(false),
+        supports_images: model.supports_vision.unwrap_or(false),
+        supports_thinking: ollama_supports_thinking(model),
+        supports_disabling_thinking: ollama_supports_disabling_thinking(model),
+        supported_effort_levels: ollama_effort_levels(model).into(),
+        disabled_reason: model.disabled.as_ref().map(|d| DisabledReason::new(d)),
+        ..LanguageModel::new(
+            LanguageModelId::from(model.name.clone()),
+            LanguageModelName::from(model.display_name().to_string()),
+            PROVIDER_ID,
+            PROVIDER_NAME,
+            format!("ollama/{}", model.id()),
+            model.max_token_count(),
+        )
     }
 }
 
@@ -1145,11 +1146,106 @@ fn merge_settings_into_models(
                     supports_tools: setting_model.supports_tools,
                     supports_vision: setting_model.supports_images,
                     supports_thinking: setting_model.supports_thinking,
+                    thinking: None,
                     disabled: None,
                 },
             );
         }
     }
+}
+
+fn ollama_supports_disabling_thinking(model: &ollama::Model) -> bool {
+    model
+        .thinking
+        .as_ref()
+        .is_none_or(|thinking| thinking.values.contains(&ThinkingValue::Boolean(false)))
+}
+
+// Models whose advertised values can't turn thinking on (e.g. only `"none"`)
+// are treated as non-thinking
+fn ollama_supports_thinking(model: &ollama::Model) -> bool {
+    model.supports_thinking.unwrap_or(false)
+        && model.thinking.as_ref().is_none_or(|thinking| {
+            thinking.values.iter().any(|value| match value {
+                ThinkingValue::Boolean(enabled) => *enabled,
+                ThinkingValue::Level(level) => is_selectable_ollama_effort(level),
+            })
+        })
+}
+
+fn ollama_effort_levels(model: &ollama::Model) -> Vec<LanguageModelEffortLevel> {
+    if !ollama_supports_thinking(model) {
+        return Vec::new();
+    }
+
+    let Some(thinking) = &model.thinking else {
+        return Vec::new();
+    };
+
+    thinking
+        .values
+        .iter()
+        .filter_map(|value| {
+            let ThinkingValue::Level(value) = value else {
+                return None;
+            };
+            if !is_selectable_ollama_effort(value) {
+                return None;
+            }
+            let name = match value.as_str() {
+                "minimal" => "Minimal".into(),
+                "low" => "Low".into(),
+                "medium" => "Medium".into(),
+                "high" => "High".into(),
+                "xhigh" => "Extra High".into(),
+                "max" => "Max".into(),
+                _ => SharedString::from(value.clone()),
+            };
+            Some(LanguageModelEffortLevel {
+                name,
+                value: SharedString::from(value.clone()),
+                is_default: matches!(
+                    &thinking.default,
+                    ThinkingValue::Level(default) if default == value
+                ),
+                supports_disabling_thinking: None,
+            })
+        })
+        .collect()
+}
+
+// A "none" level disables thinking, so the picker shouldn't offer it while thinking is on.
+// Ollama still accepts it, so requests pass it through unchanged.
+fn is_selectable_ollama_effort(value: &str) -> bool {
+    value != "none"
+}
+
+fn ollama_thinking_value(
+    model: &ollama::Model,
+    request: &LanguageModelRequest,
+) -> Option<ThinkingValue> {
+    model.supports_thinking.map(|_| {
+        if !ollama_supports_thinking(model) || !request.thinking_allowed {
+            return ThinkingValue::Boolean(false);
+        }
+
+        let thinking = model.thinking.as_ref();
+        request
+            .thinking_effort
+            .clone()
+            .map(ThinkingValue::Level)
+            .filter(|effort| thinking.is_some_and(|thinking| thinking.values.contains(effort)))
+            .or_else(|| {
+                thinking.and_then(|thinking| {
+                    if let ThinkingValue::Level(default) = &thinking.default {
+                        Some(ThinkingValue::Level(default.clone()))
+                    } else {
+                        None
+                    }
+                })
+            })
+            .unwrap_or(ThinkingValue::Boolean(true))
+    })
 }
 
 fn tool_into_ollama(tool: LanguageModelRequestTool) -> Result<ollama::OllamaTool> {
@@ -1191,6 +1287,7 @@ mod tests {
                 supports_tools: None,
                 supports_vision: None,
                 supports_thinking: None,
+                thinking: None,
                 disabled: None,
             },
         );
@@ -1204,6 +1301,7 @@ mod tests {
                 supports_tools: None,
                 supports_vision: None,
                 supports_thinking: None,
+                thinking: None,
                 disabled: None,
             },
         );
@@ -1249,5 +1347,262 @@ mod tests {
             "3b model should have its own display_name"
         );
         assert_eq!(model_3b.max_tokens, 6000);
+    }
+
+    struct TestCredentialsProvider;
+
+    impl CredentialsProvider for TestCredentialsProvider {
+        fn read_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn std::future::Future<Output = Result<Option<(String, Vec<u8>)>>> + 'a>>
+        {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn write_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _username: &'a str,
+            _password: &'a [u8],
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn delete_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    #[gpui::test]
+    async fn restart_fetch_models_task_records_error_on_failure(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let http_client = http_client::FakeHttpClient::create(|_request| async move {
+            Ok(http_client::Response::builder()
+                .status(500)
+                .body(http_client::AsyncBody::from("server error"))?)
+        });
+        let provider = cx.update(|cx| {
+            OllamaLanguageModelProvider::new(http_client, Arc::new(TestCredentialsProvider), cx)
+        });
+
+        cx.update(|cx| {
+            provider
+                .state
+                .update(cx, |state, cx| state.restart_fetch_models_task(cx))
+        });
+        cx.run_until_parked();
+
+        let error = cx.read(|cx| provider.state.read(cx).last_fetch_models_error.clone());
+        assert!(
+            error.is_some(),
+            "a failed model fetch should be recorded, not silently dropped"
+        );
+    }
+
+    fn thinking_model(values: Vec<ThinkingValue>, default: ThinkingValue) -> ollama::Model {
+        ollama::Model {
+            name: "thinking-model".to_string(),
+            display_name: None,
+            max_tokens: 4096,
+            keep_alive: None,
+            supports_tools: None,
+            supports_vision: None,
+            supports_thinking: Some(true),
+            thinking: Some(ollama::Thinking { values, default }),
+            disabled: None,
+        }
+    }
+
+    #[test]
+    fn test_ollama_dynamic_thinking_levels() {
+        let model = thinking_model(
+            vec![
+                ThinkingValue::Boolean(false),
+                ThinkingValue::Level("low".to_string()),
+                ThinkingValue::Level("high".to_string()),
+                ThinkingValue::Level("max".to_string()),
+            ],
+            ThinkingValue::Level("max".to_string()),
+        );
+
+        assert!(ollama_supports_disabling_thinking(&model));
+
+        let levels = ollama_effort_levels(&model);
+        assert_eq!(
+            levels
+                .iter()
+                .map(|level| level.value.as_ref())
+                .collect::<Vec<_>>(),
+            ["low", "high", "max"]
+        );
+        assert_eq!(
+            levels
+                .iter()
+                .find(|level| level.is_default)
+                .map(|level| level.value.as_ref()),
+            Some("max")
+        );
+    }
+
+    #[test]
+    fn test_ollama_boolean_thinking_controls() {
+        let model = thinking_model(
+            vec![ThinkingValue::Boolean(false), ThinkingValue::Boolean(true)],
+            ThinkingValue::Boolean(false),
+        );
+
+        assert!(ollama_supports_disabling_thinking(&model));
+        assert!(ollama_effort_levels(&model).is_empty());
+    }
+
+    #[test]
+    fn test_ollama_thinking_request_value() {
+        let model = thinking_model(
+            vec![
+                ThinkingValue::Level("low".to_string()),
+                ThinkingValue::Level("max".to_string()),
+            ],
+            ThinkingValue::Level("max".to_string()),
+        );
+
+        assert!(!ollama_supports_disabling_thinking(&model));
+
+        let request = LanguageModelRequest {
+            thinking_allowed: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            ollama_thinking_value(&model, &request),
+            Some(ThinkingValue::Level("max".to_string()))
+        );
+
+        let request = LanguageModelRequest {
+            thinking_allowed: true,
+            thinking_effort: Some("low".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            ollama_thinking_value(&model, &request),
+            Some(ThinkingValue::Level("low".to_string()))
+        );
+
+        let request = LanguageModelRequest::default();
+        assert_eq!(
+            ollama_thinking_value(&model, &request),
+            Some(ThinkingValue::Boolean(false))
+        );
+    }
+
+    #[test]
+    fn test_ollama_thinking_request_value_ignores_unsupported_effort() {
+        let stale_effort_request = LanguageModelRequest {
+            thinking_allowed: true,
+            thinking_effort: Some("xhigh".to_string()),
+            ..Default::default()
+        };
+
+        let model = thinking_model(
+            vec![
+                ThinkingValue::Level("low".to_string()),
+                ThinkingValue::Level("high".to_string()),
+            ],
+            ThinkingValue::Level("high".to_string()),
+        );
+        assert_eq!(
+            ollama_thinking_value(&model, &stale_effort_request),
+            Some(ThinkingValue::Level("high".to_string()))
+        );
+
+        let model = thinking_model(
+            vec![ThinkingValue::Boolean(false), ThinkingValue::Boolean(true)],
+            ThinkingValue::Boolean(true),
+        );
+        assert_eq!(
+            ollama_thinking_value(&model, &stale_effort_request),
+            Some(ThinkingValue::Boolean(true))
+        );
+
+        let model_without_thinking_info = ollama::Model {
+            thinking: None,
+            ..thinking_model(Vec::new(), ThinkingValue::Boolean(true))
+        };
+        assert_eq!(
+            ollama_thinking_value(&model_without_thinking_info, &stale_effort_request),
+            Some(ThinkingValue::Boolean(true))
+        );
+    }
+
+    #[test]
+    fn test_ollama_none_level_is_not_a_selectable_effort() {
+        let model = thinking_model(
+            vec![
+                ThinkingValue::Level("none".to_string()),
+                ThinkingValue::Level("minimal".to_string()),
+                ThinkingValue::Level("high".to_string()),
+            ],
+            ThinkingValue::Level("none".to_string()),
+        );
+
+        let levels = ollama_effort_levels(&model);
+        assert_eq!(
+            levels
+                .iter()
+                .map(|level| (level.name.as_ref(), level.value.as_ref()))
+                .collect::<Vec<_>>(),
+            [("Minimal", "minimal"), ("High", "high")]
+        );
+        assert!(levels.iter().all(|level| !level.is_default));
+
+        let none_effort_request = LanguageModelRequest {
+            thinking_allowed: true,
+            thinking_effort: Some("none".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            ollama_thinking_value(&model, &none_effort_request),
+            Some(ThinkingValue::Level("none".to_string()))
+        );
+
+        let minimal_effort_request = LanguageModelRequest {
+            thinking_allowed: true,
+            thinking_effort: Some("minimal".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            ollama_thinking_value(&model, &minimal_effort_request),
+            Some(ThinkingValue::Level("minimal".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_ollama_models_supporting_only_none_do_not_support_thinking() {
+        let model = thinking_model(
+            vec![ThinkingValue::Level("none".to_string())],
+            ThinkingValue::Level("none".to_string()),
+        );
+
+        assert!(!ollama_supports_thinking(&model));
+        assert!(ollama_effort_levels(&model).is_empty());
+
+        let request = LanguageModelRequest {
+            thinking_allowed: true,
+            thinking_effort: Some("none".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            ollama_thinking_value(&model, &request),
+            Some(ThinkingValue::Boolean(false))
+        );
     }
 }

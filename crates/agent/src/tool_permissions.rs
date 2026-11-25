@@ -541,6 +541,26 @@ pub fn decide_permission_for_path(
     decide_permission_for_paths(tool_name, &[raw_path.to_string()], settings)
 }
 
+/// Returns whether an `always_confirm` pattern for the tool matches the raw
+/// input path or its normalized form.
+///
+/// A `Confirm` decision doesn't say whether it came from such a pattern or
+/// from a `confirm` default, and the file edit tools treat the two differently.
+pub fn path_matches_always_confirm(
+    tool_name: &str,
+    raw_path: &str,
+    settings: &AgentSettings,
+) -> bool {
+    let Some(rules) = settings.tool_permissions.tools.get(tool_name) else {
+        return false;
+    };
+    let normalized_path = normalize_path(raw_path);
+    rules
+        .always_confirm
+        .iter()
+        .any(|rule| rule.is_match(raw_path) || rule.is_match(&normalized_path))
+}
+
 pub fn most_restrictive(
     a: ToolPermissionDecision,
     b: ToolPermissionDecision,
@@ -590,6 +610,7 @@ mod tests {
             profiles: Default::default(),
             notify_when_agent_waiting: NotifyWhenAgentWaiting::default(),
             play_sound_when_agent_done: PlaySoundWhenAgentDone::default(),
+            prevent_idle_sleep: true,
             single_file_review: false,
             model_parameters: vec![],
             auto_compact: agent_settings::AutoCompactSettings {
@@ -607,7 +628,13 @@ mod tests {
             sandbox_permissions: Default::default(),
             show_turn_stats: false,
             show_merge_conflict_indicator: true,
-            sidebar_side: Default::default(),
+            auto_generate_thread_titles: true,
+            max_idle_retained_threads: 5,
+            threads_sidebar: agent_settings::ThreadsSidebarSettings {
+                auto_open: true,
+                default_width: px(300.),
+                position: settings::SidebarDockPosition::Left,
+            },
             thinking_display: Default::default(),
         }
     }

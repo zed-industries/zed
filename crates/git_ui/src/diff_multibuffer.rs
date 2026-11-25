@@ -10,6 +10,7 @@ use editor::{
     EditorEvent, EditorSettings, SelectionEffects, SplittableEditor, actions::GoToHunk,
     multibuffer_context_lines, scroll::Autoscroll,
 };
+use futures::{FutureExt as _, StreamExt as _, stream};
 use futures_lite::future::yield_now;
 use git::{repository::RepoPath, status::FileStatus};
 use gpui::{
@@ -35,6 +36,10 @@ use workspace::{
     item::{Item, SaveOptions},
 };
 use ztracing::instrument;
+
+/// Loading every changed file at once makes the first one land no sooner than the
+/// last, leaving a large diff on a spinner. Throughput flattens past this point.
+const MAX_CONCURRENT_BUFFER_LOADS: usize = 16;
 
 struct BufferSubscriptions {
     _diff: Entity<BufferDiff>,
@@ -402,6 +407,7 @@ impl DiffMultibuffer {
                 if !editor.focus_handle(cx).contains_focused(window, cx) {
                     return;
                 }
+                cx.emit(event.clone());
                 let Some(project_path) = self.active_project_path(cx) else {
                     return;
                 };
@@ -618,11 +624,16 @@ impl DiffMultibuffer {
 
     #[instrument(skip(this, cx))]
     pub(crate) async fn refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
-        let entries = this.update(cx, |this, cx| {
-            let (repo, buffers_to_load) = this.branch_diff.update(cx, |branch_diff, cx| {
-                let load_buffers = branch_diff.load_buffers(cx);
-                (branch_diff.repo().cloned(), load_buffers)
-            });
+        let (entries, list_was_loading) = this.update(cx, |this, cx| {
+            let (repo, buffers_to_load, list_was_loading) =
+                this.branch_diff.update(cx, |branch_diff, cx| {
+                    let load_buffers = branch_diff.load_buffers(cx);
+                    (
+                        branch_diff.repo().cloned(),
+                        load_buffers,
+                        branch_diff.is_awaiting_tree_diff(),
+                    )
+                });
             let mut previous_paths = this
                 .multibuffer
                 .read(cx)
@@ -673,22 +684,33 @@ impl DiffMultibuffer {
             this.buffer_subscriptions
                 .retain(|repo_path, _| live_repo_paths.contains(repo_path));
 
-            entries
+            (entries, list_was_loading)
         })?;
 
         let mut buffers_to_fold = Vec::new();
 
-        for (path_key, entry) in entries {
-            if let Some(loaded_buffer) = entry.load.await.log_err() {
-                // We might be lagging behind enough that all future entry.load futures are no longer pending.
-                // If that is the case, this task will never yield, starving the foreground thread of execution time.
-                yield_now().await;
+        // Ordered, so excerpts don't shift under the reader as later files arrive.
+        let mut loads = stream::iter(entries.into_iter().map(|(path_key, entry)| {
+            let diff_buffer_list::DiffBuffer {
+                repo_path,
+                file_status,
+                load,
+            } = entry;
+            load.map(move |loaded| (path_key, repo_path, file_status, loaded))
+        }))
+        .buffered(MAX_CONCURRENT_BUFFER_LOADS);
+
+        while let Some((path_key, repo_path, file_status, loaded)) = loads.next().await {
+            // Buffered loads can already be complete when we poll them, in which
+            // case this loop never awaits and starves the foreground thread.
+            yield_now().await;
+            if let Some(loaded_buffer) = loaded.log_err() {
                 cx.update(|window, cx| {
                     this.update(cx, |this, cx| {
                         if let Some(buffer_id) = this.register_buffer(
-                            entry.repo_path,
+                            repo_path,
                             path_key,
-                            entry.file_status,
+                            file_status,
                             loaded_buffer.display_buffer,
                             loaded_buffer.main_buffer,
                             loaded_buffer.diff,
@@ -711,7 +733,11 @@ impl DiffMultibuffer {
                         .update(cx, |editor, cx| editor.fold_buffers(buffers_to_fold, cx));
                 });
             }
-            this.pending_scroll.take();
+            // A list still loading had no files to scroll to, so the scroll
+            // waits for the refresh that brings them.
+            if !list_was_loading {
+                this.pending_scroll.take();
+            }
             cx.notify();
         })?;
 
@@ -720,12 +746,17 @@ impl DiffMultibuffer {
 
     pub(crate) fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
         let editor = self.editor.read(cx).focused_editor().read(cx);
-        let multibuffer = editor.buffer().read(cx);
+        let focused_multibuffer = editor.buffer().read(cx);
         let position = editor.selections.newest_anchor().head();
+        let focused_snapshot = focused_multibuffer.snapshot(cx);
+        let (focused_anchor, _) = focused_snapshot.anchor_to_buffer_anchor(position)?;
+        let path = focused_snapshot.path_for_buffer(focused_anchor.buffer_id)?;
+
+        let multibuffer = self.multibuffer.read(cx);
+        let position = multibuffer.location_for_path(path, cx)?;
         let snapshot = multibuffer.snapshot(cx);
         let (text_anchor, _) = snapshot.anchor_to_buffer_anchor(position)?;
         let buffer = multibuffer.buffer(text_anchor.buffer_id)?;
-
         let file = buffer.read(cx).file()?;
         Some(ProjectPath {
             worktree_id: file.worktree_id(cx),

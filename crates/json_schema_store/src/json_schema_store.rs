@@ -2,7 +2,7 @@ use std::sync::{Arc, LazyLock};
 
 use anyhow::{Context as _, Result};
 use collections::HashMap;
-use gpui::{App, AsyncApp, BorrowAppContext as _, Entity, Task, WeakEntity};
+use gpui::{App, AsyncApp, BorrowAppContext as _, Entity, SharedString, Task, WeakEntity};
 use language::{
     LanguageRegistry, LanguageServerName, LspAdapterDelegate,
     language_settings::AllLanguageSettings,
@@ -309,26 +309,7 @@ async fn resolve_dynamic_schema(
             })
         }
         "settings" => {
-            let mut lsp_adapter_names: Vec<String> = languages
-                .all_lsp_adapters()
-                .into_iter()
-                .map(|adapter| adapter.name())
-                .chain(languages.available_lsp_adapter_names())
-                .map(|name| name.to_string())
-                .collect();
-
-            let mut i = 0;
-            while i < lsp_adapter_names.len() {
-                let mut j = i + 1;
-                while j < lsp_adapter_names.len() {
-                    if lsp_adapter_names[i] == lsp_adapter_names[j] {
-                        lsp_adapter_names.swap_remove(j);
-                    } else {
-                        j += 1;
-                    }
-                }
-                i += 1;
-            }
+            let lsp_adapter_names = all_lsp_adapter_names(&languages);
 
             cx.update(|cx| {
                 let font_names = &cx.text_system().all_font_names();
@@ -374,11 +355,7 @@ async fn resolve_dynamic_schema(
             })
         }
         "project_settings" => {
-            let lsp_adapter_names = languages
-                .all_lsp_adapters()
-                .into_iter()
-                .map(|adapter| adapter.name().to_string())
-                .collect::<Vec<_>>();
+            let lsp_adapter_names = all_lsp_adapter_names(&languages);
 
             let language_names = &languages
                 .language_names()
@@ -441,13 +418,12 @@ pub fn all_schema_file_associations(
         .into_iter()
         .flatten()
         // Path suffixes can be entire file names or just their extensions.
-        .flat_map(|path_suffix| [format!("*.{path_suffix}"), path_suffix]);
+        .flat_map(|path_suffix| [format!("*.{path_suffix}").into(), path_suffix]);
     let override_globs = AllLanguageSettings::get(path, cx)
         .file_types
         .get(JSONC_LANGUAGE_NAME)
         .into_iter()
-        .flat_map(|(_, glob_strings)| glob_strings)
-        .cloned();
+        .flat_map(|(_, glob_strings)| glob_strings.iter().map(SharedString::from));
     let jsonc_globs = extension_globs.chain(override_globs).collect::<Vec<_>>();
 
     let mut file_associations = serde_json::json!([
@@ -619,6 +595,19 @@ fn root_schema_from_action_schema(
     schema
 }
 
+fn all_lsp_adapter_names(languages: &LanguageRegistry) -> Vec<String> {
+    let mut names = languages
+        .all_lsp_adapters()
+        .into_iter()
+        .map(|adapter| adapter.name())
+        .chain(languages.available_lsp_adapter_names())
+        .map(|name| name.to_string())
+        .collect::<Vec<_>>();
+    names.sort_unstable();
+    names.dedup();
+    names
+}
+
 #[inline]
 fn schema_file_match(path: &std::path::Path) -> String {
     path.strip_prefix(path.parent().unwrap().parent().unwrap())
@@ -626,4 +615,47 @@ fn schema_file_match(path: &std::path::Path) -> String {
         .display()
         .to_string()
         .replace('\\', "/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use language::FakeLspAdapter;
+    use project::Project;
+    use settings::SettingsStore;
+
+    #[gpui::test]
+    async fn test_project_settings_schema_includes_available_lsp_adapters(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (lsp_store, languages) = project.read_with(cx, |project, _| {
+            (project.lsp_store(), project.languages().clone())
+        });
+
+        languages.register_available_lsp_adapter(
+            LanguageServerName("extension-provided-lsp".into()),
+            Arc::new(FakeLspAdapter::default()),
+        );
+
+        let schema = resolve_dynamic_schema(lsp_store, "project_settings", &mut cx.to_async())
+            .await
+            .unwrap();
+
+        let lsp_properties = schema
+            .pointer("/$defs/LspSettingsMap/properties")
+            .expect("LspSettingsMap should have properties")
+            .as_object()
+            .unwrap();
+        assert_eq!(
+            lsp_properties.keys().cloned().collect::<Vec<_>>(),
+            vec!["extension-provided-lsp".to_string()],
+        );
+    }
 }

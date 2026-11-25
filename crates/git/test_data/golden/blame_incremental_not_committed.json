@@ -16,7 +16,8 @@
     "committer_tz": "+0100",
     "summary": "Another commit",
     "previous": "b2f6b0d982a9e7654bbb6d979c9ccb00b1d2e913 file_b.txt",
-    "filename": "file_b.txt"
+    "filename": "file_b.txt",
+    "boundary": false
   },
   {
     "sha": "4aaba34cb86b12f3a749dd6ddbf185de88de6527",
@@ -35,7 +36,8 @@
     "committer_tz": "+0100",
     "summary": "Another commit",
     "previous": "b2f6b0d982a9e7654bbb6d979c9ccb00b1d2e913 file_b.txt",
-    "filename": "file_b.txt"
+    "filename": "file_b.txt",
+    "boundary": false
   },
   {
     "sha": "b2f6b0d982a9e7654bbb6d979c9ccb00b1d2e913",
@@ -54,7 +56,8 @@
     "committer_tz": "+0100",
     "summary": "Another commit",
     "previous": "7aef8a9a211ebc86824769c89f48e4f64aa6183f file_b.txt",
-    "filename": "file_b.txt"
+    "filename": "file_b.txt",
+    "boundary": false
   },
   {
     "sha": "b2f6b0d982a9e7654bbb6d979c9ccb00b1d2e913",
@@ -73,7 +76,8 @@
     "committer_tz": "+0100",
     "summary": "Another commit",
     "previous": "7aef8a9a211ebc86824769c89f48e4f64aa6183f file_b.txt",
-    "filename": "file_b.txt"
+    "filename": "file_b.txt",
+    "boundary": false
   },
   {
     "sha": "e6d34e8fb494fe2b576d16037c61ba9d10722ba3",
@@ -92,7 +96,8 @@
     "committer_tz": "+0100",
     "summary": "Initial",
     "previous": null,
-    "filename": "file_b.txt"
+    "filename": "file_b.txt",
+    "boundary": true
   },
   {
     "sha": "e6d34e8fb494fe2b576d16037c61ba9d10722ba3",
@@ -111,7 +116,8 @@
     "committer_tz": "+0100",
     "summary": "Initial",
     "previous": null,
-    "filename": "file_b.txt"
+    "filename": "file_b.txt",
+    "boundary": true
   },
   {
     "sha": "e6d34e8fb494fe2b576d16037c61ba9d10722ba3",
@@ -130,6 +136,7 @@
     "committer_tz": "+0100",
     "summary": "Initial",
     "previous": null,
-    "filename": "file_b.txt"
+    "filename": "file_b.txt",
+    "boundary": true
   }
 ]

@@ -1,0 +1,30 @@
+[package]
+name = "language_model_selector"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+name = "language_model_selector"
+path = "src/language_model_selector.rs"
+doctest = false
+
+[dependencies]
+agent_settings.workspace = true
+collections.workspace = true
+fs.workspace = true
+fuzzy.workspace = true
+gpui.workspace = true
+language_model.workspace = true
+ordered-float.workspace = true
+picker.workspace = true
+settings.workspace = true
+ui.workspace = true
+zed_actions.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

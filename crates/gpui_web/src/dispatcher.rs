@@ -44,14 +44,13 @@ enum MainThreadItem {
         runnable: RunnableVariant,
         timeout: Option<Duration>,
     },
-    Function(Box<dyn FnOnce() + Send>),
     // TODO-Wasm: Shouldn't these run on their own dedicated thread?
     RealtimeFunction(Box<dyn FnOnce() + Send>),
 }
 
 struct MainThreadMailbox {
     sender: PriorityQueueSender<MainThreadItem>,
-    receiver: parking_lot::Mutex<PriorityQueueReceiver<MainThreadItem>>,
+    receiver: std::sync::Mutex<PriorityQueueReceiver<MainThreadItem>>,
     signal: AtomicI32,
 }
 
@@ -60,7 +59,7 @@ impl MainThreadMailbox {
         let (sender, receiver) = PriorityQueueReceiver::new();
         Self {
             sender,
-            receiver: parking_lot::Mutex::new(receiver),
+            receiver: std::sync::Mutex::new(receiver),
             signal: AtomicI32::new(0),
         }
     }
@@ -77,7 +76,11 @@ impl MainThreadMailbox {
     }
 
     fn drain(&self, window: &web_sys::Window) {
-        let mut receiver = self.receiver.lock();
+        // Only the main thread accesses this receiver; never park if that changes.
+        let mut receiver = self
+            .receiver
+            .try_lock()
+            .expect("main-thread mailbox receiver must not be locked");
         loop {
             // We need these `spin` variants because we can't acquire a lock on the main thread.
             // TODO-WASM: Should we do something different?
@@ -222,19 +225,6 @@ impl WebDispatcher {
     fn on_main_thread(&self) -> bool {
         std::thread::current().id() == self.main_thread_id
     }
-
-    pub(crate) fn dispatch_function_on_main_thread(
-        &self,
-        function: impl FnOnce() + Send + 'static,
-    ) {
-        if self.on_main_thread() {
-            let callback = Closure::once_into_js(function);
-            browser_window().queue_microtask(callback.unchecked_ref());
-        } else {
-            self.main_thread_mailbox
-                .post(Priority::High, MainThreadItem::Function(Box::new(function)));
-        }
-    }
 }
 
 impl PlatformDispatcher for WebDispatcher {
@@ -351,7 +341,7 @@ fn execute_on_main_thread(window: &web_sys::Window, item: MainThreadItem) {
                 )
                 .ok();
         }
-        MainThreadItem::Function(function) | MainThreadItem::RealtimeFunction(function) => {
+        MainThreadItem::RealtimeFunction(function) => {
             function();
         }
     }

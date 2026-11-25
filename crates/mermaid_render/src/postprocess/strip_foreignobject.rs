@@ -26,8 +26,8 @@
 use std::collections::{HashSet, VecDeque};
 
 use anyhow::Result;
-use quick_xml::Reader;
 use quick_xml::events::Event;
+use quick_xml::{Reader, XmlVersion};
 
 use super::ReaderIter;
 
@@ -72,7 +72,7 @@ fn is_fallback_text(e: &quick_xml::events::BytesStart<'_>) -> bool {
     e.try_get_attribute("class")
         .ok()
         .flatten()
-        .and_then(|a| a.unescape_value().ok())
+        .and_then(|a| a.normalized_value(XmlVersion::Implicit1_0).ok())
         .is_some_and(|v| v.split_whitespace().any(|c| c == FALLBACK_TEXT_CLASS))
 }
 

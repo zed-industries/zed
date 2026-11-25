@@ -5,18 +5,17 @@ use std::process::Command;
 use anyhow::{Context as _, Result, bail};
 use clap::Parser;
 
-/// Runs the Linux Bubblewrap sandboxing NixOS VM tests (see `nix/tests/sandboxing`).
+/// Runs the Linux sandboxing NixOS VM tests (see `nix/tests/sandboxing`).
 ///
-/// Each test boots a real kernel under QEMU to exercise bwrap behavior across
-/// host configurations: a working host (the sandbox must be enforced and the
-/// full fs x network policy matrix must hold), and degraded hosts (no bwrap,
-/// setuid-only bwrap, user namespaces disabled) where `Sandbox::can_create`
-/// must report the specific failure and the consumer must fail closed. They
-/// therefore only run on Linux with `/dev/kvm` available, and require `nix`
-/// with flakes enabled.
+/// Each test boots a real kernel under QEMU. The sandbox_linux checks run its
+/// re-executable end-to-end harness (an example, never a cargo test target) as
+/// an unprivileged user, requiring successful sandbox setup on the working host
+/// and fail-closed execution when user namespaces are disabled.
+/// They require Linux with `/dev/kvm` available, and `nix` with flakes enabled.
+/// Nothing in CI runs these; this task and `nix flake check` are the entry points.
 #[derive(Parser)]
 pub struct SandboxTestsArgs {
-    /// Names of specific tests to run (e.g. `sandbox-working`). Defaults
+    /// Names of specific tests to run (e.g. `sandbox-linux-working`). Defaults
     /// to all.
     tests: Vec<String>,
 

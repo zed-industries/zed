@@ -190,7 +190,6 @@ impl RatePredictionsModal {
 
         if let Some(prev_index) = prev_index {
             self.selected_index = prev_index;
-            cx.notify();
         }
         cx.notify();
     }
@@ -230,8 +229,6 @@ impl RatePredictionsModal {
         self.select_completion(current_completion, false, window, cx);
         self.select_next_edit(&Default::default(), window, cx);
         self.confirm(&Default::default(), window, cx);
-
-        cx.notify();
     }
 
     pub fn thumbs_down_active(
@@ -263,8 +260,6 @@ impl RatePredictionsModal {
         self.select_completion(current_completion, false, window, cx);
         self.select_next_edit(&Default::default(), window, cx);
         self.confirm(&Default::default(), window, cx);
-
-        cx.notify();
     }
 
     fn focus_completions(
@@ -367,6 +362,7 @@ impl RatePredictionsModal {
                             padding_left: false,
                             padding_right: false,
                             tooltip: None,
+                            text_edits: None,
                             resolve_state: ResolveState::Resolved,
                         },
                     ),
@@ -380,6 +376,7 @@ impl RatePredictionsModal {
                             padding_left: false,
                             padding_right: false,
                             tooltip: None,
+                            text_edits: None,
                             resolve_state: ResolveState::Resolved,
                         },
                     ),
@@ -605,7 +602,6 @@ impl RatePredictionsModal {
                         &predicted_buffer_snapshot.text,
                         predicted_buffer_snapshot.language().cloned(),
                         predicted_buffer.read(cx).language_registry(),
-                        buffer_diff::DiffBaseKind::Custom,
                         cx,
                     )
                 });
@@ -712,7 +708,6 @@ impl RatePredictionsModal {
                     &expected_buffer_snapshot.text,
                     expected_buffer_snapshot.language().cloned(),
                     expected_buffer.read(cx).language_registry(),
-                    buffer_diff::DiffBaseKind::Custom,
                     cx,
                 )
             });

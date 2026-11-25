@@ -1,5 +1,12 @@
 [
   {
+    "context": "Workspace",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-o": null,
+    },
+  },
+  {
     "bindings": {
       "cmd-{": "pane::ActivatePreviousItem",
       "cmd-}": "pane::ActivateNextItem",
@@ -35,7 +42,7 @@
       "ctrl-g": ["editor::SelectNext", { "replace_newest": false }],
       "ctrl-shift-g": "editor::UndoSelection",
       "ctrl-cmd-g": ["editor::SelectPrevious", { "replace_newest": false }],
-      "cmd-/": ["editor::ToggleComments", { "advance_downwards": true }],
+      "cmd-/": ["editor::ToggleComments", { "advance_downwards": true, "comment_empty_lines": true }],
       "alt-up": "editor::SelectLargerSyntaxNode",
       "alt-down": "editor::SelectSmallerSyntaxNode",
       "shift-alt-up": "editor::MoveLineUp",
@@ -59,6 +66,10 @@
       "cmd-end": "editor::MoveToEnd",
       "cmd-shift-home": "editor::SelectToBeginning",
       "cmd-shift-end": "editor::SelectToEnd",
+      "alt-left": "editor::MoveToPreviousSubwordStart",
+      "alt-right": "editor::MoveToNextSubwordEnd",
+      "shift-alt-left": "editor::SelectToPreviousSubwordStart",
+      "shift-alt-right": "editor::SelectToNextSubwordEnd",
       "ctrl-f8": "editor::ToggleBreakpoint",
       "ctrl-shift-f8": "editor::EditLogBreakpoint",
       "cmd-shift-u": "editor::ToggleCase",
@@ -78,6 +89,7 @@
       "cmd-j": "editor::Hover",
       "cmd-p": "editor::ShowSignatureHelp",
       "cmd-\\": "assistant::InlineAssist",
+      "ctrl-alt-h": "call_hierarchy::ShowIncomingCalls",
     },
   },
   {
@@ -88,7 +100,7 @@
     },
   },
   {
-    "context": "BufferSearchBar",
+    "context": "BufferSearchBar && !in_replace > Editor",
     "bindings": {
       "shift-enter": "search::SelectPreviousMatch",
     },
@@ -121,7 +133,7 @@
       "shift-f10": "task::Spawn",
       "cmd-f5": "task::Rerun",
       "cmd-e": "file_finder::Toggle",
-      "cmd-k": "git_panel::ToggleFocus", // bug: This should also focus commit editor
+      "cmd-k": "git_panel::FocusEditor",
       "cmd-shift-o": "file_finder::Toggle",
       "cmd-shift-n": "file_finder::Toggle",
       "cmd-n": "project_symbols::Toggle",
@@ -216,6 +228,13 @@
     "context": "Editor && mode == auto_height",
     "bindings": {
       "escape": "editor::Cancel",
+    },
+  },
+  {
+    "context": "CallHierarchyPicker > Picker > Editor",
+    "bindings": {
+      "ctrl-alt-h": "call_hierarchy::ToggleDirection",
+      "cmd-k": null,
     },
   },
 ]

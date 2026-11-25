@@ -598,15 +598,15 @@ mod tests {
             patches.push(Patch(edits));
         }
 
-        log::info!("old patch: {:?}", &patches[0]);
-        log::info!("new patch: {:?}", &patches[1]);
+        log::info!("old patch: {:?}", patches[0]);
+        log::info!("new patch: {:?}", patches[1]);
         log::info!("initial chars: {:?}", initial_chars);
         log::info!("final chars: {:?}", expected_chars);
 
         // Compose the patches, and verify that it has the same effect as applying the
         // two patches separately.
         let composed = patches[0].compose(&patches[1]);
-        log::info!("composed patch: {:?}", &composed);
+        log::info!("composed patch: {composed:?}");
 
         let mut actual_chars = initial_chars;
         for edit in composed.0 {

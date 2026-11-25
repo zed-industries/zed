@@ -23,8 +23,6 @@ pub trait Client: Send + Sync {
     fn guest_token(&self, room: &str, identity: &str) -> Result<String>;
 }
 
-pub struct LiveKitParticipantUpdate {}
-
 #[derive(Clone)]
 pub struct LiveKitClient {
     http: reqwest::Client,
@@ -73,7 +71,7 @@ impl LiveKitClient {
         body: Req,
     ) -> impl Future<Output = Result<Res>>
     where
-        Req: Message,
+        Req: Message + std::fmt::Debug,
         Res: Default + Message,
     {
         let client = self.http.clone();

@@ -2839,15 +2839,15 @@ mod tests {
             buffer.update_diagnostics(
                 LanguageServerId(0),
                 DiagnosticSet::new(
-                    [DiagnosticEntry {
-                        range: PointUtf16::new(0, 3)..PointUtf16::new(0, 7),
-                        diagnostic: Diagnostic {
+                    [DiagnosticEntry::new(
+                        PointUtf16::new(0, 3)..PointUtf16::new(0, 7),
+                        Diagnostic {
                             severity: lsp::DiagnosticSeverity::ERROR,
                             group_id: 1,
                             message: "unused function".into(),
                             ..Default::default()
                         },
-                    }],
+                    )],
                     buffer,
                 ),
                 cx,

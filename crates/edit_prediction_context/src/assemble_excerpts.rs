@@ -36,7 +36,7 @@ pub fn assemble_excerpt_ranges(
                     });
 
                 add_outline_item(
-                    item_range.clone(),
+                    item_range,
                     body_range.clone(),
                     *input_order,
                     buffer,

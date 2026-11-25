@@ -918,7 +918,7 @@ impl ConfigureContextServerModal {
                         )
                         .key_binding(
                             KeyBinding::for_action_in(&menu::Cancel, &focus_handle, cx)
-                                .map(|kb| kb.size(rems_from_px(12.))),
+                                .map(|kb| kb.size(rems_from_px(12_f32))),
                         )
                         .on_click(
                             cx.listener(|this, _event, _window, cx| this.cancel(&menu::Cancel, cx)),
@@ -929,7 +929,7 @@ impl ConfigureContextServerModal {
                             .disabled(is_busy)
                             .key_binding(
                                 KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
-                                    .map(|kb| kb.size(rems_from_px(12.))),
+                                    .map(|kb| kb.size(rems_from_px(12_f32))),
                             )
                             .on_click(cx.listener(|this, _event, _window, cx| {
                                 this.confirm(&menu::Confirm, cx)
@@ -1148,17 +1148,17 @@ impl Render for ConfigureContextServerModal {
                                                 self.render_loading("Connecting Server…")
                                             }
                                             State::AuthRequired { server_id } => {
-                                                self.render_auth_required(&server_id.clone(), cx)
+                                                self.render_auth_required(server_id, cx)
                                             }
                                             State::ClientSecretRequired { server_id, error } => {
                                                 self.render_client_secret_required(
-                                                    &server_id.clone(),
+                                                    server_id,
                                                     error.clone(),
                                                     cx,
                                                 )
                                             }
                                             State::Authenticating { server_id } => {
-                                                self.render_authenticating(&server_id.clone(), cx)
+                                                self.render_authenticating(server_id, cx)
                                             }
                                             State::Error(error) => {
                                                 Self::render_modal_error(error.clone())

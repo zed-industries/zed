@@ -10,7 +10,7 @@ use regex::Regex;
 
 use fs::Fs;
 use http_client::HttpClient;
-use util::{ResultExt, command::Command, normalize_path};
+use util::{ResultExt, command::Command, paths::normalize_path};
 
 use crate::{
     DevContainerConfig, DevContainerContext,
@@ -74,7 +74,7 @@ impl DevContainerManifest {
         local_project_path: &Path,
     ) -> Result<Self, DevContainerError> {
         let config_path = local_project_path.join(local_config.config_path.clone());
-        log::debug!("parsing devcontainer json found in {:?}", &config_path);
+        log::debug!("parsing devcontainer json found in {config_path:?}");
         let devcontainer_contents = context.fs.load(&config_path).await.map_err(|e| {
             log::error!("Unable to read devcontainer contents: {e}");
             DevContainerError::DevContainerParseFailed
@@ -481,8 +481,7 @@ impl DevContainerManifest {
         })?;
 
         let dockerfile_path = features_content_dir.join("Dockerfile.extended");
-        let image_tag =
-            self.generate_features_image_tag(dockerfile_path.clone().display().to_string());
+        let image_tag = self.generate_features_image_tag(dockerfile_path.display().to_string());
 
         let build_info = FeaturesBuildInfo {
             dockerfile_path,
@@ -608,7 +607,7 @@ impl DevContainerManifest {
                     "No devcontainer-feature.json found in {:?}, no defaults to apply",
                     feature_json_path
                 );
-                log::error!("{}", &message);
+                log::error!("{message}");
                 return Err(DevContainerError::ResourceFetchFailed);
             }
 
@@ -910,7 +909,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             ];
 
             for entrypoint in self.features.iter().filter_map(|f| f.entrypoint()) {
-                entrypoint_script_lines.push(entrypoint.clone());
+                entrypoint_script_lines.push(entrypoint);
             }
             entrypoint_script_lines.append(&mut vec![
                 "exec \"$@\"".to_string(),
@@ -1543,7 +1542,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                     if let Some(service) = service_declarations.get_mut(network_service_name) {
                         service.ports.push(DockerComposeServicePort {
                             target: port.clone(),
-                            published: port.clone(),
+                            published: port,
                             ..Default::default()
                         });
                     } else {
@@ -1552,7 +1551,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                             DockerComposeService {
                                 ports: vec![DockerComposeServicePort {
                                     target: port.clone(),
-                                    published: port.clone(),
+                                    published: port,
                                     ..Default::default()
                                 }],
                                 ..Default::default()
@@ -1562,7 +1561,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                 } else {
                     main_service.ports.push(DockerComposeServicePort {
                         target: port.clone(),
-                        published: port.clone(),
+                        published: port,
                         ..Default::default()
                     });
                 }
@@ -2488,6 +2487,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             let container_started = !docker_inspect.is_running();
             if container_started {
                 log::debug!("Container not running. Will attempt to start, and then proceed");
+                self.run_initialize_commands().await?;
                 match self.dev_container().build_type() {
                     DevContainerBuildType::DockerCompose => {
                         let resources = self.docker_compose_manifest().await?;
@@ -2764,6 +2764,9 @@ pub(crate) async fn spawn_dev_container(
     .await?;
 
     devcontainer_manifest.parse_nonremote_vars()?;
+    devcontainer_manifest
+        .dev_container()
+        .validate_environment_names()?;
 
     log::debug!("Checking for existing container");
     if let Some(devcontainer) = devcontainer_manifest
@@ -4321,12 +4324,7 @@ mod test {
         let given_docker_compose_config = DockerComposeResources {
             config: DockerComposeConfig {
                 name: Some("devcontainers".to_string()),
-                services: HashMap::from([(
-                    "found_service".to_string(),
-                    DockerComposeService {
-                        ..Default::default()
-                    },
-                )]),
+                services: HashMap::from([("found_service".to_string(), Default::default())]),
                 ..Default::default()
             },
             ..Default::default()
@@ -6087,6 +6085,21 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
             "compose resume should target requested services without recreating them, got: {:?}",
             command.args
         );
+    }
+
+    #[gpui::test]
+    async fn test_runs_initialize_command_before_restarting_container(cx: &mut TestAppContext) {
+        let json = r#"{"image": "image", "initializeCommand": ["touch", "marker"]}"#;
+        let (dependencies, mut manifest) =
+            init_default_devcontainer_manifest(cx, json).await.unwrap();
+        manifest.parse_nonremote_vars().unwrap();
+
+        // `FakeDocker` fails every start, so `touch` is recorded only if it runs first.
+        let result = manifest.check_for_existing_devcontainer().await;
+
+        assert!(matches!(result, Err(DevContainerError::DockerNotAvailable)));
+        let commands = dependencies.command_runner.commands_by_program("touch");
+        assert_eq!(commands.len(), 1);
     }
 
     #[cfg(not(target_os = "windows"))]

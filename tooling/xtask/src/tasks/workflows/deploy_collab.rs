@@ -16,7 +16,11 @@ pub(crate) fn deploy_collab() -> Workflow {
 
     named::workflow()
         .with_minimal_permissions()
-        .on(Event::default().push(Push::default().add_tag("collab-production")))
+        .on(Event::default().push(
+            Push::default()
+                .add_tag("collab-production")
+                .add_tag("collab-staging"),
+        ))
         .add_env(("DOCKER_BUILDKIT", "1"))
         .add_job(style.name, style.job)
         .add_job(tests.name, tests.job)

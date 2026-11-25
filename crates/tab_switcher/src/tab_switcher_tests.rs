@@ -1,11 +1,15 @@
 use super::*;
-use editor::Editor;
+use editor::{Editor, MultiBuffer};
 use gpui::{TestAppContext, VisualTestContext};
 use menu::SelectPrevious;
 use project::{Project, ProjectPath};
 use serde_json::json;
+use settings::SettingsStore;
 use util::{path, rel_path::rel_path};
-use workspace::{ActivatePreviousItem, AppState, MultiWorkspace, Workspace, item::test::TestItem};
+use workspace::{
+    ActivatePreviousItem, AppState, CloseItemInAllPanes, MultiWorkspace, Workspace,
+    item::test::TestItem,
+};
 
 #[ctor::ctor(unsafe)]
 fn init_logger() {
@@ -140,7 +144,29 @@ async fn test_open_item_on_modifiers_release(cx: &mut gpui::TestAppContext) {
         assert_match_selection(tab_switcher, 1, tab_1.boxed_clone());
     });
 
+    let first_row = cx
+        .debug_bounds("tab-switcher-first-item")
+        .expect("first tab switcher row should be rendered");
+    cx.simulate_mouse_move(first_row.center(), None, Modifiers::control());
+    cx.read(|cx| {
+        let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+        assert_eq!(active_editor.read(cx).title(cx), "1.txt");
+    });
+
     cx.simulate_modifiers_change(Modifiers::none());
+    cx.read(|cx| {
+        let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+        assert_eq!(active_editor.read(cx).title(cx), "1.txt");
+    });
+    assert_tab_switcher_is_closed(workspace.clone(), cx);
+
+    cx.simulate_modifiers_change(Modifiers::control());
+    open_tab_switcher(false, &workspace, cx);
+    let first_row = cx
+        .debug_bounds("tab-switcher-first-item")
+        .expect("first tab switcher row should be rendered");
+    cx.simulate_mouse_move(first_row.center(), None, Modifiers::control());
+    cx.simulate_click(first_row.center(), Modifiers::control());
     cx.read(|cx| {
         let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
         assert_eq!(active_editor.read(cx).title(cx), "1.txt");
@@ -551,6 +577,75 @@ async fn test_open_in_active_pane_closes_file_in_all_panes(cx: &mut gpui::TestAp
 }
 
 #[gpui::test]
+async fn test_close_by_path_keeps_multibuffers_and_files_apart(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(path!("/root"), json!({"1.txt": "one"}))
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+    let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+    let singleton_editor = open_buffer("1.txt", &workspace, cx).await;
+    let multibuffer_editor = cx.new_window_entity(|window, cx| {
+        let editor = singleton_editor.act_as::<Editor>(cx).unwrap();
+        let buffer = editor.read(cx).buffer().read(cx).as_singleton().unwrap();
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(buffer.read(cx).capability());
+            let range = Default::default()..buffer.read(cx).max_point();
+            multibuffer.set_excerpts_for_buffer(buffer, [range], 0, cx);
+            multibuffer
+        });
+
+        Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx)
+    });
+
+    let activate = |item: &dyn ItemHandle, cx: &mut VisualTestContext| {
+        pane.update_in(cx, |pane, window, cx| {
+            pane.add_item(item.boxed_clone(), true, true, None, window, cx)
+        });
+    };
+    let close_in_all_panes = |cx: &mut VisualTestContext| {
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.close_item_in_all_panes(&CloseItemInAllPanes::default(), window, cx)
+        });
+        cx.run_until_parked();
+    };
+    let open_items = |cx: &mut VisualTestContext| {
+        pane.read_with(cx, |pane, _| {
+            pane.items().map(|item| item.item_id()).collect::<Vec<_>>()
+        })
+    };
+
+    // Closing the multibuffer editor in all panes keeps the singleton editor
+    // for the same file open.
+    activate(&multibuffer_editor, cx);
+    close_in_all_panes(cx);
+    assert_eq!(open_items(cx), [singleton_editor.item_id()]);
+
+    // Closing the singleton editor in all panes keeps the multibuffer editor
+    // for the same file open.
+    activate(&multibuffer_editor, cx);
+    activate(singleton_editor.as_ref(), cx);
+    close_in_all_panes(cx);
+    assert_eq!(open_items(cx), [multibuffer_editor.item_id()]);
+
+    // Closing the multibuffer editor from the tab switcher, opened with
+    // `OpenInActivePane`, keeps the singleton editor for the same file open.
+    let singleton_editor = open_buffer("1.txt", &workspace, cx).await;
+    activate(&multibuffer_editor, cx);
+    let tab_switcher = open_tab_switcher_for_active_pane(&workspace, cx);
+    tab_switcher.update(cx, |picker, _| picker.delegate.selected_index = 0);
+    cx.dispatch_action(CloseSelectedItem);
+    assert_eq!(open_items(cx), [singleton_editor.item_id()]);
+}
+
+#[gpui::test]
 async fn test_toggle_all_stays_open_after_closing_last_tab_in_active_pane(
     cx: &mut gpui::TestAppContext,
 ) {
@@ -604,4 +699,51 @@ async fn test_toggle_all_stays_open_after_closing_last_tab_in_active_pane(
         assert_match_at_position(picker, 0, tab_a.boxed_clone());
         let _ = cx;
     });
+}
+
+#[gpui::test]
+async fn test_show_file_preview_false(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "1.txt": "First file",
+                "2.txt": "Second file",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    open_buffer("1.txt", &workspace, cx).await;
+    open_buffer("2.txt", &workspace, cx).await;
+
+    cx.update(|_window, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                let tab_switcher = settings.tab_switcher.get_or_insert_with(Default::default);
+                tab_switcher.show_file_preview = Some(false);
+            });
+        });
+    });
+
+    cx.simulate_modifiers_change(Modifiers::control());
+    let _tab_switcher = open_tab_switcher(false, &workspace, cx);
+    cx.read(|cx| {
+        let active = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+        assert_eq!(active.read(cx).title(cx), "2.txt");
+    });
+
+    cx.simulate_modifiers_change(Modifiers::none());
+    cx.read(|cx| {
+        let active = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+        assert_eq!(active.read(cx).title(cx), "1.txt");
+    });
+    assert_tab_switcher_is_closed(workspace, cx);
 }

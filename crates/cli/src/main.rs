@@ -26,7 +26,7 @@ use std::{
     thread::{self, JoinHandle},
 };
 use tempfile::{NamedTempFile, TempDir};
-use util::paths::PathWithPosition;
+use util::paths::{PathWithPosition, parse_path_with_position};
 use walkdir::WalkDir;
 
 use std::io::IsTerminal;
@@ -128,6 +128,10 @@ struct Args {
     /// Will attempt to give the correct command to run
     #[arg(long)]
     system_specs: bool,
+    /// Print a JSON snapshot of the running Zed's GPUI and platform state
+    /// (windows, displays, frame scheduling, cursor), for debugging.
+    #[arg(long)]
+    debug_state: bool,
     /// Open the project in a dev container.
     ///
     /// Automatically triggers "Reopen in Dev Container" if a `.devcontainer/`
@@ -153,53 +157,6 @@ struct Args {
     /// by having Zed act like netcat communicating over a Unix socket.
     #[arg(long, hide = true)]
     askpass: Option<String>,
-}
-
-/// Parses a path containing a position (e.g. `path:line:column`)
-/// and returns its canonicalized string representation.
-///
-/// If a part of path doesn't exist, it will canonicalize the
-/// existing part and append the non-existing part.
-///
-/// This method must return an absolute path, as many zed
-/// crates assume absolute paths.
-fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
-    match Path::new(argument_str).canonicalize() {
-        Ok(existing_path) => Ok(PathWithPosition::from_path(existing_path)),
-        Err(_) => PathWithPosition::parse_str(argument_str).map_path(|mut path| {
-            let curdir = env::current_dir().context("retrieving current directory")?;
-            let mut children = Vec::new();
-            let root;
-            loop {
-                // canonicalize handles './', and '/'.
-                if let Ok(canonicalized) = fs::canonicalize(&path) {
-                    root = canonicalized;
-                    break;
-                }
-                // The comparison to `curdir` is just a shortcut
-                // since we know it is canonical. The other one
-                // is if `argument_str` is a string that starts
-                // with a name (e.g. "foo/bar").
-                if path == curdir || path == Path::new("") {
-                    root = curdir;
-                    break;
-                }
-                children.push(
-                    path.file_name()
-                        .with_context(|| format!("parsing as path with position {argument_str}"))?
-                        .to_owned(),
-                );
-                if !path.pop() {
-                    unreachable!("parsing as path with position {argument_str}");
-                }
-            }
-            Ok(children.iter().rev().fold(root, |mut path, child| {
-                path.push(child);
-                path
-            }))
-        }),
-    }
-    .map(|path_with_pos| path_with_pos.to_string(&|path| path.to_string_lossy().into_owned()))
 }
 
 /// Returns whether a `--diff` argument refers to an existing path, allowing a
@@ -475,6 +432,9 @@ fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
 }
 
 fn main() {
+    #[cfg(target_os = "windows")]
+    sandbox::run_windows_sandbox_launcher_if_invoked();
+
     if let Err(error) = run() {
         eprintln!("error: {error:#}");
         std::process::exit(1);
@@ -731,7 +691,11 @@ fn run() -> Result<()> {
                     cwd: env::current_dir().ok(),
                 };
 
-                tx.send(open_request)?;
+                tx.send(if args.debug_state {
+                    CliRequest::DebugState
+                } else {
+                    open_request
+                })?;
 
                 while let Ok(response) = rx.recv() {
                     match response {
@@ -1029,12 +993,25 @@ mod linux {
 #[cfg(target_os = "linux")]
 mod flatpak {
     use std::ffi::OsString;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::{env, process};
 
     const EXTRA_LIB_ENV_NAME: &str = "ZED_FLATPAK_LIB_PATH";
     const NO_ESCAPE_ENV_NAME: &str = "ZED_FLATPAK_NO_ESCAPE";
+
+    fn restart_cli_args(flatpak_dir: &Path, invocation_args: &[OsString]) -> Vec<OsString> {
+        let mut args = Vec::with_capacity(invocation_args.len() + 2);
+
+        if !invocation_args.iter().any(|arg| arg == "--zed") {
+            // Positional paths consume all following arguments, so launcher options must precede them.
+            args.push("--zed".into());
+            args.push(flatpak_dir.join("libexec").join("zed-editor").into());
+        }
+
+        args.extend_from_slice(invocation_args);
+        args
+    }
 
     /// Adds bundled libraries to LD_LIBRARY_PATH if running under flatpak
     pub fn ld_extra_libs() {
@@ -1066,16 +1043,8 @@ mod flatpak {
             );
             args.push(flatpak_dir.join("bin").join("zed").into());
 
-            let mut is_app_location_set = false;
-            for arg in &env::args_os().collect::<Vec<_>>()[1..] {
-                args.push(arg.clone());
-                is_app_location_set |= arg == "--zed";
-            }
-
-            if !is_app_location_set {
-                args.push("--zed".into());
-                args.push(flatpak_dir.join("libexec").join("zed-editor").into());
-            }
+            let invocation_args = env::args_os().skip(1).collect::<Vec<_>>();
+            args.extend(restart_cli_args(&flatpak_dir, &invocation_args));
 
             let error = exec::execvp("/usr/bin/flatpak-spawn", args);
             eprintln!("failed restart cli on host: {:?}", error);
@@ -1130,6 +1099,31 @@ mod flatpak {
             .filter(|(key, _)| xdg_keys.contains(&key.as_str()))
             .map(|(key, val)| format!("--env=FLATPAK_{}={}", key, val).into())
             .collect()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use clap::Parser as _;
+
+        use super::*;
+
+        #[test]
+        fn test_restart_cli_args() {
+            let flatpak_dir = Path::new("/flatpak");
+            let args = restart_cli_args(flatpak_dir, &["project".into()]);
+            let parsed =
+                crate::Args::try_parse_from(std::iter::once(OsString::from("zed")).chain(args))
+                    .unwrap();
+
+            assert_eq!(parsed.zed, Some(flatpak_dir.join("libexec/zed-editor")));
+            assert_eq!(parsed.paths_with_position, ["project"]);
+
+            let invocation_args = ["--zed".into(), "/custom/zed-editor".into()];
+            assert_eq!(
+                restart_cli_args(flatpak_dir, &invocation_args),
+                invocation_args
+            );
+        }
     }
 }
 

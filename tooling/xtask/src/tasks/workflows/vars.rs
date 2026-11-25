@@ -41,6 +41,7 @@ secret!(ZED_ZIPPY_APP_ID);
 secret!(ZED_ZIPPY_APP_PRIVATE_KEY);
 secret!(DISCORD_WEBHOOK_RELEASE_NOTES);
 secret!(WINGET_TOKEN);
+secret!(SNAPCRAFT_STORE_CREDENTIALS);
 secret!(ZED_DEV_REVALIDATE_TOKEN);
 secret!(SLACK_WEBHOOK_WORKFLOW_FAILURES);
 secret!(R2_ACCOUNT_ID);
@@ -157,7 +158,7 @@ impl<'a> PathContextCondition<'a> {
             job: job.job.add_need(set_by_step.clone()).cond(Expression::new(
                 format!(
                     "needs.{}.outputs.{} == 'true' {merge_queue_condition}",
-                    &set_by_step,
+                    set_by_step,
                     self.condition.name,
                     merge_queue_condition = self
                         .run_in_merge_queue

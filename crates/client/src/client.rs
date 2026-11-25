@@ -67,7 +67,7 @@ static ZED_RPC_URL: LazyLock<Option<String>> = LazyLock::new(|| std::env::var("Z
 pub static IMPERSONATE_LOGIN: LazyLock<Option<String>> = LazyLock::new(|| {
     std::env::var("ZED_IMPERSONATE")
         .ok()
-        .and_then(|s| if s.is_empty() { None } else { Some(s) })
+        .filter(|s| !s.is_empty())
 });
 
 pub static USE_WEB_LOGIN: LazyLock<bool> = LazyLock::new(|| std::env::var("ZED_WEB_LOGIN").is_ok());
@@ -75,7 +75,7 @@ pub static USE_WEB_LOGIN: LazyLock<bool> = LazyLock::new(|| std::env::var("ZED_W
 pub static ADMIN_API_TOKEN: LazyLock<Option<String>> = LazyLock::new(|| {
     std::env::var("ZED_ADMIN_API_TOKEN")
         .ok()
-        .and_then(|s| if s.is_empty() { None } else { Some(s) })
+        .filter(|s| !s.is_empty())
 });
 
 pub static ZED_APP_PATH: LazyLock<Option<PathBuf>> =
@@ -216,12 +216,10 @@ pub struct Client {
     message_to_client_handlers: Mutex<Vec<MessageToClientHandler>>,
     sign_out_tx: Mutex<Option<mpsc::UnboundedSender<()>>>,
 
-    #[allow(clippy::type_complexity)]
     #[cfg(any(test, feature = "test-support"))]
     authenticate:
         RwLock<Option<Box<dyn 'static + Send + Sync + Fn(&AsyncApp) -> Task<Result<Credentials>>>>>,
 
-    #[allow(clippy::type_complexity)]
     #[cfg(any(test, feature = "test-support"))]
     establish_connection: RwLock<
         Option<
@@ -639,12 +637,6 @@ impl Client {
             + Fn(&Credentials, &AsyncApp) -> Task<Result<Connection, EstablishConnectionError>>,
     {
         *self.establish_connection.write() = Some(Box::new(connect));
-        self
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn override_rpc_url(&self, url: Url) -> &Self {
-        *self.rpc_url.write() = Some(url);
         self
     }
 
@@ -1609,20 +1601,16 @@ impl Client {
         &self,
         llm_token: &LlmApiToken,
         organization_id: OrganizationId,
-    ) -> Result<String> {
+    ) -> Result<String, ClientApiError> {
         let system_id = self.telemetry().system_id().map(|x| x.to_string());
         let cloud_client = self.cloud_client();
-        match llm_token
+        let result = llm_token
             .cached(&cloud_client, system_id, organization_id)
-            .await
-        {
-            Ok(token) => Ok(token),
-            Err(ClientApiError::Unauthorized) => {
-                self.request_sign_out();
-                Err(ClientApiError::Unauthorized).context("Failed to create LLM token")
-            }
-            Err(err) => Err(anyhow::Error::from(err)),
+            .await;
+        if let Err(ClientApiError::Unauthorized) = result {
+            self.request_sign_out();
         }
+        result
     }
 
     /// Sends an authenticated request to the Zed LLM service, retrying once
@@ -1654,40 +1642,32 @@ impl Client {
         &self,
         llm_token: &LlmApiToken,
         organization_id: OrganizationId,
-    ) -> Result<String> {
+    ) -> Result<String, ClientApiError> {
         let system_id = self.telemetry().system_id().map(|x| x.to_string());
         let cloud_client = self.cloud_client();
-        match llm_token
+        let result = llm_token
             .refresh(&cloud_client, system_id, organization_id)
-            .await
-        {
-            Ok(token) => Ok(token),
-            Err(ClientApiError::Unauthorized) => {
-                self.request_sign_out();
-                return Err(ClientApiError::Unauthorized).context("Failed to create LLM token");
-            }
-            Err(err) => return Err(anyhow::Error::from(err)),
+            .await;
+        if let Err(ClientApiError::Unauthorized) = result {
+            self.request_sign_out();
         }
+        result
     }
 
     pub async fn clear_and_refresh_llm_token(
         &self,
         llm_token: &LlmApiToken,
         organization_id: OrganizationId,
-    ) -> Result<String> {
+    ) -> Result<String, ClientApiError> {
         let system_id = self.telemetry().system_id().map(|x| x.to_string());
         let cloud_client = self.cloud_client();
-        match llm_token
+        let result = llm_token
             .clear_and_refresh(&cloud_client, system_id, organization_id)
-            .await
-        {
-            Ok(token) => Ok(token),
-            Err(ClientApiError::Unauthorized) => {
-                self.request_sign_out();
-                return Err(ClientApiError::Unauthorized).context("Failed to create LLM token");
-            }
-            Err(err) => return Err(anyhow::Error::from(err)),
+            .await;
+        if let Err(ClientApiError::Unauthorized) = result {
+            self.request_sign_out();
         }
+        result
     }
 
     pub async fn sign_out(self: &Arc<Self>, cx: &AsyncApp) {

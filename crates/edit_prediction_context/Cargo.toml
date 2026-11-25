@@ -10,6 +10,7 @@ workspace = true
 
 [lib]
 path = "src/edit_prediction_context.rs"
+doctest = false
 
 [dependencies]
 anyhow.workspace = true
@@ -22,7 +23,6 @@ log.workspace = true
 lsp.workspace = true
 parking_lot.workspace = true
 project.workspace = true
-serde.workspace = true
 smallvec.workspace = true
 telemetry.workspace = true
 text.workspace = true

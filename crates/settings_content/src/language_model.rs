@@ -115,18 +115,25 @@ pub struct AnthropicAvailableModel {
 #[with_fallible_options]
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct AmazonBedrockSettingsContent {
+    /// Custom Converse models. Names are sent exactly as written. Omitted
+    /// capabilities are inherited from discovery or the models.dev catalog when known.
     pub available_models: Option<Vec<BedrockAvailableModel>>,
     /// Custom models served through the `bedrock-mantle` endpoint's
-    /// OpenAI-compatible APIs, in addition to the built-in Mantle models
-    /// (GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.6 Luna, GPT-5.5, GPT-5.4, Grok 4.3).
+    /// OpenAI-compatible APIs. Zed does not include built-in Mantle models.
     pub mantle_available_models: Option<Vec<BedrockMantleAvailableModel>>,
     pub custom_headers: Option<HashMap<String, String>>,
+    /// A custom Converse endpoint. When nonempty, Zed skips AWS model listing
+    /// and offers models.dev profiles for the Region plus custom models.
+    /// Does not change the endpoint for Mantle models.
     pub endpoint_url: Option<String>,
     pub region: Option<String>,
     pub profile: Option<String>,
     pub authentication_method: Option<BedrockAuthMethodContent>,
+    /// Prefer global inference profiles over geographic profiles. Defaults to
+    /// false, but a model without a matching geographic profile still uses its
+    /// global profile. Does not change pinned custom or application profiles.
     pub allow_global: Option<bool>,
-    /// The guardrail identifier (ARN or ID) to apply to Bedrock API requests.
+    /// The guardrail identifier (ARN or ID) to apply to Converse inference requests.
     pub guardrail_identifier: Option<String>,
     /// The guardrail version to use. Defaults to "DRAFT" if not specified.
     pub guardrail_version: Option<String>,
@@ -142,7 +149,24 @@ pub struct BedrockAvailableModel {
     pub max_output_tokens: Option<u64>,
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_temperature: Option<f32>,
-    pub mode: Option<ModelMode>,
+    pub supports_tools: Option<bool>,
+    pub supports_images: Option<bool>,
+    pub thinking: Option<BedrockThinkingSettings>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(untagged)]
+pub enum BedrockThinkingSettings {
+    Enabled(bool),
+    Config(BedrockThinkingConfigSettings),
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct BedrockThinkingConfigSettings {
+    pub adaptive: Option<bool>,
+    pub has_xhigh: Option<bool>,
+    pub budget_tokens: Option<u64>,
 }
 
 #[with_fallible_options]
@@ -245,8 +269,6 @@ pub struct OpenCodeSettingsContent {
     pub show_zen_models: Option<bool>,
     /// Whether to show OpenCode Go models. Defaults to true.
     pub show_go_models: Option<bool>,
-    /// Whether to show OpenCode Free models. Defaults to true.
-    pub show_free_models: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -266,7 +288,6 @@ pub enum OpenCodeApiProtocol {
 pub enum OpenCodeModelSubscription {
     Zen,
     Go,
-    Free,
 }
 
 #[with_fallible_options]
@@ -278,7 +299,7 @@ pub struct OpenCodeAvailableModel {
     pub max_output_tokens: Option<u64>,
     /// The API protocol to use for this model: "anthropic", "openai_responses", "openai_chat", or "google". Defaults to "openai_chat".
     pub protocol: Option<OpenCodeApiProtocol>,
-    /// The subscription for this model: "zen", "go", or "free". Defaults to Zen.
+    /// The subscription for this model: "zen" or "go". Defaults to Zen.
     pub subscription: Option<OpenCodeModelSubscription>,
     /// Custom Model API URL to use for this model.
     pub custom_model_api_url: Option<String>,
@@ -593,6 +614,7 @@ pub struct OpenRouterAvailableModel {
     pub supports_tools: Option<bool>,
     pub supports_images: Option<bool>,
     pub mode: Option<ModelMode>,
+    pub reasoning_effort: Option<ReasoningEffort>,
     pub provider: Option<OpenRouterProvider>,
 }
 

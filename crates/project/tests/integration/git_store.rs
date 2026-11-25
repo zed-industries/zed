@@ -99,6 +99,44 @@ mod conflict_set_tests {
     }
 
     #[test]
+    fn test_parse_conflicts_with_empty_sides() {
+        let test_content = r#"
+            <<<<<<< HEAD
+            =======
+            their version
+            >>>>>>> branch
+            <<<<<<< HEAD
+            our version
+            =======
+            >>>>>>> branch
+        "#
+        .unindent();
+
+        let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), test_content);
+        let conflict_snapshot = ConflictSet::parse(&buffer.snapshot());
+        assert_eq!(conflict_snapshot.conflicts.len(), 2);
+
+        for conflict in conflict_snapshot.conflicts.iter() {
+            for side in [&conflict.ours, &conflict.theirs] {
+                assert!(side.start.cmp(&side.end, &buffer).is_le(), "{side:?}");
+            }
+        }
+        assert_eq!(
+            conflict_snapshot.conflicts[0].ours.to_point(&buffer),
+            Point::new(1, 0)..Point::new(1, 0)
+        );
+        assert_eq!(
+            conflict_snapshot.conflicts[1].theirs.to_point(&buffer),
+            Point::new(7, 0)..Point::new(7, 0)
+        );
+
+        // Text typed into an empty side becomes part of that side.
+        let ours = conflict_snapshot.conflicts[0].ours.clone();
+        buffer.edit([(Point::new(1, 0)..Point::new(1, 0), "resolution\n")]);
+        assert_eq!(ours.to_point(&buffer), Point::new(1, 0)..Point::new(2, 0));
+    }
+
+    #[test]
     fn test_nested_conflict_markers() {
         // Create a buffer with nested conflict markers
         let test_content = r#"
@@ -1252,14 +1290,75 @@ mod git_worktrees {
 
     #[test]
     fn test_worktree_directory_uses_remote_path_style() {
-        let work_dir = Path::new("/home/user/dev/lsp-tests");
-
-        let directory =
-            worktrees_directory_for_repo(work_dir, "../worktrees", PathStyle::Unix).unwrap();
+        // Unix remote
+        let anchor = Path::new("/home/user/dev/lsp-tests");
 
         assert_eq!(
-            directory,
+            worktrees_directory_for_repo(anchor, "../worktrees", PathStyle::Unix).unwrap(),
             PathBuf::from("/home/user/dev/worktrees/lsp-tests")
+        );
+
+        // Windows remote: the anchor intentionally mixes `/` and `\` separators.
+        let anchor = Path::new(r"C:\Users/user/dev\lsp-tests");
+
+        assert_eq!(
+            worktrees_directory_for_repo(anchor, "../worktrees", PathStyle::Windows).unwrap(),
+            PathBuf::from(r"C:\Users\user\dev\worktrees\lsp-tests")
+        );
+
+        assert_eq!(
+            worktrees_directory_for_repo(anchor, ".git\\zed-worktrees", PathStyle::Windows)
+                .unwrap(),
+            PathBuf::from(r"C:\Users\user\dev\lsp-tests\.git\zed-worktrees")
+        );
+    }
+
+    #[gpui::test]
+    async fn test_new_worktree_paths_use_bare_repository_identity(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/zed"),
+            json!({
+                ".bare": {
+                    "worktrees": {
+                        "main": {
+                            "commondir": "../..",
+                        },
+                    },
+                },
+                "main": {
+                    ".git": "gitdir: /zed/.bare/worktrees/main",
+                    "file.txt": "content",
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/zed/main").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+        let default_path = repository.read_with(cx, |repository, _| {
+            repository
+                .path_for_new_linked_worktree("plum-warbler", "../worktrees")
+                .unwrap()
+        });
+        let repository_relative_path = repository.read_with(cx, |repository, _| {
+            repository
+                .path_for_new_linked_worktree("plum-warbler", "worktrees")
+                .unwrap()
+        });
+
+        assert_eq!(
+            default_path,
+            PathBuf::from(path!("/worktrees/zed/plum-warbler/zed"))
+        );
+        assert_eq!(
+            repository_relative_path,
+            PathBuf::from(path!("/zed/worktrees/plum-warbler/zed"))
         );
     }
 
@@ -1388,6 +1487,87 @@ mod git_worktrees {
         let worktree_parent = PathBuf::from(path!("/worktrees/root/feature/nested"));
         let worktree_intermediate_parent = PathBuf::from(path!("/worktrees/root/feature"));
         let worktree_base = PathBuf::from(path!("/worktrees/root"));
+
+        cx.update(|cx| {
+            repository.update(cx, |repository, _| {
+                repository.create_worktree(
+                    git::repository::CreateWorktreeTarget::NewBranch {
+                        branch_name: "feature/nested".to_string(),
+                        base_sha: Some("abc123".to_string()),
+                    },
+                    worktree_path.clone(),
+                )
+            })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert!(Fs::is_dir(fs.as_ref(), &worktree_path).await);
+        assert!(Fs::is_dir(fs.as_ref(), &worktree_parent).await);
+        assert!(Fs::is_dir(fs.as_ref(), &worktree_intermediate_parent).await);
+        assert!(Fs::is_dir(fs.as_ref(), &worktree_base).await);
+
+        cx.update(|cx| {
+            repository.update(cx, |repository, _| {
+                repository.remove_worktree(worktree_path.clone(), false)
+            })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+        cx.executor().run_until_parked();
+
+        assert!(!Fs::is_dir(fs.as_ref(), &worktree_path).await);
+        assert!(!Fs::is_dir(fs.as_ref(), &worktree_parent).await);
+        assert!(!Fs::is_dir(fs.as_ref(), &worktree_intermediate_parent).await);
+        assert!(Fs::is_dir(fs.as_ref(), &worktree_base).await);
+    }
+
+    #[gpui::test]
+    async fn test_remove_worktree_uses_bare_repository_identity_for_managed_parent_directories(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/zed"),
+            json!({
+                ".bare": {
+                    "worktrees": {
+                        "main": {
+                            "commondir": "../..",
+                        },
+                    },
+                },
+                "main": {
+                    ".git": "gitdir: /zed/.bare/worktrees/main",
+                    "file.txt": "content",
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/zed/main").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+        let worktree_path = repository.read_with(cx, |repository, _| {
+            repository
+                .path_for_new_linked_worktree("feature/nested", "../worktrees")
+                .unwrap()
+        });
+        let worktree_parent = PathBuf::from(path!("/worktrees/zed/feature/nested"));
+        let worktree_intermediate_parent = PathBuf::from(path!("/worktrees/zed/feature"));
+        let worktree_base = PathBuf::from(path!("/worktrees/zed"));
+
+        assert_eq!(
+            worktree_path,
+            PathBuf::from(path!("/worktrees/zed/feature/nested/zed"))
+        );
 
         cx.update(|cx| {
             repository.update(cx, |repository, _| {
@@ -1637,6 +1817,7 @@ mod trust_tests {
 mod resolve_worktree_tests {
     use fs::FakeFs;
     use gpui::TestAppContext;
+    use path::PathStyle;
     use project::{
         git_store::resolve_git_worktree_to_main_repo, linked_worktree_short_name,
         repo_identity_path,
@@ -1761,7 +1942,24 @@ mod resolve_worktree_tests {
         ];
         for (common_dir, expected) in examples {
             assert_eq!(
-                repo_identity_path(Path::new(common_dir)),
+                repo_identity_path(Path::new(common_dir), PathStyle::local()),
+                Path::new(expected),
+                "identity path for common_dir {common_dir:?} should be {expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_windows_remote_identity_path() {
+        let examples = [
+            (r"C:\Users\zed\.git", r"C:\Users\zed"),
+            (r"C:\Users\project\.bare", r"C:\Users\project"),
+            (r"C:\Users\zed.git", r"C:\Users\zed.git"),
+            (r"C:\Users\zed", r"C:\Users\zed"),
+        ];
+        for (common_dir, expected) in examples {
+            assert_eq!(
+                repo_identity_path(Path::new(common_dir), PathStyle::Windows),
                 Path::new(expected),
                 "identity path for common_dir {common_dir:?} should be {expected:?}"
             );
@@ -1774,25 +1972,832 @@ mod resolve_worktree_tests {
             (
                 "/home/bob/zed",
                 "/home/bob/worktrees/olivetti/zed",
+                PathStyle::Unix,
                 Some("olivetti".into()),
             ),
-            ("/home/bob/zed", "/home/bob/zed2", Some("zed2".into())),
+            (
+                "/home/bob/zed",
+                "/home/bob/zed2",
+                PathStyle::Unix,
+                Some("zed2".into()),
+            ),
             (
                 "/home/bob/zed",
                 "/home/bob/worktrees/zed/selectric",
+                PathStyle::Unix,
                 Some("selectric".into()),
             ),
-            ("/home/bob/zed", "/home/bob/zed", None),
+            ("/home/bob/zed", "/home/bob/zed", PathStyle::Unix, None),
+            (
+                r"C:\Users\bob\dev\zed",
+                r"C:\Users\bob\dev\worktrees\zed\olivetti\zed",
+                PathStyle::Windows,
+                Some("olivetti".into()),
+            ),
+            (
+                r"C:\Users\bob\dev\zed",
+                r"C:\Users\bob\dev\zed2",
+                PathStyle::Windows,
+                Some("zed2".into()),
+            ),
         ];
-        for (main_worktree_path, linked_worktree_path, expected) in examples {
+        for (main_worktree_path, linked_worktree_path, path_style, expected) in examples {
             let short_name = linked_worktree_short_name(
                 Path::new(main_worktree_path),
                 Path::new(linked_worktree_path),
+                path_style,
             );
             assert_eq!(
                 short_name, expected,
                 "short name for {linked_worktree_path:?}, linked worktree of {main_worktree_path:?}, should be {expected:?}"
             );
         }
+    }
+
+    #[test]
+    fn test_delta_checkout_short_name() {
+        let examples = [
+            (
+                "/home/bob/zed/.delta/clones/olivetti/zed.git",
+                false,
+                "/home/bob/zed/.delta/worktrees/olivetti/zed",
+                "olivetti",
+            ),
+            (
+                "/data/repositories/1/clones/olivetti/zed.git",
+                false,
+                "/data/repositories/1/worktrees/olivetti/zed",
+                "olivetti",
+            ),
+            (
+                "/storage/clones/olivetti/My_Project.git",
+                false,
+                "/storage/worktrees/olivetti/My_Project",
+                "olivetti",
+            ),
+            (
+                "/home/runner/.delta/clones/zed.git",
+                false,
+                "/home/runner/zed",
+                "clones/zed",
+            ),
+            (
+                "/home/runner/.delta/clones/zed-2.git",
+                false,
+                "/home/runner/zed-2",
+                "clones/zed-2",
+            ),
+            (
+                "/mounts/olivetti/zed.git",
+                false,
+                "/mounts/olivetti/zed",
+                "olivetti",
+            ),
+            (
+                "/storage/clones/olivetti/zed.git",
+                false,
+                "/storage/worktrees/olivetti/zed/crates/gpui",
+                "olivetti",
+            ),
+            (
+                "/home/bob/zed/.delta/clones/olivetti/zed.git",
+                false,
+                "/home/bob/zed/.delta/worktrees/review-olivetti/zed",
+                "olivetti/zed",
+            ),
+            (
+                "/home/bob/zed/.delta/clones/lettera/zed.git",
+                false,
+                "/home/bob/zed/.delta/worktrees/review-lettera/zed",
+                "lettera/zed",
+            ),
+            (
+                "/home/bob/zed/.delta/clones/olivetti/zed.git",
+                true,
+                "/tmp/review/zed",
+                "olivetti/zed/review/zed",
+            ),
+            (
+                "/home/bob/zed/.delta/clones/olivetti/zed.git",
+                true,
+                "/tmp/other/zed",
+                "olivetti/zed/other/zed",
+            ),
+            (
+                "/home/bob/zed/.delta/clones/olivetti/zed.git",
+                true,
+                "/tmp/feature",
+                "olivetti/zed/feature",
+            ),
+            (
+                "/home/bob/zed/.delta/clones/lettera/zed.git",
+                true,
+                "/tmp/review/zed",
+                "lettera/zed/review/zed",
+            ),
+            (
+                "/home/bob/zed/.delta/clones/olivetti/zed.git",
+                true,
+                "/checkouts/olivetti/zed.git",
+                "olivetti/zed/olivetti/zed.git",
+            ),
+            (
+                "/storage/clones/olivetti/repo.git",
+                false,
+                "/storage/worktrees/olivetti/repo",
+                "olivetti",
+            ),
+            (
+                "/storage/clones/olivetti/repo-2.git",
+                false,
+                "/storage/worktrees/olivetti/repo-2",
+                "olivetti/repo-2",
+            ),
+        ];
+        let short_names = examples.map(|(clone_path, is_linked_worktree, folder_path, _)| {
+            project::delta_checkout_short_name(
+                &project::DeltaClone {
+                    path: PathBuf::from(clone_path),
+                    is_linked_worktree,
+                    checkout_path: Some(PathBuf::from(folder_path)),
+                },
+                Path::new(folder_path),
+                PathStyle::Unix,
+            )
+        });
+
+        assert_eq!(
+            short_names,
+            examples.map(|(_, _, _, short_name)| Some(short_name.into()))
+        );
+    }
+}
+
+mod repository_activation_tests {
+    use std::{
+        cell::RefCell,
+        path::{Path, PathBuf},
+        rc::Rc,
+        sync::Arc,
+    };
+
+    use fs::{FakeFs, Fs, RemoveOptions};
+    use gpui::{BorrowAppContext, Entity, TestAppContext};
+    use project::git_store::GitStoreEvent;
+    use serde_json::json;
+    use settings::{LocalSettingsKind, LocalSettingsPath, SettingsStore};
+    use util::{
+        path,
+        rel_path::{RelPath, rel_path},
+    };
+
+    use crate::{Project, ProjectPath};
+
+    #[gpui::test]
+    async fn test_deep_repositories_park_in_unmanaged_root(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_fs, project) = build_project(
+            cx,
+            json!({
+                "repo1": {
+                    ".git": {},
+                    "a.txt": ""
+                },
+                "nested": {
+                    "deep": {
+                        "repo2": {
+                            ".git": {},
+                            "src": {
+                                "b.txt": ""
+                            }
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+
+        assert_repositories(
+            &project,
+            cx,
+            &[path!("/root/repo1")],
+            &[path!("/root/nested/deep/repo2")],
+        );
+        project.read_with(cx, |project, cx| {
+            let worktree = project.worktrees(cx).next().unwrap().read(cx);
+            assert_eq!(
+                worktree
+                    .entry_for_path(rel_path("nested/deep/repo2/src/b.txt"))
+                    .map(|entry| entry.path.as_ref()),
+                Some(rel_path("nested/deep/repo2/src/b.txt"))
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_managed_root_never_parks(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_fs, project) = build_project(
+            cx,
+            json!({
+                ".git": {},
+                "vendor": {
+                    "x": {
+                        ".git": {},
+                        "a.txt": ""
+                    }
+                }
+            }),
+        )
+        .await;
+
+        assert_repositories(
+            &project,
+            cx,
+            &[path!("/root"), path!("/root/vendor/x")],
+            &[],
+        );
+    }
+
+    #[gpui::test]
+    async fn test_parked_repository_activates_on_buffer_open(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_fs, project) = build_project(
+            cx,
+            json!({
+                "nested": {
+                    "outer": {
+                        ".git": {},
+                        "inner": {
+                            ".git": {},
+                            "a.txt": ""
+                        },
+                        "b.txt": ""
+                    }
+                }
+            }),
+        )
+        .await;
+
+        assert_repositories(
+            &project,
+            cx,
+            &[],
+            &[
+                path!("/root/nested/outer"),
+                path!("/root/nested/outer/inner"),
+            ],
+        );
+
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/root/nested/outer/inner/a.txt"), cx)
+            })
+            .await
+            .unwrap();
+        cx.executor().run_until_parked();
+
+        assert_repositories(
+            &project,
+            cx,
+            &[
+                path!("/root/nested/outer"),
+                path!("/root/nested/outer/inner"),
+            ],
+            &[],
+        );
+    }
+
+    #[gpui::test]
+    async fn test_parked_repository_activates_on_save_as(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_fs, project) = build_project(
+            cx,
+            json!({
+                "a": {
+                    "repo": {
+                        ".git": {},
+                        "x.txt": ""
+                    }
+                }
+            }),
+        )
+        .await;
+
+        assert_repositories(&project, cx, &[], &[path!("/root/a/repo")]);
+
+        let buffer = project
+            .update(cx, |project, cx| project.create_buffer(None, false, cx))
+            .await
+            .unwrap();
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        project
+            .update(cx, |project, cx| {
+                project.save_buffer_as(
+                    buffer,
+                    ProjectPath {
+                        worktree_id,
+                        path: rel_path("a/repo/new.txt").into(),
+                    },
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.executor().run_until_parked();
+
+        assert_repositories(&project, cx, &[path!("/root/a/repo")], &[]);
+    }
+
+    #[gpui::test]
+    async fn test_buffer_open_beyond_scan_horizon_activates_repository(cx: &mut TestAppContext) {
+        init_test(cx);
+        set_file_scan_depth(cx, 2);
+        let (_fs, project) = build_project(
+            cx,
+            json!({
+                "a": {
+                    "b": {
+                        "repo": {
+                            ".git": {},
+                            "src": {
+                                "deep": {
+                                    "f.txt": ""
+                                },
+                                "g.txt": ""
+                            },
+                            "docs": {
+                                "h.txt": ""
+                            }
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+
+        assert_repositories(&project, cx, &[], &[]);
+        project.read_with(cx, |project, cx| {
+            let worktree = project.worktrees(cx).next().unwrap().read(cx);
+            assert_eq!(worktree.entry_for_path(rel_path("a/b/repo")), None);
+        });
+
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/root/a/b/repo/src/deep/f.txt"), cx)
+            })
+            .await
+            .unwrap();
+        cx.executor().run_until_parked();
+
+        assert_repositories(&project, cx, &[path!("/root/a/b/repo")], &[]);
+        project.read_with(cx, |project, cx| {
+            let worktree = project.worktrees(cx).next().unwrap().read(cx);
+            for path in [
+                "a/b/repo/src/deep/f.txt",
+                "a/b/repo/src/g.txt",
+                "a/b/repo/docs/h.txt",
+            ] {
+                assert_eq!(
+                    worktree
+                        .entry_for_path(rel_path(path))
+                        .map(|entry| entry.path.as_ref()),
+                    Some(rel_path(path))
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_project_settings_disable_parking(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_fs, project) = build_project(
+            cx,
+            json!({
+                "a": {
+                    "repo": {
+                        ".git": {},
+                        "x.txt": ""
+                    }
+                }
+            }),
+        )
+        .await;
+
+        assert_repositories(&project, cx, &[], &[path!("/root/a/repo")]);
+
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store
+                    .set_local_settings(
+                        worktree_id,
+                        LocalSettingsPath::InWorktree(Arc::from(RelPath::empty())),
+                        LocalSettingsKind::Settings,
+                        Some(r#"{ "file_scan_depth": 0 }"#),
+                        cx,
+                    )
+                    .unwrap();
+            });
+        });
+        cx.executor().run_until_parked();
+
+        assert_repositories(&project, cx, &[path!("/root/a/repo")], &[]);
+    }
+
+    #[gpui::test]
+    async fn test_open_buffer_prevents_parking_late_discovered_repository(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (fs, project) = build_project(
+            cx,
+            json!({
+                "nested": {
+                    "repo": {
+                        "a.txt": ""
+                    }
+                }
+            }),
+        )
+        .await;
+
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/root/nested/repo/a.txt"), cx)
+            })
+            .await
+            .unwrap();
+        cx.executor().run_until_parked();
+
+        fs.create_dir(Path::new(path!("/root/nested/repo/.git")))
+            .await
+            .unwrap();
+        cx.executor().run_until_parked();
+
+        assert_repositories(&project, cx, &[path!("/root/nested/repo")], &[]);
+    }
+
+    #[gpui::test]
+    async fn test_parked_repository_dropped_when_dot_git_removed(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (fs, project) = build_project(
+            cx,
+            json!({
+                "nested": {
+                    "repo": {
+                        ".git": {},
+                        "a.txt": ""
+                    }
+                }
+            }),
+        )
+        .await;
+
+        assert_repositories(&project, cx, &[], &[path!("/root/nested/repo")]);
+
+        fs.remove_dir(
+            Path::new(path!("/root/nested/repo/.git")),
+            RemoveOptions {
+                recursive: true,
+                ignore_if_not_exists: false,
+            },
+        )
+        .await
+        .unwrap();
+        cx.executor().run_until_parked();
+
+        assert_repositories(&project, cx, &[], &[]);
+    }
+
+    #[gpui::test]
+    async fn test_repository_shared_between_two_worktrees(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_fs, project) = build_project(
+            cx,
+            json!({
+                "nested": {
+                    "repo": {
+                        ".git": {},
+                        "a.txt": ""
+                    }
+                }
+            }),
+        )
+        .await;
+
+        assert_repositories(&project, cx, &[], &[path!("/root/nested/repo")]);
+
+        let worktree = project
+            .update(cx, |project, cx| {
+                project.worktree_store().update(cx, |worktree_store, cx| {
+                    worktree_store.create_worktree(path!("/root/nested/repo"), true, cx)
+                })
+            })
+            .await
+            .unwrap();
+        worktree
+            .read_with(cx, |worktree, _| {
+                worktree.as_local().unwrap().scan_complete()
+            })
+            .await;
+        cx.executor().run_until_parked();
+
+        assert_repositories(&project, cx, &[path!("/root/nested/repo")], &[]);
+
+        project.update(cx, |project, cx| {
+            project.git_store().update(cx, |git_store, cx| {
+                git_store.activate_all_parked_repositories(cx);
+            });
+        });
+        cx.executor().run_until_parked();
+
+        assert_repositories(&project, cx, &[path!("/root/nested/repo")], &[]);
+
+        let second_worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+        project.update(cx, |project, cx| {
+            project.worktree_store().update(cx, |worktree_store, cx| {
+                worktree_store.remove_worktree(second_worktree_id, cx);
+            })
+        });
+        drop(worktree);
+        cx.executor().run_until_parked();
+
+        assert_repositories(&project, cx, &[path!("/root/nested/repo")], &[]);
+    }
+
+    #[gpui::test]
+    async fn test_removing_worktree_emits_repository_removed(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "first": { ".git": {}, "a.txt": "" },
+                "second": { ".git": {}, "b.txt": "" },
+            }),
+        )
+        .await;
+        let project = Project::test(
+            fs.clone(),
+            [
+                path!("/root/first").as_ref(),
+                path!("/root/second").as_ref(),
+            ],
+            cx,
+        )
+        .await;
+        cx.executor().run_until_parked();
+        assert_repositories(
+            &project,
+            cx,
+            &[path!("/root/first"), path!("/root/second")],
+            &[],
+        );
+
+        let (second_worktree_id, second_repository_id) = project.read_with(cx, |project, cx| {
+            let worktree_id = project
+                .worktrees(cx)
+                .find(|worktree| {
+                    worktree.read(cx).abs_path().as_ref() == Path::new(path!("/root/second"))
+                })
+                .map(|worktree| worktree.read(cx).id())
+                .expect("second worktree should exist");
+            let repository_id = project
+                .repositories(cx)
+                .values()
+                .find(|repository| {
+                    repository.read(cx).work_directory_abs_path.as_ref()
+                        == Path::new(path!("/root/second"))
+                })
+                .map(|repository| repository.read(cx).id)
+                .expect("second repository should exist");
+            (worktree_id, repository_id)
+        });
+
+        let removed_repository_ids = Rc::new(RefCell::new(Vec::new()));
+        let git_store = project.read_with(cx, |project, _| project.git_store().clone());
+        let _subscription = cx.update({
+            let removed_repository_ids = removed_repository_ids.clone();
+            |cx| {
+                cx.subscribe(&git_store, move |_, event, _| {
+                    if let GitStoreEvent::RepositoryRemoved(id) = event {
+                        removed_repository_ids.borrow_mut().push(*id);
+                    }
+                })
+            }
+        });
+
+        project.update(cx, |project, cx| {
+            project.remove_worktree(second_worktree_id, cx);
+        });
+        cx.executor().run_until_parked();
+
+        assert_repositories(&project, cx, &[path!("/root/first")], &[]);
+        assert_eq!(*removed_repository_ids.borrow(), vec![second_repository_id]);
+    }
+
+    #[gpui::test]
+    async fn test_nested_repository_inside_active_repository_not_parked(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_fs, project) = build_project(
+            cx,
+            json!({
+                "x": {
+                    ".git": {},
+                    "vendor": {
+                        "sub": {
+                            ".git": {},
+                            "f.txt": ""
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+
+        assert_repositories(
+            &project,
+            cx,
+            &[path!("/root/x"), path!("/root/x/vendor/sub")],
+            &[],
+        );
+    }
+
+    #[gpui::test]
+    async fn test_active_repository_survives_file_scan_depth_tightening(cx: &mut TestAppContext) {
+        init_test(cx);
+        set_file_scan_depth(cx, 0);
+        let (_fs, project) = build_project(
+            cx,
+            json!({
+                "a": {
+                    "repo": {
+                        ".git": {},
+                        "x.txt": ""
+                    }
+                }
+            }),
+        )
+        .await;
+
+        assert_repositories(&project, cx, &[path!("/root/a/repo")], &[]);
+
+        set_file_scan_depth(cx, 1);
+        cx.executor().run_until_parked();
+
+        assert_repositories(&project, cx, &[path!("/root/a/repo")], &[]);
+        project.read_with(cx, |project, cx| {
+            let worktree = project.worktrees(cx).next().unwrap().read(cx);
+            assert_eq!(worktree.entry_for_path(rel_path("a/repo/x.txt")), None);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_open_buffer_survives_file_scan_depth_tightening(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (_fs, project) = build_project(
+            cx,
+            json!({
+                "junk": {
+                    "a": {
+                        "b": {
+                            "deep.txt": "content",
+                            "sibling.txt": ""
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/root/junk/a/b/deep.txt"), cx)
+            })
+            .await
+            .unwrap();
+        cx.executor().run_until_parked();
+
+        let disk_state_before =
+            buffer.read_with(cx, |buffer, _| buffer.file().unwrap().disk_state());
+
+        set_file_scan_depth(cx, 1);
+        cx.executor().run_until_parked();
+
+        buffer.read_with(cx, |buffer, _| {
+            assert_eq!(buffer.file().unwrap().disk_state(), disk_state_before);
+        });
+        project.read_with(cx, |project, cx| {
+            let worktree = project.worktrees(cx).next().unwrap().read(cx);
+            assert_eq!(
+                worktree
+                    .entry_for_path(rel_path("junk/a/b/deep.txt"))
+                    .map(|entry| entry.path.as_ref()),
+                Some(rel_path("junk/a/b/deep.txt"))
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_git_init_at_root_activates_parked_repositories(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (fs, project) = build_project(
+            cx,
+            json!({
+                "nested": {
+                    "repo": {
+                        ".git": {},
+                        "a.txt": ""
+                    }
+                }
+            }),
+        )
+        .await;
+
+        assert_repositories(&project, cx, &[], &[path!("/root/nested/repo")]);
+
+        fs.create_dir(Path::new(path!("/root/.git"))).await.unwrap();
+        cx.executor().run_until_parked();
+
+        assert_repositories(
+            &project,
+            cx,
+            &[path!("/root"), path!("/root/nested/repo")],
+            &[],
+        );
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        zlog::init_test();
+
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+    }
+
+    async fn build_project(
+        cx: &mut TestAppContext,
+        tree: serde_json::Value,
+    ) -> (Arc<FakeFs>, Entity<Project>) {
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(path!("/root"), tree).await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+        (fs, project)
+    }
+
+    #[track_caller]
+    fn assert_repositories(
+        project: &Entity<Project>,
+        cx: &mut TestAppContext,
+        expected_active: &[&str],
+        expected_parked: &[&str],
+    ) {
+        let (mut active, mut parked) = project.read_with(cx, |project, cx| {
+            (
+                project
+                    .repositories(cx)
+                    .values()
+                    .map(|repository| repository.read(cx).work_directory_abs_path.to_path_buf())
+                    .collect::<Vec<_>>(),
+                project
+                    .git_store()
+                    .read(cx)
+                    .parked_repositories()
+                    .iter()
+                    .map(|parked| parked.work_directory_abs_path().to_path_buf())
+                    .collect::<Vec<_>>(),
+            )
+        });
+        active.sort();
+        parked.sort();
+        assert_eq!(
+            active,
+            expected_active
+                .iter()
+                .map(PathBuf::from)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            parked,
+            expected_parked
+                .iter()
+                .map(PathBuf::from)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    fn set_file_scan_depth(cx: &mut TestAppContext, depth: u32) {
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.worktree.file_scan_depth = Some(depth);
+                });
+            });
+        });
     }
 }

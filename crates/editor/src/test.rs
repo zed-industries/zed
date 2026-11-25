@@ -3,6 +3,7 @@ pub mod editor_test_context;
 
 use std::{rc::Rc, sync::LazyLock};
 
+pub use crate::emmet_ext::wrap_with_abbreviation;
 pub use crate::rust_analyzer_ext::expand_macro_recursively;
 use crate::{
     DisplayPoint, Editor, EditorMode, FoldPlaceholder, MultiBuffer, SelectionEffects, Size,
@@ -120,7 +121,6 @@ pub fn assert_text_with_selections(
     assert_eq!(actual, marked_text, "Selections don't match");
 }
 
-#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn build_editor(
     buffer: Entity<MultiBuffer>,
     window: &mut Window,

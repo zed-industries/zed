@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{EditPredictionStore, ZedPredictUpsell};
+use crate::ZedPredictUpsell;
 use ai_onboarding::EditPredictionOnboarding;
 use client::{Client, UserStore};
 use db::kvp::Dismissable;
@@ -50,36 +50,19 @@ impl ZedPredictModal {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let project = workspace.project().clone();
         workspace.toggle_modal(window, cx, |_window, cx| {
             let weak_entity = cx.weak_entity();
-            let copilot = EditPredictionStore::try_global(cx)
-                .and_then(|store| store.read(cx).copilot_for_project(&project));
             Self {
                 onboarding: cx.new(|cx| {
                     EditPredictionOnboarding::new(
                         user_store.clone(),
                         client.clone(),
-                        copilot
-                            .as_ref()
-                            .is_some_and(|copilot| copilot.read(cx).status().is_configured()),
                         Arc::new({
                             let this = weak_entity.clone();
                             move |_window, cx| {
                                 ZedPredictUpsell::set_dismissed(true, cx);
                                 set_edit_prediction_provider(EditPredictionProvider::Zed, cx);
                                 this.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
-                            }
-                        }),
-                        Arc::new({
-                            let this = weak_entity.clone();
-                            move |window, cx| {
-                                ZedPredictUpsell::set_dismissed(true, cx);
-                                set_edit_prediction_provider(EditPredictionProvider::Copilot, cx);
-                                this.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
-                                if let Some(copilot) = copilot.clone() {
-                                    copilot_ui::initiate_sign_in(copilot, window, cx);
-                                }
                             }
                         }),
                         cx,

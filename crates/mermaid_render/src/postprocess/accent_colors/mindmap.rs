@@ -1,4 +1,5 @@
 use anyhow::Result;
+use quick_xml::XmlVersion;
 use quick_xml::events::{BytesStart, Event};
 
 use super::{AccentStackEntry, NodeTracker};
@@ -28,7 +29,7 @@ impl MindmapAccents {
                     return Ok(event);
                 }
 
-                let section_idx = self.parse_section_class(e)?;
+                let section_idx = self.parse_section_class(e, "class")?;
                 if let Some(idx) = section_idx {
                     let tracks_node = if let Some((tx, ty)) = super::parse_translate(e) {
                         self.nodes.start_node(tx, ty, 0.0, idx);
@@ -68,13 +69,16 @@ impl MindmapAccents {
             Event::Start(e) | Event::Empty(e)
                 if e.name().as_ref() == b"text" || e.name().as_ref() == b"tspan" =>
             {
-                let section_idx = self.current_section_accent().or_else(|| {
-                    if e.name().as_ref() == b"text" {
-                        self.nodes.lookup_accent(e)
-                    } else {
-                        None
-                    }
-                });
+                let section_idx = self
+                    .parse_section_class(e, "data-merman-source-classes")?
+                    .or_else(|| self.current_section_accent())
+                    .or_else(|| {
+                        if e.name().as_ref() == b"text" {
+                            self.nodes.lookup_accent(e)
+                        } else {
+                            None
+                        }
+                    });
 
                 if e.name().as_ref() == b"text" {
                     self.current_text_section = section_idx;
@@ -100,12 +104,16 @@ impl MindmapAccents {
         }
     }
 
-    fn parse_section_class(&mut self, e: &BytesStart<'_>) -> Result<Option<usize>> {
-        let class_attr = match e.try_get_attribute("class")? {
+    fn parse_section_class(
+        &mut self,
+        e: &BytesStart<'_>,
+        attribute: &str,
+    ) -> Result<Option<usize>> {
+        let class_attr = match e.try_get_attribute(attribute)? {
             Some(attr) => attr,
             None => return Ok(None),
         };
-        let class = class_attr.unescape_value()?;
+        let class = class_attr.normalized_value(XmlVersion::Implicit1_0)?;
         let is_root = class.split_whitespace().any(|t| t == "section-root");
 
         for token in class.split_whitespace() {

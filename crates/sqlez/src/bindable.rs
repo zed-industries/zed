@@ -4,7 +4,6 @@ use std::{
 };
 
 use anyhow::{Context as _, Result};
-use util::paths::PathExt;
 
 use crate::statement::{SqlType, Statement};
 
@@ -142,7 +141,7 @@ impl Bind for i32 {
 }
 
 impl Column for i32 {
-    fn column<'a>(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let result = statement.column_int(start_index)?;
         Ok((result, start_index + 1))
     }
@@ -262,7 +261,7 @@ impl Column for Arc<str> {
 }
 
 impl Column for String {
-    fn column<'a>(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let result = statement.column_text(start_index)?;
         Ok((result.to_owned(), start_index + 1))
     }
@@ -332,7 +331,8 @@ impl Column for Arc<Path> {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let blob = statement.column_blob(start_index)?;
 
-        PathBuf::try_from_bytes(blob).map(|path| (Arc::from(path.as_path()), start_index + 1))
+        path::try_from_bytes::<PathBuf>(blob)
+            .map(|path| (Arc::from(path.as_path()), start_index + 1))
     }
 }
 
@@ -347,7 +347,7 @@ impl Column for PathBuf {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let blob = statement.column_blob(start_index)?;
 
-        PathBuf::try_from_bytes(blob).map(|path| (path, start_index + 1))
+        path::try_from_bytes::<PathBuf>(blob).map(|path| (path, start_index + 1))
     }
 }
 

@@ -5,17 +5,70 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     pin::Pin,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
 use futures::{FutureExt, StreamExt};
 
 use fs::*;
-use gpui::{BackgroundExecutor, TestAppContext};
+use gpui::{BackgroundExecutor, Task, TestAppContext};
 use serde_json::json;
 use tempfile::TempDir;
 use util::path;
+
+#[gpui::test]
+async fn test_watcher_diagnostics_do_not_change_event_delivery(executor: BackgroundExecutor) {
+    let fs = FakeFs::new(executor);
+    let root = Path::new(path!("/root"));
+    let file = root.join("file");
+    fs.create_dir(root).await.unwrap();
+    let (mut events, watcher) = fs.watch(root, Duration::ZERO).await;
+    let recording = fs.record_watcher_diagnostics().unwrap();
+    assert_eq!(
+        recording.snapshot().watchers[0].roots[0].path,
+        root.to_string_lossy()
+    );
+    assert!(recording.snapshot().events.is_empty());
+
+    fs.write(&file, b"first").await.unwrap();
+    let batch = events.next().await.unwrap();
+    assert!(batch.iter().any(|event| event.path == file));
+    assert!(recording.snapshot().events.iter().any(|event| {
+        event.operation == "event" && event.paths.contains(&file.to_string_lossy().into_owned())
+    }));
+
+    fs.simulate_watcher_overflow(root);
+    let batch = events.next().await.unwrap();
+    assert!(
+        batch
+            .iter()
+            .any(|event| event.kind == Some(PathEventKind::Rescan))
+    );
+    assert!(recording.snapshot().events.iter().any(|event| event.rescan));
+
+    drop(recording);
+    fs.write(&file, b"second").await.unwrap();
+    let batch = events.next().await.unwrap();
+    assert!(batch.iter().any(|event| event.path == file));
+    assert!(
+        fs.record_watcher_diagnostics()
+            .unwrap()
+            .snapshot()
+            .events
+            .is_empty()
+    );
+    drop(events);
+    drop(watcher);
+    assert!(
+        fs.record_watcher_diagnostics().unwrap().snapshot().watchers[0]
+            .roots
+            .is_empty()
+    );
+}
 
 #[gpui::test]
 async fn test_fake_fs(executor: BackgroundExecutor) {
@@ -591,6 +644,449 @@ async fn test_realfs_rename_ignore_if_exists_leaves_source_and_target_unchanged(
 }
 
 #[gpui::test]
+async fn test_fake_fs_rename_ignore_if_exists_leaves_source_and_target_unchanged(
+    executor: BackgroundExecutor,
+) {
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "source.txt": "from source",
+            "target.txt": "from target",
+        }),
+    )
+    .await;
+
+    let handle = fs
+        .open_handle(Path::new(path!("/root/source.txt")))
+        .await
+        .unwrap();
+
+    let result = fs
+        .rename(
+            Path::new(path!("/root/source.txt")),
+            Path::new(path!("/root/target.txt")),
+            RenameOptions {
+                ignore_if_exists: true,
+                ..Default::default()
+            },
+        )
+        .await;
+
+    assert!(result.is_ok());
+
+    assert_eq!(
+        fs.load(Path::new(path!("/root/source.txt"))).await.unwrap(),
+        "from source"
+    );
+    assert_eq!(
+        fs.load(Path::new(path!("/root/target.txt"))).await.unwrap(),
+        "from target"
+    );
+
+    // A handle held across an ignored rename must keep reporting the path the
+    // file is actually at, not the one it never went to.
+    assert_eq!(
+        handle.current_path(&(fs.clone() as Arc<dyn Fs>)).unwrap(),
+        PathBuf::from(path!("/root/source.txt"))
+    );
+}
+
+async fn assert_copy_and_remove_semantics(root: &Path, fs: &dyn Fs) {
+    let source = root.join("source.txt");
+    let target = root.join("target.txt");
+    let overwrite = CopyOptions {
+        overwrite: true,
+        ignore_if_exists: false,
+    };
+
+    let target_inode_before = fs.metadata(&target).await.unwrap().unwrap().inode;
+    fs.copy_file(&source, &target, overwrite).await.unwrap();
+    assert_eq!(fs.load(&target).await.unwrap(), "from source");
+
+    cfg_select! {
+        unix => assert_eq!(
+            fs.metadata(&target).await.unwrap().unwrap().inode,
+            target_inode_before
+        ),
+        _ => { let _ = target_inode_before; }
+    }
+
+    fs.copy_file(&source, &target, CopyOptions::default())
+        .await
+        .unwrap_err();
+    fs.copy_file(
+        &source,
+        &target,
+        CopyOptions {
+            overwrite: false,
+            ignore_if_exists: true,
+        },
+    )
+    .await
+    .unwrap();
+
+    fs.copy_file(&source, &root.join("dir"), overwrite)
+        .await
+        .unwrap_err();
+    assert!(fs.is_dir(&root.join("dir")).await);
+}
+
+/// Removing a symlink to a directory removes the link, not the directory.
+async fn assert_remove_file_unlinks_symlink(root: &Path, fs: &dyn Fs) {
+    let link = root.join("link");
+    fs.remove_file(&link, RemoveOptions::default())
+        .await
+        .unwrap();
+    assert!(fs.metadata(&link).await.unwrap().is_none());
+    assert!(fs.is_dir(&root.join("dir")).await);
+    assert_eq!(
+        fs.load(&root.join("dir").join("inner.txt")).await.unwrap(),
+        "inner"
+    );
+}
+
+#[gpui::test]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+async fn test_realfs_copy_and_remove_semantics(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let executor = cx.executor();
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path();
+    std::fs::write(root.join("source.txt"), "from source").unwrap();
+    std::fs::write(root.join("target.txt"), "from target").unwrap();
+    std::fs::create_dir(root.join("dir")).unwrap();
+    std::fs::write(root.join("dir").join("inner.txt"), "inner").unwrap();
+
+    let fs = RealFs::new(None, executor);
+    assert_copy_and_remove_semantics(root, fs.as_ref()).await;
+
+    // Creating symlinks requires elevated privileges on Windows, so like the
+    // watcher tests above, skip that part when it is not possible.
+    match make_dir_symlink(&root.join("dir"), &root.join("link")) {
+        Ok(()) => assert_remove_file_unlinks_symlink(root, fs.as_ref()).await,
+        Err(error) => eprintln!("skipping symlink removal check (cannot symlink: {error})"),
+    }
+}
+
+#[gpui::test]
+async fn test_fake_fs_copy_and_remove_semantics(executor: BackgroundExecutor) {
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "source.txt": "from source",
+            "target.txt": "from target",
+            "dir": { "inner.txt": "inner" },
+        }),
+    )
+    .await;
+    fs.insert_symlink(path!("/root/link"), PathBuf::from(path!("/root/dir")))
+        .await;
+
+    let root = Path::new(path!("/root"));
+    assert_copy_and_remove_semantics(root, fs.as_ref()).await;
+    assert_remove_file_unlinks_symlink(root, fs.as_ref()).await;
+}
+
+#[gpui::test]
+async fn test_realfs_file_locks(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let executor = cx.executor();
+    let temp_dir = TempDir::new().unwrap();
+    let fs = RealFs::new(None, executor.clone());
+    assert_file_lock_semantics(temp_dir.path(), fs, &executor).await;
+}
+
+#[gpui::test]
+async fn test_fake_fs_file_locks(executor: BackgroundExecutor) {
+    let fs = FakeFs::new(executor.clone());
+    let root = Path::new(path!("/root"));
+    fs.create_dir(root).await.unwrap();
+    assert_file_lock_semantics(root, fs, &executor).await;
+}
+
+#[gpui::test]
+async fn test_realfs_lock_waiters_leave_threads_for_file_operations(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let executor = cx.executor();
+    let temp_dir = TempDir::new().unwrap();
+    let fs: Arc<dyn Fs> = RealFs::new(None, executor.clone());
+    let lock_path = temp_dir.path().join("file.lock");
+
+    let exclusive = fs
+        .lock_file(&lock_path, FileLockKind::Exclusive)
+        .await
+        .unwrap();
+    // More waiters than there are threads for blocking file operations.
+    let waiters = (0..512)
+        .map(|_| spawn_lock_file(&fs, &lock_path, FileLockKind::Shared, &executor))
+        .collect::<Vec<_>>();
+    executor.run_until_parked();
+
+    // The holder of a lock must still be able to use the file system to finish its work.
+    fs.create_file(&temp_dir.path().join("file"), CreateOptions::default())
+        .await
+        .unwrap();
+    drop(exclusive);
+    futures::future::join_all(waiters).await;
+}
+
+fn spawn_lock_file(
+    fs: &Arc<dyn Fs>,
+    path: &Path,
+    kind: FileLockKind,
+    executor: &BackgroundExecutor,
+) -> Task<FileLock> {
+    let fs = fs.clone();
+    let path = path.to_owned();
+    executor.spawn(async move { fs.lock_file(&path, kind).await.unwrap() })
+}
+
+async fn assert_file_lock_semantics(root: &Path, fs: Arc<dyn Fs>, executor: &BackgroundExecutor) {
+    let lock_path = root.join("file.lock");
+
+    let shared = fs
+        .lock_file(&lock_path, FileLockKind::Shared)
+        .await
+        .unwrap();
+    assert!(fs.is_file(&lock_path).await, "locking creates the file");
+    let other_shared = fs
+        .try_lock_file(&lock_path, FileLockKind::Shared)
+        .await
+        .unwrap()
+        .expect("shared locks can be held together");
+    assert!(
+        fs.try_lock_file(&lock_path, FileLockKind::Exclusive)
+            .await
+            .unwrap()
+            .is_none(),
+        "an exclusive lock conflicts with a shared one"
+    );
+
+    let acquired = Arc::new(AtomicBool::new(false));
+    let exclusive = executor.spawn({
+        let fs = fs.clone();
+        let lock_path = lock_path.clone();
+        let acquired = acquired.clone();
+        async move {
+            let lock = fs
+                .lock_file(&lock_path, FileLockKind::Exclusive)
+                .await
+                .unwrap();
+            acquired.store(true, Ordering::SeqCst);
+            lock
+        }
+    });
+    drop(shared);
+    executor.run_until_parked();
+    assert!(
+        !acquired.load(Ordering::SeqCst),
+        "an exclusive lock waits for every shared lock to be released"
+    );
+    drop(other_shared);
+    let exclusive = exclusive.await;
+    assert!(
+        fs.try_lock_file(&lock_path, FileLockKind::Shared)
+            .await
+            .unwrap()
+            .is_none(),
+        "a shared lock conflicts with an exclusive one"
+    );
+
+    let cancelled = spawn_lock_file(&fs, &lock_path, FileLockKind::Exclusive, executor);
+    executor.run_until_parked();
+    drop(cancelled);
+    drop(exclusive);
+    assert!(
+        fs.try_lock_file(&lock_path, FileLockKind::Exclusive)
+            .await
+            .unwrap()
+            .is_some(),
+        "dropping a lock releases it, and a wait that was cancelled doesn't take it"
+    );
+
+    // Windows can't always remove or truncate a file that is open, or create symlinks.
+    if !fs.is_fake() && cfg!(not(unix)) {
+        return;
+    }
+
+    let original = fs
+        .lock_file(&lock_path, FileLockKind::Exclusive)
+        .await
+        .unwrap();
+    let waiter = spawn_lock_file(&fs, &lock_path, FileLockKind::Exclusive, executor);
+    executor.run_until_parked();
+    fs.remove_file(&lock_path, RemoveOptions::default())
+        .await
+        .unwrap();
+    drop(original);
+    drop(waiter.await);
+    assert!(
+        !fs.is_file(&lock_path).await,
+        "waiting for a lock doesn't recreate a file that was removed"
+    );
+
+    let original = fs
+        .lock_file(&lock_path, FileLockKind::Exclusive)
+        .await
+        .unwrap();
+    let waiter = spawn_lock_file(&fs, &lock_path, FileLockKind::Exclusive, executor);
+    executor.run_until_parked();
+    fs.remove_file(&lock_path, RemoveOptions::default())
+        .await
+        .unwrap();
+    let replacement = fs
+        .try_lock_file(&lock_path, FileLockKind::Exclusive)
+        .await
+        .unwrap()
+        .expect("a file created in place of a removed one is not locked");
+    drop(original);
+    // The waiter is granted the lock on the removed file, not on its replacement.
+    drop(waiter.await);
+    drop(replacement);
+
+    let target_path = root.join("target.lock");
+    let link_path = root.join("link.lock");
+    fs.create_symlink(&link_path, target_path.clone())
+        .await
+        .unwrap();
+    let _through_link = fs
+        .lock_file(&link_path, FileLockKind::Exclusive)
+        .await
+        .unwrap();
+    assert!(
+        fs.is_file(&target_path).await,
+        "locking a symlink creates its target"
+    );
+    assert!(
+        fs.try_lock_file(&target_path, FileLockKind::Shared)
+            .await
+            .unwrap()
+            .is_none(),
+        "a lock taken through a symlink is on its target"
+    );
+
+    let links_dir = root.join("links");
+    let elsewhere_dir = root.join("elsewhere");
+    fs.create_dir(&links_dir).await.unwrap();
+    fs.create_dir(&elsewhere_dir.join("subdir")).await.unwrap();
+    fs.create_symlink(
+        &links_dir.join("dirlink"),
+        PathBuf::from("../elsewhere/subdir"),
+    )
+    .await
+    .unwrap();
+    fs.create_symlink(
+        &links_dir.join("file.lock"),
+        PathBuf::from("dirlink/../target.lock"),
+    )
+    .await
+    .unwrap();
+    let _through_links = fs
+        .lock_file(&links_dir.join("file.lock"), FileLockKind::Exclusive)
+        .await
+        .unwrap();
+    assert!(
+        fs.is_file(&elsewhere_dir.join("target.lock")).await,
+        "a `..` in a symlink's target applies to the directory the symlinks before it lead to"
+    );
+    assert!(!fs.is_file(&links_dir.join("target.lock")).await);
+
+    let truncated_path = root.join("truncated.lock");
+    let _held = fs
+        .lock_file(&truncated_path, FileLockKind::Shared)
+        .await
+        .unwrap();
+    fs.create_file(
+        &truncated_path,
+        CreateOptions {
+            overwrite: true,
+            ignore_if_exists: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        fs.try_lock_file(&truncated_path, FileLockKind::Exclusive)
+            .await
+            .unwrap()
+            .is_none(),
+        "truncating a file doesn't release the locks on it"
+    );
+}
+
+#[gpui::test]
+async fn test_fake_fs_rename_onto_itself_keeps_the_file(executor: BackgroundExecutor) {
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "a.txt": "content",
+        }),
+    )
+    .await;
+
+    let path = Path::new(path!("/root/a.txt"));
+    let result = fs
+        .rename(
+            path,
+            path,
+            RenameOptions {
+                overwrite: true,
+                ..Default::default()
+            },
+        )
+        .await;
+
+    assert!(result.is_ok());
+    assert_eq!(fs.load(path).await.unwrap(), "content");
+}
+
+#[gpui::test]
+#[cfg(unix)]
+async fn test_realfs_executable_metadata(executor: BackgroundExecutor) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let tempdir = TempDir::new().unwrap();
+    let path = tempdir.path();
+    let non_executable_path = path.join("non-executable.sh");
+    let executable_path = path.join("executable.sh");
+    let symlink_path = path.join("executable-symlink.sh");
+
+    std::fs::write(&non_executable_path, "#!/bin/sh\n").unwrap();
+    std::fs::write(&executable_path, "#!/bin/sh\n").unwrap();
+    let mut permissions = std::fs::metadata(&executable_path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&executable_path, permissions).unwrap();
+
+    let fs = RealFs::new(None, executor);
+    gpui::block_on(fs.create_symlink(&symlink_path, PathBuf::from("executable.sh"))).unwrap();
+
+    let non_executable_metadata = fs
+        .metadata(&non_executable_path)
+        .await
+        .expect("metadata call succeeds")
+        .expect("metadata returned");
+    assert!(!non_executable_metadata.is_executable);
+
+    let executable_metadata = fs
+        .metadata(&executable_path)
+        .await
+        .expect("metadata call succeeds")
+        .expect("metadata returned");
+    assert!(executable_metadata.is_executable);
+
+    let symlink_metadata = fs
+        .metadata(&symlink_path)
+        .await
+        .expect("metadata call succeeds")
+        .expect("metadata returned");
+    assert!(symlink_metadata.is_symlink);
+    assert!(symlink_metadata.is_executable);
+}
+
+#[gpui::test]
 #[cfg(unix)]
 async fn test_realfs_broken_symlink_metadata(executor: BackgroundExecutor) {
     let tempdir = TempDir::new().unwrap();
@@ -840,6 +1336,59 @@ async fn watcher_delivered_event(
             _ = timeout => return false,
         }
     }
+}
+
+#[gpui::test]
+async fn test_realfs_watcher_diagnostics(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let fs = RealFs::new(None, executor.clone());
+    let directory = TempDir::new().unwrap();
+    let root = std::fs::canonicalize(directory.path()).unwrap();
+    // Windows canonicalization adds a verbatim prefix that watcher paths omit.
+    let root = util::paths::SanitizedPath::new(&root)
+        .as_path()
+        .to_path_buf();
+    let recording = fs.record_watcher_diagnostics().unwrap();
+    let (mut events, watcher) = fs.watch(&root, Duration::from_millis(10)).await;
+    let file = root.join("watcher-diagnostics.txt");
+    fs.write(&file, b"first").await.unwrap();
+    assert!(
+        watcher_delivered_event(&mut events, &executor, Duration::from_secs(5), &|path| {
+            path == file
+        })
+        .await,
+        "no watcher event matched {file:?}: {:#?}",
+        recording.snapshot()
+    );
+    let snapshot = recording.snapshot();
+    assert!(
+        snapshot
+            .events
+            .iter()
+            .any(|event| event.operation == "watch")
+    );
+    assert!(snapshot.events.iter().any(|event| {
+        event.operation == "event"
+            && (event.rescan || event.paths.contains(&file.to_string_lossy().into_owned()))
+    }));
+    assert!(snapshot.watchers.iter().any(|watcher| {
+        watcher
+            .roots
+            .iter()
+            .any(|entry| entry.path == root.to_string_lossy())
+    }));
+    serde_json::to_string_pretty(&snapshot).unwrap();
+
+    drop(recording);
+    fs.write(&file, b"second").await.unwrap();
+    assert!(
+        watcher_delivered_event(&mut events, &executor, Duration::from_secs(5), &|path| {
+            path == file
+        })
+        .await
+    );
+    drop(events);
+    drop(watcher);
 }
 
 /// Exercises a spread of real watchers whose registered watch path is spelled

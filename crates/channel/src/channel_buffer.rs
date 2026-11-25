@@ -71,6 +71,7 @@ impl ChannelBuffer {
                 ReplicaId::new(response.replica_id as u16),
                 capability,
                 base_text,
+                cx,
             )
         });
         buffer.update(cx, |buffer, cx| buffer.apply_ops(operations, cx));
@@ -187,8 +188,6 @@ impl ChannelBuffer {
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             this.replace_collaborators(message.payload.collaborators, cx);
-            cx.emit(ChannelBufferEvent::CollaboratorsChanged);
-            cx.notify();
         });
         Ok(())
     }

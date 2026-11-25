@@ -10,6 +10,8 @@ workspace = true
 
 [lib]
 path = "src/python.rs"
+test = false
+doctest = false
 
 [features]
 default = []

@@ -20,7 +20,7 @@ Zed provides tools to help you write and modify code efficiently. This section c
 When you're editing code, Zed combines input from multiple sources:
 
 1. **Language servers** provide completions, diagnostics, and quick fixes based on your project's types and structure
-2. **Edit predictions** suggest multi-character or multi-line changes as you type
+2. **[Edit predictions](./ai/edit-prediction.md)** suggest multi-character or multi-line changes as you type
 3. **Multibuffers** let you apply changes across files in one operation
 
 For example, you might:

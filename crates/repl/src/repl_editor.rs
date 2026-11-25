@@ -43,7 +43,6 @@ pub fn assign_kernelspec(
         session.update(cx, |session, cx| {
             session.clear_outputs(cx);
             session.shutdown(window, cx);
-            cx.notify();
         });
     }
 
@@ -411,7 +410,6 @@ pub fn shutdown(editor: WeakEntity<Editor>, window: &mut Window, cx: &mut App) {
 
     session.update(cx, |session, cx| {
         session.shutdown(window, cx);
-        cx.notify();
     });
 }
 
@@ -432,7 +430,6 @@ pub fn restart(editor: WeakEntity<Editor>, window: &mut Window, cx: &mut App) {
 
     session.update(cx, |session, cx| {
         session.restart(window, cx);
-        cx.notify();
     });
 }
 
@@ -839,7 +836,7 @@ mod tests {
         editor::init(cx);
 
         // Initialize the ReplStore with a fake filesystem
-        let fs = Arc::new(project::RealFs::new(None, cx.background_executor().clone()));
+        let fs = project::RealFs::new(None, cx.background_executor().clone());
         ReplStore::init(fs, cx);
 
         // Add mock kernel specifications for TypeScript and Python

@@ -220,7 +220,7 @@ impl McpServer {
                     Self::handle_call_tool(request_id, request.params, &tools, &outgoing_tx, cx)
                         .await;
                 } else if request.method == ListTools::METHOD {
-                    Self::handle_list_tools(request.id.unwrap(), &tools, &outgoing_tx);
+                    Self::handle_list_tools(request_id, &tools, &outgoing_tx);
                 } else if let Some(handler) = handlers.borrow().get(&request.method.as_ref()) {
                     let outgoing_tx = outgoing_tx.clone();
 
@@ -363,7 +363,7 @@ impl McpServer {
             select_biased! {
                 message = outgoing_rx.next().fuse() => {
                     if let Some(message) = message {
-                        log::trace!("send: {}", &message);
+                        log::trace!("send: {message}");
                         outgoing_bytes.write_all(message.as_bytes()).await?;
                         outgoing_bytes.write_all(&[b'\n']).await?;
                     } else {
@@ -374,7 +374,7 @@ impl McpServer {
                     if bytes_read? == 0 {
                         break
                     }
-                    log::trace!("recv: {}", &incoming_line);
+                    log::trace!("recv: {incoming_line}");
                     match serde_json::from_str(&incoming_line) {
                         Ok(message) => {
                             incoming_tx.unbounded_send(message).log_err();

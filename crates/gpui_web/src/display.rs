@@ -63,6 +63,12 @@ impl WebDisplay {
 }
 
 impl PlatformDisplay for WebDisplay {
+    // Browsers don't expose the refresh rate; it could only be estimated from
+    // `requestAnimationFrame` cadence.
+    fn refresh_interval(&self) -> Option<std::time::Duration> {
+        None
+    }
+
     fn id(&self) -> DisplayId {
         self.id
     }

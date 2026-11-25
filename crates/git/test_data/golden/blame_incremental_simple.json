@@ -16,7 +16,8 @@
     "committer_tz": "+0100",
     "summary": "Make a commit",
     "previous": "6ad46b5257ba16d12c5ca9f0d4900320959df7f4 index.js",
-    "filename": "index.js"
+    "filename": "index.js",
+    "boundary": false
   },
   {
     "sha": "6ad46b5257ba16d12c5ca9f0d4900320959df7f4",
@@ -35,7 +36,8 @@
     "committer_tz": "+0100",
     "summary": "Joe's cool commit",
     "previous": "486c2409237a2c627230589e567024a96751d475 index.js",
-    "filename": "index.js"
+    "filename": "index.js",
+    "boundary": false
   },
   {
     "sha": "6ad46b5257ba16d12c5ca9f0d4900320959df7f4",
@@ -54,7 +56,8 @@
     "committer_tz": "+0100",
     "summary": "Joe's cool commit",
     "previous": "486c2409237a2c627230589e567024a96751d475 index.js",
-    "filename": "index.js"
+    "filename": "index.js",
+    "boundary": false
   },
   {
     "sha": "6ad46b5257ba16d12c5ca9f0d4900320959df7f4",
@@ -73,7 +76,8 @@
     "committer_tz": "+0100",
     "summary": "Joe's cool commit",
     "previous": "486c2409237a2c627230589e567024a96751d475 index.js",
-    "filename": "index.js"
+    "filename": "index.js",
+    "boundary": false
   },
   {
     "sha": "486c2409237a2c627230589e567024a96751d475",
@@ -92,7 +96,8 @@
     "committer_tz": "+0100",
     "summary": "Get to a state where eslint would change code and imports",
     "previous": "504065e448b467e79920040f22153e9d2ea0fd6e index.js",
-    "filename": "index.js"
+    "filename": "index.js",
+    "boundary": false
   },
   {
     "sha": "504065e448b467e79920040f22153e9d2ea0fd6e",
@@ -111,7 +116,8 @@
     "committer_tz": "+0100",
     "summary": "Add some stuff",
     "previous": null,
-    "filename": "index.js"
+    "filename": "index.js",
+    "boundary": false
   },
   {
     "sha": "504065e448b467e79920040f22153e9d2ea0fd6e",
@@ -130,6 +136,7 @@
     "committer_tz": "+0100",
     "summary": "Add some stuff",
     "previous": null,
-    "filename": "index.js"
+    "filename": "index.js",
+    "boundary": false
   }
 ]

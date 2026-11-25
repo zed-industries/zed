@@ -12,6 +12,7 @@ workspace = true
 [lib]
 path = "src/refineable.rs"
 doctest = false
+test = false
 
 [dependencies]
 derive_refineable.workspace = true

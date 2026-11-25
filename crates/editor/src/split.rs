@@ -22,14 +22,12 @@ use rope::Point;
 use settings::{DiffViewStyle, SeedQuerySetting, Settings, SettingsStore, update_settings_file};
 use text::{Bias, BufferId, OffsetRangeExt as _, Patch, ToPoint as _};
 
-use ui::{Toggleable as _, Tooltip, prelude::*, render_modifiers};
-use util::ResultExt as _;
-
 use crate::{
     display_map::CompanionExcerptPatch,
     element::SplitSide,
     split_editor_view::{SplitEditorState, SplitEditorView},
 };
+use ui::{Toggleable as _, Tooltip, prelude::*, render_modifiers};
 use workspace::{
     ActivatePaneLeft, ActivatePaneRight, Item, ToolbarItemLocation, Workspace,
     item::{ItemBufferKind, ItemEvent, SaveOptions, TabContentParams},
@@ -37,8 +35,8 @@ use workspace::{
 };
 
 use crate::{
-    Autoscroll, DiffHunkDelegate, Editor, EditorEvent, EditorSettings, ResolvedDiffHunks,
-    ToggleSoftWrap, UncommittedDiffHunkDelegate,
+    Autoscroll, DefaultDiffHunkRenderer, DiffHunkRenderer, Editor, EditorEvent, EditorSettings,
+    ToggleSoftWrap,
     actions::{DisableBreakpoint, EditLogBreakpoint, EnableBreakpoint, ToggleBreakpoint},
     display_map::Companion,
 };
@@ -151,63 +149,11 @@ fn translate_lhs_selections_to_rhs(
     translated
 }
 
-struct SplitLhsDiffHunkDelegate {
+struct SplitLhsDiffHunkRenderer {
     splittable: WeakEntity<SplittableEditor>,
 }
 
-impl DiffHunkDelegate for SplitLhsDiffHunkDelegate {
-    fn toggle(
-        &self,
-        hunks: Vec<ResolvedDiffHunks>,
-        _editor: &mut Editor,
-        window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) {
-        self.splittable
-            .update(cx, |splittable, cx| {
-                splittable.rhs_editor.update(cx, |editor, cx| {
-                    let delegate = editor.diff_hunk_delegate();
-                    delegate.toggle(hunks, editor, window, cx);
-                });
-            })
-            .log_err();
-    }
-
-    fn stage_or_unstage(
-        &self,
-        stage: bool,
-        hunks: Vec<ResolvedDiffHunks>,
-        _editor: &mut Editor,
-        window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) {
-        self.splittable
-            .update(cx, |splittable, cx| {
-                splittable.rhs_editor.update(cx, |editor, cx| {
-                    let delegate = editor.diff_hunk_delegate();
-                    delegate.stage_or_unstage(stage, hunks, editor, window, cx);
-                });
-            })
-            .log_err();
-    }
-
-    fn restore(
-        &self,
-        hunks: Vec<ResolvedDiffHunks>,
-        _editor: &mut Editor,
-        window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) {
-        self.splittable
-            .update(cx, |splittable, cx| {
-                splittable.rhs_editor.update(cx, |editor, cx| {
-                    let delegate = editor.diff_hunk_delegate();
-                    delegate.restore(hunks, editor, window, cx);
-                });
-            })
-            .log_err();
-    }
-
+impl DiffHunkRenderer for SplitLhsDiffHunkRenderer {
     fn render_hunk_controls(
         &self,
         row: u32,
@@ -222,8 +168,8 @@ impl DiffHunkDelegate for SplitLhsDiffHunkDelegate {
         let Some(splittable) = self.splittable.upgrade() else {
             return gpui::Empty.into_any_element();
         };
-        let delegate = splittable.read(cx).rhs_editor.read(cx).diff_hunk_delegate();
-        delegate.render_hunk_controls(
+        let renderer = splittable.read(cx).rhs_editor.read(cx).diff_hunk_renderer();
+        renderer.render_hunk_controls(
             row,
             status,
             hunk_range,
@@ -239,8 +185,8 @@ impl DiffHunkDelegate for SplitLhsDiffHunkDelegate {
         let Some(splittable) = self.splittable.upgrade() else {
             return false;
         };
-        let delegate = splittable.read(cx).rhs_editor.read(cx).diff_hunk_delegate();
-        delegate.render_hunk_as_staged(status, cx)
+        let renderer = splittable.read(cx).rhs_editor.read(cx).diff_hunk_renderer();
+        renderer.render_hunk_as_staged(status, cx)
     }
 }
 
@@ -549,7 +495,7 @@ impl RenderOnce for DiffStyleControls {
                                     .text_ui_sm(cx)
                                     .text_color(Color::Muted.color(cx))
                                     .children(render_modifiers(
-                                        &gpui::Modifiers::secondary_key(),
+                                        &gpui::Modifiers::secondary_key(cx),
                                         PlatformStyle::platform(),
                                         None,
                                         Some(TextSize::Small.rems(cx).into()),
@@ -562,7 +508,7 @@ impl RenderOnce for DiffStyleControls {
                     .on_click({
                         let splittable_editor = self.splittable_editor.clone();
                         move |_, window, cx| {
-                            if window.modifiers().secondary() {
+                            if window.modifiers().secondary(cx) {
                                 window.dispatch_action(
                                     OpenSettingsAt {
                                         path: "minimum_split_diff_width".to_string(),
@@ -636,13 +582,13 @@ impl SplittableEditor {
         self.lhs.is_some()
     }
 
-    pub fn set_diff_hunk_delegate(
+    pub fn set_diff_hunk_renderer(
         &self,
-        delegate: Option<Arc<dyn DiffHunkDelegate>>,
+        renderer: Option<Arc<dyn DiffHunkRenderer>>,
         cx: &mut Context<Self>,
     ) {
         self.rhs_editor.update(cx, |editor, cx| {
-            editor.set_diff_hunk_delegate(delegate, cx);
+            editor.set_diff_hunk_renderer(renderer, cx);
         });
     }
 
@@ -681,9 +627,8 @@ impl SplittableEditor {
             editor.disable_runnables();
             editor.disable_code_lens(cx);
             editor.disable_inline_diagnostics();
-            editor.disable_mouse_wheel_zoom();
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
-            editor.set_diff_hunk_delegate(Some(Arc::new(UncommittedDiffHunkDelegate)), cx);
+            editor.set_diff_hunk_renderer(Some(Arc::new(DefaultDiffHunkRenderer)), cx);
             editor
         });
         // TODO(split-diff) we might want to tag editor events with whether they came from rhs/lhs
@@ -716,6 +661,13 @@ impl SplittableEditor {
                 if this.diff_view_style() != diff_view_style {
                     this.toggle_split(&ToggleSplitDiff, window, cx);
                     cx.notify();
+                }
+            }),
+            // Either editor can outlive this one and the other editor. A scroll anchor set by the
+            // other side can't be converted once that side's display map is released.
+            cx.on_release(|this, cx| {
+                if let Some(lhs) = &this.lhs {
+                    Self::unshare_scroll_anchors(&lhs.editor, &this.rhs_editor, cx);
                 }
             }),
         ];
@@ -782,22 +734,31 @@ impl SplittableEditor {
         });
 
         let splittable = cx.weak_entity();
+        let enable_mouse_wheel_zoom = self.rhs_editor.read(cx).enable_mouse_wheel_zoom;
+        let rhs_editor = self.rhs_editor.downgrade();
         let lhs_editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_multibuffer(lhs_multibuffer.clone(), Some(project.clone()), window, cx);
             editor.set_number_deleted_lines(true, cx);
             editor.set_delegate_expand_excerpts(true);
-            editor.set_diff_hunk_delegate(
-                Some(Arc::new(SplitLhsDiffHunkDelegate { splittable })),
+            editor.set_diff_hunk_renderer(
+                Some(Arc::new(SplitLhsDiffHunkRenderer {
+                    splittable: splittable.clone(),
+                })),
                 cx,
             );
+            editor.set_diff_hunk_action_target(Some(rhs_editor));
             editor.set_delegate_open_excerpts(true);
             editor.set_show_vertical_scrollbar(false, cx);
             editor.disable_lsp_data();
             editor.disable_runnables();
             editor.disable_diagnostics(cx);
-            editor.disable_mouse_wheel_zoom();
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
+
+            if !enable_mouse_wheel_zoom {
+                editor.disable_mouse_wheel_zoom();
+            }
+
             editor
         });
 
@@ -832,6 +793,12 @@ impl SplittableEditor {
                     }
                 }
 
+                EditorEvent::BufferFoldToggled { .. } => {
+                    this.rhs_editor.update(cx, |editor, cx| {
+                        editor.inlay_hint_visibility_changed(cx);
+                    });
+                    cx.emit(event.clone());
+                }
                 EditorEvent::OpenExcerptsRequested {
                     selections_by_buffer,
                     split,
@@ -909,6 +876,9 @@ impl SplittableEditor {
 
         rhs_display_map.update(cx, |dm, cx| {
             dm.set_companion(Some((lhs_display_map, companion.clone())), cx);
+        });
+        self.rhs_editor.update(cx, |editor, cx| {
+            editor.inlay_hint_visibility_changed(cx);
         });
 
         let lhs = self.lhs.as_ref().unwrap();
@@ -1195,27 +1165,14 @@ impl SplittableEditor {
             return;
         };
 
-        // Detach the stale lhs editor from the shared scroll anchor while the split companion still exists,
-        // so its anchor can be converted to lhs native before rhs tears down split specific state.
-        lhs.editor.update(cx, |editor, cx| {
-            let lhs_snapshot = editor.display_map.update(cx, |dm, cx| dm.snapshot(cx));
-            editor
-                .scroll_manager
-                .unshare_scroll_anchor(&lhs_snapshot, cx);
+        // Converting an anchor set by the other side relies on split state that the teardown below removes.
+        Self::unshare_scroll_anchors(&lhs.editor, &self.rhs_editor, cx);
+
+        lhs.editor.update(cx, |editor, _| {
             editor.set_on_local_selections_changed(None);
         });
 
         self.rhs_editor.update(cx, |rhs, cx| {
-            let rhs_snapshot = rhs.display_map.update(cx, |dm, cx| dm.snapshot(cx));
-            let native_anchor = rhs.scroll_manager.native_anchor(&rhs_snapshot, cx);
-            let rhs_display_map_id = rhs_snapshot.display_map_id;
-            rhs.scroll_manager
-                .scroll_anchor_entity()
-                .update(cx, |shared, _| {
-                    shared.scroll_anchor = native_anchor;
-                    shared.display_map_id = Some(rhs_display_map_id);
-                });
-
             rhs.set_on_local_selections_changed(None);
             rhs.set_delegate_expand_excerpts(false);
             rhs.buffer().update(cx, |buffer, cx| {
@@ -1225,8 +1182,34 @@ impl SplittableEditor {
             rhs.display_map.update(cx, |dm, cx| {
                 dm.set_companion(None, cx);
             });
+            rhs.inlay_hint_visibility_changed(cx);
         });
         cx.notify();
+    }
+
+    fn unshare_scroll_anchors(
+        lhs_editor: &Entity<Editor>,
+        rhs_editor: &Entity<Editor>,
+        cx: &mut App,
+    ) {
+        lhs_editor.update(cx, |editor, cx| {
+            let lhs_snapshot = editor.display_map.update(cx, |dm, cx| dm.snapshot(cx));
+            editor
+                .scroll_manager
+                .unshare_scroll_anchor(&lhs_snapshot, cx);
+        });
+
+        rhs_editor.update(cx, |rhs, cx| {
+            let rhs_snapshot = rhs.display_map.update(cx, |dm, cx| dm.snapshot(cx));
+            let native_anchor = rhs.scroll_manager.native_anchor(&rhs_snapshot, cx);
+            let rhs_display_map_id = rhs_snapshot.display_map_id;
+            rhs.scroll_manager
+                .scroll_anchor_entity()
+                .update(cx, |shared, _| {
+                    shared.scroll_anchor = native_anchor;
+                    shared.display_map_id = Some(rhs_display_map_id);
+                });
+        });
     }
 
     pub fn update_excerpts_for_path(
@@ -2380,7 +2363,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use project::Project;
     use rand::rngs::StdRng;
-    use settings::{DiffViewStyle, SettingsStore};
+    use settings::{DiffViewStyle, Settings as _, SettingsStore};
     use ui::{VisualContext as _, div, px};
     use util::rel_path::rel_path;
     use workspace::{Item, MultiWorkspace};
@@ -2738,6 +2721,93 @@ mod tests {
                 editor.check_invariants(quiesced, cx);
             });
         }
+    }
+
+    #[gpui::test]
+    async fn test_lhs_mouse_wheel_zoom_respects_rhs_configuration(cx: &mut gpui::TestAppContext) {
+        let (editor, cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Split).await;
+
+        cx.update(|_, cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.minimum_split_diff_width = Some(0.);
+                });
+            });
+        });
+
+        let set_mouse_wheel_zoom = |enabled: bool, cx: &mut VisualTestContext| {
+            cx.update(|_, cx| {
+                cx.update_global::<SettingsStore, _>(|store, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        settings.editor.mouse_wheel_zoom = Some(enabled);
+                    });
+                });
+            });
+        };
+
+        let buffer_font_size = |cx: &VisualTestContext| {
+            cx.read(|cx| theme_settings::ThemeSettings::get_global(cx).buffer_font_size(cx))
+        };
+
+        let zoom_scroll =
+            |position: gpui::Point<Pixels>, lines: f32, cx: &mut VisualTestContext| {
+                let modifiers = cx.read(|cx| gpui::Modifiers::secondary_key(cx));
+                cx.simulate_event(gpui::ScrollEvent {
+                    position,
+                    delta: gpui::ScrollDelta::Lines(gpui::point(0., lines)),
+                    modifiers,
+                    ..Default::default()
+                });
+            };
+
+        let lhs_position = |cx: &VisualTestContext| {
+            editor.read_with(cx, |editor, cx| {
+                editor
+                    .lhs_editor()
+                    .expect("split editor should have a LHS editor")
+                    .read(cx)
+                    .last_bounds()
+                    .expect("LHS editor should have been rendered")
+                    .center()
+            })
+        };
+
+        let workspace = editor.read_with(cx, |editor, _| editor.workspace.clone());
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.add_item_to_center(Box::new(editor.clone()), window, cx);
+            })
+            .expect("workspace should exist");
+        cx.run_until_parked();
+        set_mouse_wheel_zoom(true, cx);
+        let position = lhs_position(cx);
+        let initial_font_size = buffer_font_size(cx);
+        zoom_scroll(position, 1., cx);
+        assert!(buffer_font_size(cx) > initial_font_size);
+        zoom_scroll(position, -1., cx);
+        assert_eq!(buffer_font_size(cx), initial_font_size);
+        zoom_scroll(position, -1., cx);
+        assert!(buffer_font_size(cx) < initial_font_size);
+
+        set_mouse_wheel_zoom(false, cx);
+        let initial_font_size = buffer_font_size(cx);
+        zoom_scroll(position, 1., cx);
+        assert_eq!(buffer_font_size(cx), initial_font_size);
+
+        set_mouse_wheel_zoom(true, cx);
+        editor.update_in(cx, |editor, window, cx| {
+            // Recreate the LHS editor to exercise inheritance rather than
+            // disabling it directly.
+            editor.unsplit(window, cx);
+            editor.update_editors(cx, |editor, _| editor.disable_mouse_wheel_zoom());
+            editor.split(window, cx);
+        });
+
+        cx.run_until_parked();
+        let position = lhs_position(cx);
+        let initial_font_size = buffer_font_size(cx);
+        zoom_scroll(position, 1., cx);
+        assert_eq!(buffer_font_size(cx), initial_font_size);
     }
 
     #[gpui::test]
@@ -3894,15 +3964,7 @@ mod tests {
         .unindent();
 
         let buffer2 = cx.new(|cx| Buffer::local(current_text.to_string(), cx));
-        let diff2 = cx.new(|cx| {
-            BufferDiff::new(
-                &buffer2.read(cx).text_snapshot(),
-                None,
-                None,
-                buffer_diff::DiffBaseKind::Custom,
-                cx,
-            )
-        });
+        let diff2 = cx.new(|cx| BufferDiff::new(&buffer2.read(cx).text_snapshot(), None, None, cx));
 
         editor.update(cx, |editor, cx| {
             let path1 = PathKey::sorted(0);
@@ -4524,6 +4586,72 @@ mod tests {
             lhs_pos.x, rhs_pos.x,
             "LHS should have same horizontal scroll position as RHS after autoscroll"
         )
+    }
+
+    #[gpui::test]
+    async fn test_rhs_editor_outlives_released_split(cx: &mut gpui::TestAppContext) {
+        use multi_buffer::ToPoint as _;
+        use rope::Point;
+
+        let (editor, cx) = init_test(cx, SoftWrap::None, DiffViewStyle::Split).await;
+
+        let content = (0..50)
+            .map(|row| format!("line {row}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let (buffer, diff) = buffer_with_diff(&content, &content, cx);
+
+        editor.update(cx, |editor, cx| {
+            editor.update_excerpts_for_path(
+                PathKey::sorted(0),
+                buffer.clone(),
+                vec![Point::new(0, 0)..buffer.read(cx).max_point()],
+                0,
+                diff.clone(),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let (rhs_editor, lhs_editor) = editor.update(cx, |editor, _cx| {
+            let lhs = editor.lhs.as_ref().expect("should have lhs editor");
+            (editor.rhs_editor.clone(), lhs.editor.clone())
+        });
+
+        // Scroll from the lhs so that the shared anchor is native to the lhs display map.
+        lhs_editor.update_in(cx, |editor, window, cx| {
+            editor.set_scroll_position(gpui::Point::new(0., 10.), window, cx);
+        });
+        cx.run_until_parked();
+
+        let expected_row = rhs_editor.update(cx, |editor, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            editor
+                .scroll_manager
+                .native_anchor(&snapshot, cx)
+                .anchor
+                .to_point(snapshot.buffer_snapshot())
+                .row
+        });
+
+        let lhs_display_map = lhs_editor.read_with(cx, |editor, _| editor.display_map.downgrade());
+        drop(lhs_editor);
+        drop(editor);
+        cx.update(|_, _| {});
+        assert!(
+            lhs_display_map.upgrade().is_none(),
+            "lhs display map should be released with the split editor"
+        );
+
+        rhs_editor.update(cx, |editor, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            let anchor = editor.scroll_manager.native_anchor(&snapshot, cx);
+            assert_eq!(
+                anchor.anchor.to_point(snapshot.buffer_snapshot()).row,
+                expected_row,
+                "rhs editor should keep its scroll position after the split editor is released"
+            );
+        });
     }
 
     #[gpui::test]

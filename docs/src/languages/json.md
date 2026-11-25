@@ -10,6 +10,14 @@ JSON support is available natively in Zed.
 - Tree-sitter: [tree-sitter/tree-sitter-json](https://github.com/tree-sitter/tree-sitter-json)
 - Language Server: [zed-industries/json-language-server](https://github.com/zed-industries/json-language-server)
 
+## JSON Lines Preview
+
+Open a `.jsonl` or `.ndjson` file and run {#action tabular_data::OpenPreview} to view it as a read-only table. Use {#action tabular_data::OpenPreviewToTheSide} to keep the source visible alongside the preview.
+
+Each nonblank line must contain a JSON object. Top-level keys become columns in the order they first appear in the file. Keys from the first record keep their source order, and new keys from later records are appended to the right. Missing fields appear as empty cells. Values retain their JSON representation, so `null`, `"null"`, and `""` remain distinct; nested objects and arrays appear as compact JSON.
+
+The preview updates as you edit the source. Invalid records show an error with the source line number. Sorting compares the displayed text, and changing the column names or order clears active sorting and filters.
+
 ## JSONC
 
 Zed also supports a super-set of JSON called JSONC, which allows single line comments (`//`) in JSON files.

@@ -189,8 +189,8 @@ pub(crate) async fn start_wayland_desktop_capture(
         .ok_or_else(|| {
             stop_flag.store(true, Ordering::Relaxed);
             anyhow::anyhow!(
-                "Screen sharing was canceled or the portal denied permission. \
-                 You can try again from the screen share button."
+                "Screen sharing was canceled, permission was denied, or the PipeWire \
+                 connection failed. You can try again from the screen share button."
             )
         })?;
 

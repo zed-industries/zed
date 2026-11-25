@@ -1,0 +1,10 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "gulp: build tests",
+      "type": "gulp",
+      "task": "build"
+    }
+  ]
+}

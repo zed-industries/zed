@@ -42,6 +42,21 @@ Jump to where a symbol is defined with {#kb editor::GoToDefinition} (or `Cmd+Cli
 - **Current file:** {#kb outline::Toggle} opens an outline of symbols in the active file
 - **Entire project:** {#kb project_symbols::Toggle} searches symbols across all files
 
+## Project Bookmarks {#project-bookmarks}
+
+Run {#action project_bookmarks::Toggle} from the [command palette](./command-palette.md) to browse bookmarks across your project. Type to search bookmark labels; bookmarks without a label use the bookmarked line's text. Each result shows the file path and line number. Click the Preview button to toggle the code preview, then confirm a result to jump to its location.
+
+This command has no default keybinding. You can assign one in your [keymap](./key-bindings.md).
+
+## Call Hierarchy
+
+With the cursor on a function, {#action call_hierarchy::ShowIncomingCalls} ({#kb call_hierarchy::ShowIncomingCalls}) lists the functions that call it, and {#action call_hierarchy::ShowOutgoingCalls} lists the functions it calls.
+Both open a picker; selecting an entry jumps to the call site, and the secondary confirm opens it in an adjacent pane.
+While the picker is open, {#action call_hierarchy::ToggleDirection} switches between callers and callees, {#action menu::SelectChild} re-roots the hierarchy at the selected function to explore one level deeper, and {#action menu::SelectParent} steps back up; the picker's footer shows the corresponding key bindings.
+Both actions are also available in the editor's right-click menu.
+The modal's width can be changed via the `call_hierarchy.modal_max_width` setting.
+This requires the language server to support call hierarchy.
+
 ## Outline Panel
 
 The Outline Panel ({#kb outline_panel::ToggleFocus}) shows a persistent tree view of symbols in the current file. It's especially useful with [multibuffers](./multibuffers.md) for navigating search results or diagnostics.

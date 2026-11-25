@@ -39,9 +39,10 @@ const DEFAULT_FILTERS: &[(&str, log::LevelFilter)] = &[
     ("zbus", log::LevelFilter::Warn),
     #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))]
     ("naga::back::spv::writer", log::LevelFilter::Warn),
-    // usvg prints a lot of warnings on rendering an SVG with partial errors, which
-    // can happen a lot with the SVG preview
+    // usvg and its CSS parser print a lot of warnings on rendering an SVG with
+    // partial errors, which can happen a lot with the SVG preview.
     ("usvg::parser", log::LevelFilter::Error),
+    ("simplecss::selector", log::LevelFilter::Error),
     ("pet", log::LevelFilter::Warn),
 ];
 
@@ -97,6 +98,9 @@ pub fn refresh_from_settings(settings: &HashMap<String, String>) {
         if let Some(level) = entry.enabled {
             level_enabled_max = level_enabled_max.max(level as u8);
         }
+    }
+    for (_, level) in &map_new.modules {
+        level_enabled_max = level_enabled_max.max(*level as u8);
     }
     LEVEL_ENABLED_MAX_CONFIG.store(level_enabled_max, Ordering::Release);
 
@@ -285,8 +289,7 @@ impl ScopeMap {
                     this.entries[parent_index].enabled = Some(items[sub_items_start].1);
                     continue;
                 }
-                let is_valid_scope = !scope_name.is_empty();
-                let is_last = depth + 1 == SCOPE_DEPTH_MAX || !is_valid_scope;
+                let is_last = depth + 1 == SCOPE_DEPTH_MAX;
                 let mut enabled = None;
                 if is_last {
                     assert_eq!(
@@ -539,6 +542,17 @@ mod tests {
             map.is_enabled(&scope_from_scope_str("q.r.s.t"), None, Level::Warn),
             EnabledStatus::Disabled
         );
+    }
+
+    #[test]
+    fn test_refresh_from_settings_with_module_filter() {
+        let settings = [("a::b".to_string(), "trace".to_string())]
+            .into_iter()
+            .collect();
+        refresh_from_settings(&settings);
+        let is_enabled = is_scope_enabled(&scope_new(&[""]), Some("a::b"), log::Level::Trace);
+        refresh_from_settings(&HashMap::default());
+        assert!(is_enabled);
     }
 
     #[test]

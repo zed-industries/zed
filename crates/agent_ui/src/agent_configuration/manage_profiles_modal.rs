@@ -19,8 +19,8 @@ use workspace::{ModalView, Workspace};
 
 use crate::agent_configuration::manage_profiles_modal::profile_modal_header::ProfileModalHeader;
 use crate::agent_configuration::tool_picker::{ToolPicker, ToolPickerDelegate};
-use crate::language_model_selector::{LanguageModelSelector, language_model_selector};
 use crate::{AgentPanel, ManageProfiles};
+use language_model_selector::{LanguageModelPicker, language_model_picker};
 
 enum Mode {
     ChooseProfile(ChooseProfileMode),
@@ -38,7 +38,7 @@ enum Mode {
     },
     ConfigureDefaultModel {
         profile_id: AgentProfileId,
-        model_picker: Entity<LanguageModelSelector>,
+        model_picker: Entity<LanguageModelPicker>,
         _subscription: Subscription,
     },
 }
@@ -108,7 +108,7 @@ pub struct NewProfileMode {
 pub struct ManageProfilesModal {
     fs: Arc<dyn Fs>,
     context_server_registry: Entity<ContextServerRegistry>,
-    active_model: Option<Arc<dyn LanguageModel>>,
+    active_model: Option<LanguageModel>,
     focus_handle: FocusHandle,
     mode: Mode,
     _settings_subscription: Subscription,
@@ -144,7 +144,7 @@ impl ManageProfilesModal {
 
     pub fn new(
         fs: Arc<dyn Fs>,
-        active_model: Option<Arc<dyn LanguageModel>>,
+        active_model: Option<LanguageModel>,
         context_server_registry: Entity<ContextServerRegistry>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -229,7 +229,7 @@ impl ManageProfilesModal {
         let model_picker = cx.new(|cx| {
             let profile_id = profile_id_for_closure.clone();
 
-            language_model_selector(
+            language_model_picker(
                 {
                     let profile_id = profile_id.clone();
                     move |cx| {
@@ -244,13 +244,11 @@ impl ManageProfilesModal {
                                 let provider_id = language_model::LanguageModelProviderId(
                                     gpui::SharedString::from(selection.provider.0.clone()),
                                 );
-                                let provider = registry.provider(&provider_id)?;
-                                let model = provider
+                                registry
+                                    .provider(&provider_id)?
                                     .provided_models(cx)
-                                    .iter()
-                                    .find(|m| m.id().0 == selection.model.as_str())?
-                                    .clone();
-                                Some(language_model::ConfiguredModel { provider, model })
+                                    .into_iter()
+                                    .find(|m| m.id().0 == selection.model.as_str())
                             })
                     }
                 },
@@ -282,7 +280,7 @@ impl ManageProfilesModal {
                 {
                     let fs = fs.clone();
                     move |model, should_be_favorite, cx| {
-                        crate::favorite_models::toggle_in_settings(
+                        language_model_selector::toggle_in_settings(
                             model,
                             should_be_favorite,
                             fs.clone(),
@@ -926,7 +924,7 @@ impl ManageProfilesModal {
                                                     &self.focus_handle,
                                                     cx,
                                                 )
-                                                .size(rems_from_px(12.)),
+                                                .size(rems_from_px(12_f32)),
                                             ),
                                         )
                                         .on_click({
@@ -974,7 +972,7 @@ impl Render for ManageProfilesModal {
                     .end_slot(
                         div().child(
                             KeyBinding::for_action_in(&menu::Cancel, &self.focus_handle, cx)
-                                .size(rems_from_px(12.)),
+                                .size(rems_from_px(12_f32)),
                         ),
                     )
                     .on_click({

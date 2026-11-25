@@ -863,7 +863,6 @@ impl SerializableItem for ComponentPreview {
         _workspace: &mut Workspace,
         item_id: ItemId,
         _closing: bool,
-        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<anyhow::Result<()>>> {
         let active_page = self.active_page_id(cx);

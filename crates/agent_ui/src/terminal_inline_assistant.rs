@@ -15,8 +15,8 @@ use fs::Fs;
 use gpui::{App, Entity, Focusable, Global, Subscription, Task, UpdateGlobal, WeakEntity};
 use language::Buffer;
 use language_model::{
-    CompletionIntent, ConfiguredModel, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, Role,
+    CompletionIntent, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
+    Role,
 };
 use language_models::provider::anthropic::telemetry::{
     AnthropicCompletionType, AnthropicEventData, AnthropicEventType, report_anthropic_event,
@@ -214,7 +214,7 @@ impl TerminalInlineAssistant {
         assist_id: TerminalInlineAssistId,
         cx: &mut App,
     ) -> Result<Task<LanguageModelRequest>> {
-        let ConfiguredModel { model, .. } = LanguageModelRegistry::read_global(cx)
+        let model = LanguageModelRegistry::read_global(cx)
             .inline_assistant_model()
             .context("No inline assistant model")?;
 
@@ -244,6 +244,7 @@ impl TerminalInlineAssistant {
         )?;
 
         let temperature = AgentSettings::temperature_for_model(&model, cx);
+        let session_id = assist.codegen.read(cx).session_id().to_string();
 
         let mention_set = prompt_editor.read(cx).mention_set().clone();
         let load_context_task = load_context(&mention_set, cx);
@@ -263,7 +264,8 @@ impl TerminalInlineAssistant {
             request_message.content.push(prompt.into());
 
             LanguageModelRequest {
-                thread_id: None,
+                thread_id: Some(session_id),
+                prompt_cache_key: None,
                 prompt_id: None,
                 intent: Some(CompletionIntent::TerminalInlineAssist),
                 messages: vec![request_message],
@@ -275,6 +277,7 @@ impl TerminalInlineAssistant {
                 thinking_effort: None,
                 speed: None,
                 compact_at_tokens: None,
+                max_output_tokens: None,
             }
         }))
     }
@@ -298,9 +301,7 @@ impl TerminalInlineAssistant {
                 })
                 .log_err();
 
-            if let Some(ConfiguredModel { model, .. }) =
-                LanguageModelRegistry::read_global(cx).inline_assistant_model()
-            {
+            if let Some(model) = LanguageModelRegistry::read_global(cx).inline_assistant_model() {
                 let codegen = assist.codegen.read(cx);
                 let session_id = codegen.session_id();
                 let message_id = codegen.message_id.clone();
