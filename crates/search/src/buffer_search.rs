@@ -501,7 +501,9 @@ impl Render for BufferSearchBar {
             }))
             .when(replacement, |this| {
                 this.on_action(cx.listener(Self::toggle_replace))
-                    .on_action(cx.listener(Self::replace_next))
+            })
+            .when(should_show_replace_input, |this| {
+                this.on_action(cx.listener(Self::replace_next))
                     .on_action(cx.listener(Self::replace_all))
             })
             .when(case, |this| {
@@ -1904,7 +1906,7 @@ mod tests {
         display_map::DisplayRow, test::editor_test_context::EditorTestContext,
     };
     use futures::stream::StreamExt as _;
-    use gpui::{FocusHandle, Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
+    use gpui::{FocusHandle, Hsla, NoAction, TestAppContext, UpdateGlobal, VisualTestContext};
     use language::{Buffer, Point};
     use project::{FakeFs, Project};
     use settings::{SearchSettingsContent, SettingsStore};
@@ -1912,7 +1914,10 @@ mod tests {
     use util_macros::perf;
     #[cfg(target_os = "macos")]
     use workspace::{AppState, Workspace};
-    use workspace::{MultiWorkspace, item::Item, searchable::SearchableItem};
+    use workspace::{
+        MultiWorkspace, Pane, dock::DockPosition, dock::PanelEvent, dock::test::TestPanel,
+        item::Item, searchable::SearchableItem,
+    };
 
     fn init_globals(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -3100,10 +3105,44 @@ mod tests {
             })
             .await
             .unwrap();
+        cx.dispatch_action(ReplaceNext);
+        cx.dispatch_action(ReplaceAll);
         editor.update_in(cx, |editor, window, cx| {
             editor.focus_handle(cx).focus(window, cx)
         });
         cx.dispatch_action(ReplaceNext);
+        cx.dispatch_action(ReplaceAll);
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "b b b b"
+        );
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.toggle_replace(&ToggleReplace, window, cx)
+        });
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let pane = cx.new(|cx| {
+                Pane::new(
+                    workspace.weak_handle(),
+                    workspace.project().clone(),
+                    Default::default(),
+                    None,
+                    Box::new(NoAction),
+                    false,
+                    window,
+                    cx,
+                )
+            });
+            let panel = cx.new(|cx| TestPanel {
+                pane: Some(pane),
+                ..TestPanel::new(DockPosition::Bottom, 100, cx)
+            });
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.focus_panel::<TestPanel>(window, cx);
+            panel
+        });
+        cx.dispatch_action(ReplaceAll);
+        panel.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
         cx.dispatch_action(ReplaceAll);
         assert_eq!(
             editor.read_with(cx, |editor, cx| editor.text(cx)),
