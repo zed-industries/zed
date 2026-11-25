@@ -1886,7 +1886,9 @@ impl FileFinderDelegate {
                     project_path_for_search_match(&self.project, &path_match.0, cx)
                         == opened.project
                 }
-                _ => false,
+                Some(Match::Absolute(..) | Match::Channel { .. } | Match::CreateNew(..)) | None => {
+                    false
+                }
             }
         {
             let elements_after_first = self.matches.len() - 1;
