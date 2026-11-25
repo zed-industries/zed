@@ -1341,9 +1341,10 @@ impl Element for TerminalElement {
 
                 let background_color = theme.colors().terminal_background;
 
+                let mouse_input_mode = self.terminal_view.read(cx).mouse_input_mode();
                 let (hover_tooltip, hover_match) = self.terminal.update(cx, |terminal, cx| {
                     terminal.set_size(dimensions);
-                    terminal.sync(window, cx);
+                    terminal.sync(mouse_input_mode, window, cx);
 
                     if window.modifiers().secondary(cx)
                         && bounds.contains(&window.mouse_position())
@@ -1651,7 +1652,12 @@ impl Element for TerminalElement {
                             }
 
                             this.update(cx, |term, cx| {
-                                term.try_modifiers_change(&event.modifiers, window, cx)
+                                term.try_modifiers_change(
+                                    &event.modifiers,
+                                    mouse_input_mode,
+                                    window,
+                                    cx,
+                                )
                             });
                         }
                     });
