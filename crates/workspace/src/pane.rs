@@ -2008,6 +2008,8 @@ impl Pane {
             }
 
             for item_to_close in items_to_close {
+                Self::stop_autosave(&workspace, item_to_close.as_ref(), cx).await?;
+
                 let mut should_close = true;
                 let mut should_save = true;
                 if save_intent == SaveIntent::Close {
@@ -2070,6 +2072,25 @@ impl Pane {
             pane.update(cx, |_, cx| cx.notify()).ok();
             Ok(())
         })
+    }
+
+    /// Cancels `item`'s pending autosave and waits until the buffers it is the last to show
+    /// have no running autosave. See `Workspace::stop_autosave`.
+    async fn stop_autosave(
+        workspace: &WeakEntity<Workspace>,
+        item: &dyn ItemHandle,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<()> {
+        loop {
+            let autosaves =
+                workspace.update(cx, |workspace, cx| workspace.stop_autosave(item, cx))?;
+            if autosaves.is_empty() {
+                return Ok(());
+            }
+            for autosave in autosaves {
+                autosave.await;
+            }
+        }
     }
 
     pub fn take_active_item(

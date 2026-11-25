@@ -56,7 +56,7 @@ use futures::{
         mpsc::{self, UnboundedReceiver, UnboundedSender},
         oneshot,
     },
-    future::{Shared, try_join_all},
+    future::{BoxFuture, Shared, try_join_all},
 };
 use gpui::{
     Action, AnyEntity, AnyView, AnyWeakView, App, AppContext, AsyncApp, AsyncWindowContext, Axis,
@@ -1501,6 +1501,16 @@ impl AppState {
     }
 }
 
+/// Resolves when an autosave finishes or is cancelled.
+type AutosaveFinished = Shared<BoxFuture<'static, ()>>;
+
+/// An autosave that has started.
+struct RunningAutosave {
+    project_item_ids: Vec<EntityId>,
+    finished: AutosaveFinished,
+    save: Task<()>,
+}
+
 struct DelayedDebouncedEditAction {
     task: Option<Task<()>>,
     cancel_channel: Option<oneshot::Sender<()>>,
@@ -1523,11 +1533,9 @@ impl DelayedDebouncedEditAction {
     ) where
         F: 'static
             + Send
-            + FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) -> Task<Result<()>>,
+            + FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) -> AutosaveFinished,
     {
-        if let Some(channel) = self.cancel_channel.take() {
-            _ = channel.send(());
-        }
+        self.cancel();
 
         let (sender, mut receiver) = oneshot::channel::<()>();
         self.cancel_channel = Some(sender);
@@ -1548,9 +1556,17 @@ impl DelayedDebouncedEditAction {
                 .update_in(cx, |workspace, window, cx| (func)(workspace, window, cx))
                 .log_err()
             {
-                result.await.log_err();
+                result.await;
             }
         }));
+    }
+
+    /// Cancels the pending callback, if it hasn't started. Later callbacks still wait for the
+    /// started ones.
+    fn cancel(&mut self) {
+        if let Some(channel) = self.cancel_channel.take() {
+            channel.send(()).ok();
+        }
     }
 }
 
@@ -1726,6 +1742,8 @@ pub struct Workspace {
     active_workspace_id: Option<Rc<Cell<EntityId>>>,
     active_worktree_creation: ActiveWorktreeCreation,
     deferred_save_items: Vec<Box<dyn WeakItemHandle>>,
+    pending_autosaves: HashMap<EntityId, DelayedDebouncedEditAction>,
+    running_autosaves: HashMap<EntityId, RunningAutosave>,
     persisted_recent_navigation_history: Vec<PathBuf>,
     last_active_project_path: Option<ProjectPath>,
     restoring_workspace: Rc<Cell<bool>>,
@@ -2220,6 +2238,8 @@ impl Workspace {
             open_in_dev_container: false,
             _dev_container_task: None,
             deferred_save_items: Vec::new(),
+            pending_autosaves: HashMap::default(),
+            running_autosaves: HashMap::default(),
             persisted_recent_navigation_history: Vec::new(),
             last_active_project_path: None,
             restoring_workspace: Rc::new(Cell::new(false)),
@@ -4485,6 +4505,73 @@ impl Workspace {
 
     pub fn items<'a>(&'a self, cx: &'a App) -> impl 'a + Iterator<Item = &'a Box<dyn ItemHandle>> {
         self.panes.iter().flat_map(|pane| pane.read(cx).items())
+    }
+
+    /// Autosaves `item`. The save holds `item` until it finishes, so closing `item` doesn't
+    /// cancel it, and `item`'s release, which `zed --wait` waits on, comes after the write.
+    fn autosave(
+        &mut self,
+        item: &dyn ItemHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AutosaveFinished {
+        let item_id = item.item_id();
+        let project_item_ids = item.project_item_model_ids(cx).to_vec();
+        let save = Pane::autosave_item(item, self.project.clone(), window, cx);
+        let (finished_tx, finished_rx) = oneshot::channel::<()>();
+        let item = item.boxed_clone();
+        let save = cx.spawn(async move |this, cx| {
+            let _finished_tx = finished_tx;
+            save.await.log_err();
+            this.update(cx, |this, _| {
+                if let Some(autosave) = this.running_autosaves.remove(&item_id) {
+                    autosave.save.detach();
+                }
+            })
+            .ok();
+            drop(item);
+        });
+        let finished = finished_rx.map(|_| ()).boxed().shared();
+        let autosave = RunningAutosave {
+            project_item_ids,
+            finished: finished.clone(),
+            save,
+        };
+        self.running_autosaves.insert(item_id, autosave);
+        finished
+    }
+
+    /// Called before `item` is closed. If it is the last view of some of its buffers, cancels
+    /// its pending autosave and returns the running autosaves of those buffers. The close waits
+    /// for them, so that they can't write after its own save.
+    fn stop_autosave(&mut self, item: &dyn ItemHandle, cx: &App) -> Vec<AutosaveFinished> {
+        let item_id = item.item_id();
+        if self.running_autosaves.is_empty() && !self.pending_autosaves.contains_key(&item_id) {
+            return Vec::new();
+        }
+        let mut project_item_ids = item.project_item_model_ids(cx);
+        for open_item in self.items(cx) {
+            if open_item.item_id() != item_id
+                && open_item.buffer_kind(cx) == ItemBufferKind::Singleton
+            {
+                let shown = open_item.project_item_model_ids(cx);
+                project_item_ids.retain(|id| !shown.contains(id));
+            }
+        }
+        if project_item_ids.is_empty() {
+            return Vec::new();
+        }
+        if let Some(pending) = self.pending_autosaves.get_mut(&item_id) {
+            pending.cancel();
+        }
+        self.running_autosaves
+            .values()
+            .filter(|autosave| {
+                let mut ids = autosave.project_item_ids.iter();
+                ids.any(|id| project_item_ids.contains(id))
+            })
+            .map(|autosave| autosave.finished.clone())
+            .collect()
     }
 
     pub fn item_of_type<T: Item>(&self, cx: &App) -> Option<Entity<T>> {
@@ -14840,6 +14927,52 @@ mod tests {
         cx.run_until_parked();
         assert!(cx.has_pending_prompt());
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 6));
+    }
+
+    #[gpui::test]
+    async fn test_pending_autosave_does_not_retain_closed_item(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.autosave = Some(AutosaveSetting::AfterDelay {
+                    milliseconds: 500.into(),
+                });
+            })
+        });
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let items = [1, 2].map(|id| {
+            let path = format!("{id}.txt");
+            cx.new(|cx| {
+                TestItem::new(cx).with_project_items(&[TestProjectItem::new(id, &path, cx)])
+            })
+        });
+        // The second item is clean again, as after an undo, so `max_tabs` could evict it.
+        for (item, is_dirty) in items.iter().zip([true, false]) {
+            workspace.update_in(cx, |workspace, window, cx| {
+                workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+            });
+            item.update(cx, |item, cx| {
+                item.is_dirty = is_dirty;
+                cx.emit(ItemEvent::Edit);
+            });
+        }
+
+        // Close the first item, and remove the second directly, as `max_tabs` does.
+        let [closed_id, removed_id] = items.each_ref().map(|item| item.entity_id());
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_items(window, cx, SaveIntent::Close, &move |id| id == closed_id)
+        })
+        .await
+        .unwrap();
+        pane.update_in(cx, |pane, window, cx| {
+            pane.remove_item(removed_id, false, true, window, cx)
+        });
+        let weak_items = items.map(|item| item.downgrade());
+        cx.run_until_parked();
+        assert!(weak_items.iter().all(|item| item.upgrade().is_none()));
     }
 
     #[gpui::test]
