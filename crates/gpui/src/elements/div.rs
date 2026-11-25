@@ -1844,6 +1844,7 @@ pub(crate) type ActionListener =
 pub fn div() -> Div {
     #[cold]
     fn box_interactivity_on_heap() -> crate::ArenaBox<Interactivity> {
+        const { assert!(align_of::<Interactivity>() >= 2) };
         crate::ArenaBox::from_box(Box::default())
     }
 

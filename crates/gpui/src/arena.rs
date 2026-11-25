@@ -1,10 +1,10 @@
+#[cfg(debug_assertions)]
+use std::{cell::Cell, rc::Rc};
 use std::{
     alloc::{self, handle_alloc_error},
-    cell::Cell,
     num::NonZeroUsize,
     ops::{Deref, DerefMut},
     ptr::{self, NonNull},
-    rc::Rc,
 };
 
 struct ArenaElement {
@@ -81,6 +81,7 @@ impl Chunk {
 pub struct Arena {
     chunks: Vec<Chunk>,
     elements: Vec<ArenaElement>,
+    #[cfg(debug_assertions)]
     valid: Rc<Cell<bool>>,
     current_chunk_index: usize,
     chunk_size: NonZeroUsize,
@@ -99,6 +100,7 @@ impl Arena {
         Self {
             chunks: vec![Chunk::new(chunk_size)],
             elements: Vec::new(),
+            #[cfg(debug_assertions)]
             valid: Rc::new(Cell::new(true)),
             current_chunk_index: 0,
             chunk_size,
@@ -148,8 +150,11 @@ impl Arena {
     }
 
     fn force_clear(&mut self) {
-        self.valid.set(false);
-        self.valid = Rc::new(Cell::new(true));
+        #[cfg(debug_assertions)]
+        {
+            self.valid.set(false);
+            self.valid = Rc::new(Cell::new(true));
+        }
         self.elements.clear();
         for chunk_index in 0..=self.current_chunk_index {
             self.chunks[chunk_index].reset();
@@ -180,7 +185,9 @@ impl Arena {
             unsafe { std::ptr::drop_in_place(ptr.cast::<T>()) };
         }
 
-        let layout = alloc::Layout::new::<T>();
+        // Align to at least 2 bytes so bit 0 of every arena pointer is 0, leaving
+        // `HEAP_TAG` free to distinguish heap-backed `ArenaBox`es.
+        let layout = alloc::Layout::from_size_align(size_of::<T>(), align_of::<T>().max(2)).unwrap();
         let current_chunk = &mut self.chunks[self.current_chunk_index];
         let ptr = if let Some(ptr) = current_chunk.allocate(layout) {
             ptr.as_ptr()
@@ -196,8 +203,14 @@ impl Arena {
         });
 
         let mapped = NonNull::from(map(unsafe { &mut *typed_ptr }));
+        debug_assert_eq!(
+            mapped.as_ptr().addr() & HEAP_TAG,
+            0,
+            "arena-allocated pointers must stay 2-byte aligned so bit 0 remains free for HEAP_TAG"
+        );
         ArenaBox {
             ptr: mapped,
+            #[cfg(debug_assertions)]
             valid: Some(self.valid.clone()),
         }
     }
@@ -226,30 +239,67 @@ impl Arena {
     }
 }
 
+const HEAP_TAG: usize = 1;
+
 pub struct ArenaBox<T: ?Sized> {
+    /// Low bit (`HEAP_TAG`) is `0` when `ptr` lives in an [`Arena`] (whose `force_clear`
+    /// drops the value) and `1` when `ptr` owns a heap `Box<T>` directly.
     ptr: NonNull<T>,
-    /// `Some` when `ptr` lives in an [`Arena`], whose `force_clear` drops the value;
-    /// `None` when `ptr` owns a heap `Box<T>` directly.
+    #[cfg(debug_assertions)]
     valid: Option<Rc<Cell<bool>>>,
 }
 
+#[cfg(not(debug_assertions))]
+const _: () = {
+    assert!(size_of::<ArenaBox<u8>>() == size_of::<*mut u8>());
+    assert!(size_of::<ArenaBox<dyn std::any::Any>>() == size_of::<*mut dyn std::any::Any>());
+};
+
+#[cfg(debug_assertions)]
 const _: () = {
     assert!(size_of::<ArenaBox<u8>>() == 2 * size_of::<usize>());
     assert!(size_of::<ArenaBox<dyn std::any::Any>>() == 3 * size_of::<usize>());
 };
 
 impl<T: ?Sized> ArenaBox<T> {
+    /// Wraps a heap `Box<T>` in an [`ArenaBox`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if `*value` has alignment less than 2, because bit 0 of the pointer
+    /// stores the heap-ownership tag.
     #[inline]
     pub fn from_box(value: Box<T>) -> Self {
+        assert!(
+            align_of_val(&*value) >= 2,
+            "ArenaBox::from_box requires alignment >= 2 for pointer tagging"
+        );
+        let raw = Box::into_raw(value);
+        debug_assert_eq!(raw.addr() & HEAP_TAG, 0);
+        // SAFETY: `raw.addr() | HEAP_TAG` is non-zero because `HEAP_TAG == 1`, and
+        // `map_addr` preserves `raw`'s provenance and wide-pointer metadata.
+        let ptr = unsafe { NonNull::new_unchecked(raw.map_addr(|addr| addr | HEAP_TAG)) };
         Self {
-            ptr: Box::into_non_null(value),
+            ptr,
+            #[cfg(debug_assertions)]
             valid: None,
         }
+    }
+
+    #[inline(always)]
+    fn is_heap(&self) -> bool {
+        self.ptr.as_ptr().addr() & HEAP_TAG != 0
+    }
+
+    #[inline(always)]
+    fn untagged_ptr(&self) -> *mut T {
+        self.ptr.as_ptr().map_addr(|addr| addr & !HEAP_TAG)
     }
 
     #[track_caller]
     #[inline(always)]
     fn validate(&self) {
+        #[cfg(debug_assertions)]
         if let Some(valid) = &self.valid
             && !valid.get()
         {
@@ -258,6 +308,7 @@ impl<T: ?Sized> ArenaBox<T> {
     }
 }
 
+#[cfg(debug_assertions)]
 #[cold]
 #[track_caller]
 fn cold_invalid_arena_ref() -> ! {
@@ -267,18 +318,18 @@ fn cold_invalid_arena_ref() -> ! {
 impl<T: ?Sized> Drop for ArenaBox<T> {
     #[inline]
     fn drop(&mut self) {
-        if self.valid.is_none() {
+        if self.is_heap() {
             #[cold]
-            unsafe fn drop_boxed<T: ?Sized>(ptr: NonNull<T>) {
-                // SAFETY: Caller guarantees `ptr` came from `Box::into_raw(Box<T>)`.
+            unsafe fn drop_boxed<T: ?Sized>(ptr: *mut T) {
+                // SAFETY: Caller guarantees `ptr` is the untagged pointer from `Box::into_raw`.
                 unsafe {
-                    drop(Box::from_raw(ptr.as_ptr()));
+                    drop(Box::from_raw(ptr));
                 }
             }
 
-            // SAFETY: `self.valid` is `None` only when constructed by `ArenaBox::from_box`,
-            // with `self.ptr` produced by `Box::into_non_null` for the exact type `T`.
-            unsafe { drop_boxed(self.ptr) };
+            // SAFETY: `HEAP_TAG` is set only by `ArenaBox::from_box`, so `untagged_ptr()`
+            // recovers the exact pointer and type `T` returned by `Box::into_raw`.
+            unsafe { drop_boxed(self.untagged_ptr()) };
         }
     }
 }
@@ -289,7 +340,9 @@ impl<T: ?Sized> Deref for ArenaBox<T> {
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
         self.validate();
-        unsafe { self.ptr.as_ref() }
+        // SAFETY: `untagged_ptr` strips `HEAP_TAG`, yielding a valid, aligned pointer
+        // to a live `T` owned either by an active `Arena` or by `self`.
+        unsafe { &*self.untagged_ptr() }
     }
 }
 
@@ -297,7 +350,8 @@ impl<T: ?Sized> DerefMut for ArenaBox<T> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.validate();
-        unsafe { self.ptr.as_mut() }
+        // SAFETY: Same as `deref`, and `&mut self` guarantees exclusive access.
+        unsafe { &mut *self.untagged_ptr() }
     }
 }
 
@@ -371,10 +425,16 @@ mod tests {
         assert_eq!(*x4, 4);
         assert_eq!(*x5, 5);
 
-        assert_eq!(x1.ptr.as_ptr().align_offset(std::mem::align_of_val(&*x1)), 0);
-        assert_eq!(x2.ptr.as_ptr().align_offset(std::mem::align_of_val(&*x2)), 0);
+        let zst = arena.alloc(|| ());
+        *zst;
+
+        assert_eq!(x1.untagged_ptr().align_offset(std::mem::align_of_val(&*x1)), 0);
+        assert_eq!(x2.untagged_ptr().align_offset(std::mem::align_of_val(&*x2)), 0);
+        assert!(!x1.is_heap());
+        assert!(!zst.is_heap());
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     #[should_panic(expected = "attempted to dereference an ArenaRef after its Arena was cleared")]
     fn test_arena_use_after_clear() {
@@ -428,10 +488,20 @@ mod tests {
 
     #[test]
     fn test_clear_without_scope_is_immediate() {
+        struct DropFlag(Rc<Cell<bool>>);
+        impl Drop for DropFlag {
+            fn drop(&mut self) {
+                self.0.set(true);
+            }
+        }
+
+        let dropped = Rc::new(Cell::new(false));
         let mut arena = Arena::new(1024);
-        let value = arena.alloc(|| 1u64);
-        assert_eq!(*value, 1);
+        let value = arena.alloc(|| (1u64, DropFlag(dropped.clone())));
+        assert_eq!(value.0, 1);
         arena.clear();
+        assert!(dropped.get());
+        #[cfg(debug_assertions)]
         assert!(!value.valid.as_ref().unwrap().get());
     }
 
@@ -446,6 +516,7 @@ mod tests {
 
         let drops = Rc::new(Cell::new(0));
         let mut boxed = ArenaBox::from_box(Box::new((41u64, DropCounter(drops.clone()))));
+        assert!(boxed.is_heap());
         boxed.0 += 1;
         assert_eq!(boxed.0, 42);
         assert_eq!(drops.get(), 0);
@@ -454,6 +525,7 @@ mod tests {
 
         let unsized_box: ArenaBox<dyn std::any::Any> =
             ArenaBox::from_box(Box::new(DropCounter(drops.clone())));
+        assert!(unsized_box.is_heap());
         assert!(unsized_box.downcast_ref::<DropCounter>().is_some());
         drop(unsized_box);
         assert_eq!(drops.get(), 2);

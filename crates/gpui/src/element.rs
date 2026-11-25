@@ -681,6 +681,7 @@ impl AnyElement {
                 E: 'static + Element,
                 E::RequestLayoutState: Any,
             {
+                const { assert!(align_of::<Drawable<E>>() >= 2) };
                 ArenaBox::from_box(Box::new(Drawable::new(element)) as Box<dyn ElementObject>)
             }
 
