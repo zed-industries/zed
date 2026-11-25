@@ -859,7 +859,8 @@ mod test {
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
-    use editor::{DisplayPoint, HighlightKey, display_map::DisplayRow};
+    use editor::{DisplayPoint, Editor, HighlightKey, MultiBufferOffset, display_map::DisplayRow};
+    use gpui::AppContext as _;
 
     use indoc::indoc;
     use itertools::Itertools;
@@ -1173,6 +1174,29 @@ mod test {
         cx.simulate_keystrokes("*");
         cx.run_until_parked();
         cx.assert_state("one two ˇone two one", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_search_submit_without_vim_editor(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        let editor = cx.workspace(|workspace, window, cx| {
+            let editor = cx.new(|cx| Editor::single_line(window, cx));
+            editor.update(cx, |editor, cx| editor.set_text("one one one", window, cx));
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+            editor
+        });
+        cx.dispatch_action(zed_actions::buffer_search::Deploy::find());
+        cx.simulate_keystrokes("o n e");
+        cx.run_until_parked();
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        let selection = cx.update_entity(editor, |editor, _, cx| {
+            editor
+                .selections
+                .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
+                .range()
+        });
+        assert_eq!(selection, MultiBufferOffset(0)..MultiBufferOffset(3));
     }
 
     #[gpui::test]
