@@ -35,7 +35,7 @@ Alternatively, you can reach for the Remote Projects modal (through the {#kb pro
 
 If you modify `.devcontainer/devcontainer.json`, Zed does not currently rebuild or reload the container automatically. After changing configuration:
 
-- Stop or kill the existing container manually (e.g., via `docker kill <container>`).
+- Remove the existing container manually (e.g., via `docker rm -f <container>`).
 - Reopen the project in the container.
 
 ## Working in a Dev Container

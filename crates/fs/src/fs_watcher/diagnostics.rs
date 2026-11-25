@@ -187,7 +187,7 @@ impl WatchRecording {
                 let state = watcher.state.lock();
                 let mut roots: Vec<_> = state
                     .paths
-                    .0
+                    .entries
                     .values()
                     .filter(|path| matches!(path.coverage, Coverage::Watched { .. }))
                     .map(|path| WatchRoot {

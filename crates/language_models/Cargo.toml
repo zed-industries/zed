@@ -19,6 +19,7 @@ test-support = ["dep:cloud_llm_client"]
 ai_onboarding.workspace = true
 anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
+async-compression.workspace = true
 aws-config.workspace = true
 aws-credential-types.workspace = true
 aws-sigv4.workspace = true
