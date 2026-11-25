@@ -306,6 +306,10 @@ pub struct MetalFrames {
     source: RefCell<Option<MetalFrameSource>>,
     /// Whether GPUI asked for a frame since the current update began.
     woken: Cell<bool>,
+    /// Set by the window so a wake can restore the drawable size before the
+    /// link hands out a new drawable. Returns false if it could not run yet.
+    restore_drawables: RefCell<Option<Box<dyn Fn() -> bool>>>,
+    drawables_released: Cell<bool>,
 }
 
 impl MetalFrames {
@@ -313,11 +317,29 @@ impl MetalFrames {
         *self.source.borrow_mut() = source;
     }
 
+    pub fn set_restore_drawables(&self, restore: impl Fn() -> bool + 'static) {
+        *self.restore_drawables.borrow_mut() = Some(Box::new(restore));
+    }
+
+    pub fn set_drawables_released(&self, released: bool) {
+        self.drawables_released.set(released);
+    }
+
     pub fn is_attached(&self) -> bool {
         self.source.borrow().is_some()
     }
 
     pub fn wake(&self) {
+        // Restore before resuming, or the link's next drawable is 1x1.
+        if self.drawables_released.get()
+            && self
+                .restore_drawables
+                .borrow()
+                .as_ref()
+                .is_some_and(|restore| restore())
+        {
+            self.drawables_released.set(false);
+        }
         self.woken.set(true);
         // A source being replaced starts unpaused, so skipping it is safe.
         if let Ok(source) = self.source.try_borrow()
@@ -612,6 +634,24 @@ mod tests {
     use super::*;
     use objc2::AnyThread;
     use objc2_quartz_core::CAMetalDisplayLink;
+    use std::rc::Rc;
+
+    #[test]
+    fn waking_restores_released_drawables_once() {
+        let frames = MetalFrames::default();
+        let restores = Rc::new(Cell::new(0));
+        let counter = restores.clone();
+        frames.set_restore_drawables(move || {
+            counter.set(counter.get() + 1);
+            true
+        });
+
+        frames.set_drawables_released(true);
+        frames.wake();
+        assert_eq!(restores.get(), 1);
+        frames.wake();
+        assert_eq!(restores.get(), 1);
+    }
 
     #[test]
     fn metal_frames_pause_only_when_gpui_neither_draws_nor_asks_again() {

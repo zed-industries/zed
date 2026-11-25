@@ -1222,6 +1222,19 @@ impl MacWindow {
                 sheet_parent: None,
                 native_views: native_views::NativeViews::default(),
             }));
+            if let Some(metal_frames) = &metal_frames {
+                let weak_state = Rc::downgrade(&state);
+                metal_frames.set_restore_drawables(move || {
+                    let Some(state) = weak_state.upgrade() else {
+                        return true;
+                    };
+                    let Some(mut state) = state.try_lock() else {
+                        return false;
+                    };
+                    state.renderer.restore_idle_drawables();
+                    true
+                });
+            }
             let mut window = Self(state, marker, metal_frames);
 
             (*native_window)
@@ -3636,6 +3649,9 @@ fn metal_frame(
     let Some(mut callback) = lock.request_frame_callback.take() else {
         return;
     };
+    // A wake may have failed to take the window lock; restore before the link
+    // hands out a drawable so it has the window's real size.
+    lock.renderer.restore_idle_drawables();
     lock.renderer.set_frame_drawable(Some(update.drawable()));
     drop(lock);
     metal_frames.begin_frame();
@@ -3649,7 +3665,10 @@ fn metal_frame(
     // A frame with nothing to draw leaves its drawable unused; releasing it
     // lets the link hand it out again.
     let used_drawable = lock.renderer.set_frame_drawable(None).is_none();
-    metal_frames.end_frame(used_drawable);
+    if metal_frames.end_frame(used_drawable) {
+        lock.renderer.release_idle_drawables();
+        metal_frames.set_drawables_released(true);
+    }
     drop(lock);
     native_views::check_pointer_after_frame(window_state);
 }
