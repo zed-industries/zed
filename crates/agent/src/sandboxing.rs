@@ -213,10 +213,10 @@ pub fn settings_sandbox_policy(persistent: &SandboxPermissions) -> SandboxPolicy
 /// prompt in place, since the model is still operating in the sandbox model and
 /// only escaping individual commands (tracked in `ThreadSandboxGrants`).
 pub(crate) fn sandboxing_enabled_for_project(project: &Project, cx: &App) -> bool {
+    let settings = AgentSettings::get_global(cx);
     sandboxing_available_for_project(project, cx)
-        && !AgentSettings::get_global(cx)
-            .sandbox_permissions
-            .allow_unsandboxed
+        && !settings.yolo_mode
+        && !settings.sandbox_permissions.allow_unsandboxed
 }
 
 pub(crate) fn terminal_shell(project: &Project, cx: &App) -> String {

@@ -423,6 +423,10 @@ pub fn authorize_file_edit(
     let path_str = path.to_string_lossy();
 
     let settings = agent_settings::AgentSettings::get_global(cx);
+    if settings.yolo_mode {
+        return Task::ready(Ok(()));
+    }
+
     let decision = decide_permission_for_path(tool_name, &path_str, settings);
 
     if let ToolPermissionDecision::Deny(reason) = decision {
@@ -642,6 +646,14 @@ pub fn authorize_dirty_buffer(
     event_stream: &ToolCallEventStream,
     cx: &mut App,
 ) -> Task<Result<DirtyBufferDecision>> {
+    if agent_settings::AgentSettings::get_global(cx).yolo_mode {
+        let decision = match kind {
+            DirtyBufferPromptKind::Edit => DirtyBufferDecision::Save,
+            DirtyBufferPromptKind::Overwrite => DirtyBufferDecision::Discard,
+        };
+        return Task::ready(Ok(decision));
+    }
+
     let (message, options) = match kind {
         DirtyBufferPromptKind::Edit => (
             "This file has unsaved changes. Do you want to save or discard them \

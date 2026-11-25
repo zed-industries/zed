@@ -51,6 +51,240 @@ use util::path_list::PathList;
 
 const EXIT_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
 
+pub(crate) fn yolo_mode_enabled(cx: &App) -> bool {
+    cx.try_global::<settings::SettingsStore>()
+        .is_some_and(|store| store.get::<agent_settings::AgentSettings>(None).yolo_mode)
+}
+
+fn normalize_identifier(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .map(|character| character.to_ascii_lowercase())
+        .collect()
+}
+
+fn is_restrictive_mode_label(normalized_id: &str, lowercase_name: &str) -> bool {
+    matches!(
+        normalized_id,
+        "plan"
+            | "readonly"
+            | "ask"
+            | "askalways"
+            | "default"
+            | "safe"
+            | "manual"
+            | "review"
+            | "acceptedits"
+            | "autoedit"
+            | "workspacewrite"
+            | "onrequest"
+            | "onfailure"
+            | "untrusted"
+    ) || lowercase_name.contains("read-only")
+        || lowercase_name.contains("read only")
+        || lowercase_name.contains("plan mode")
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum YoloConfigOptionKind {
+    Mode,
+    ApprovalPolicy,
+    SandboxPolicy,
+    YoloBoolean,
+}
+
+fn classify_yolo_config_option(
+    option: &acp_v2::SessionConfigOption,
+) -> Option<YoloConfigOptionKind> {
+    let normalized_id = normalize_identifier(option.config_id.0.as_ref());
+    let lowercase_name = option.name.to_ascii_lowercase();
+
+    match &option.kind {
+        acp_v2::SessionConfigKind::Boolean(_) => {
+            let is_yolo_flag = matches!(
+                normalized_id.as_str(),
+                "yolo"
+                    | "yolomode"
+                    | "autoapprove"
+                    | "autoapproveall"
+                    | "bypasspermissions"
+                    | "dangerouslyskippermissions"
+                    | "skippermissions"
+                    | "allowall"
+                    | "alwaysallow"
+            ) || lowercase_name.contains("yolo")
+                || lowercase_name.contains("auto-approve")
+                || lowercase_name.contains("auto approve")
+                || lowercase_name.contains("bypass permission")
+                || lowercase_name.contains("skip permission");
+
+            is_yolo_flag.then_some(YoloConfigOptionKind::YoloBoolean)
+        }
+        acp_v2::SessionConfigKind::Select(_) => {
+            if matches!(
+                normalized_id.as_str(),
+                "approvalpolicy"
+                    | "approvalmode"
+                    | "approvals"
+                    | "approval"
+                    | "askforapproval"
+                    | "commandapproval"
+            ) {
+                return Some(YoloConfigOptionKind::ApprovalPolicy);
+            }
+            if matches!(
+                normalized_id.as_str(),
+                "sandboxmode" | "sandboxpolicy" | "sandbox"
+            ) {
+                return Some(YoloConfigOptionKind::SandboxPolicy);
+            }
+            if option.category == Some(acp_v2::SessionConfigOptionCategory::Mode)
+                || matches!(
+                    normalized_id.as_str(),
+                    "mode"
+                        | "sessionmode"
+                        | "permissionmode"
+                        | "permissions"
+                        | "securitymode"
+                        | "autonomy"
+                        | "autonomymode"
+                        | "executionmode"
+                )
+            {
+                return Some(YoloConfigOptionKind::Mode);
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn rank_yolo_mode_candidate(id: &str, name: &str, kind: YoloConfigOptionKind) -> Option<u8> {
+    let normalized_id = normalize_identifier(id);
+    let lowercase_id = id.to_ascii_lowercase();
+    let lowercase_name = name.to_ascii_lowercase();
+
+    if is_restrictive_mode_label(&normalized_id, &lowercase_name) {
+        return None;
+    }
+
+    match normalized_id.as_str() {
+        "bypasspermissions"
+        | "yolo"
+        | "yolomode"
+        | "dangerfullaccess"
+        | "fullaccess"
+        | "dangerouslyskippermissions"
+        | "skippermissions" => return Some(0),
+        "fullauto" | "unrestricted" | "allowall" | "alwaysallow" | "autoapprove"
+        | "autoapproveall" | "dontask" | "alloweverything" => return Some(1),
+        _ => {}
+    }
+
+    match kind {
+        YoloConfigOptionKind::ApprovalPolicy => {
+            if matches!(
+                normalized_id.as_str(),
+                "never" | "none" | "off" | "disabled" | "bypass" | "auto"
+            ) {
+                return Some(2);
+            }
+        }
+        YoloConfigOptionKind::SandboxPolicy => {
+            if matches!(
+                normalized_id.as_str(),
+                "off" | "disabled" | "none" | "unsandboxed" | "bypass"
+            ) {
+                return Some(2);
+            }
+        }
+        YoloConfigOptionKind::Mode | YoloConfigOptionKind::YoloBoolean => {}
+    }
+
+    let contains_yolo_keyword = |text: &str| {
+        text.contains("yolo")
+            || text.contains("bypass permission")
+            || text.contains("bypasspermissions")
+            || text.contains("bypass_permission")
+            || text.contains("bypass-permission")
+            || text.contains("full access")
+            || text.contains("full-access")
+            || text.contains("full_access")
+            || text.contains("full auto")
+            || text.contains("full-auto")
+            || text.contains("full_auto")
+            || text.contains("auto-approve")
+            || text.contains("auto_approve")
+            || text.contains("auto approve")
+            || text.contains("allow all")
+            || text.contains("always allow")
+            || text.contains("unrestricted")
+            || text.contains("don't ask")
+            || text.contains("dont ask")
+            || text.contains("skip permission")
+            || text.contains("dangerously")
+    };
+
+    if contains_yolo_keyword(&lowercase_id) || contains_yolo_keyword(&lowercase_name) {
+        return Some(3);
+    }
+
+    None
+}
+
+pub(crate) fn select_yolo_v1_mode_id(
+    available_modes: &[acp::SessionMode],
+) -> Option<acp::SessionModeId> {
+    available_modes
+        .iter()
+        .filter_map(|mode| {
+            rank_yolo_mode_candidate(
+                mode.id.0.as_ref(),
+                mode.name.as_str(),
+                YoloConfigOptionKind::Mode,
+            )
+            .map(|rank| (rank, mode.id.clone()))
+        })
+        .min_by_key(|(rank, _)| *rank)
+        .map(|(_, id)| id)
+}
+
+pub(crate) fn select_yolo_config_option_value(
+    option: &acp_v2::SessionConfigOption,
+) -> Option<acp_v2::SessionConfigOptionValue> {
+    let kind = classify_yolo_config_option(option)?;
+    match (&option.kind, kind) {
+        (acp_v2::SessionConfigKind::Boolean(_), YoloConfigOptionKind::YoloBoolean) => {
+            Some(acp_v2::SessionConfigOptionValue::boolean(true))
+        }
+        (acp_v2::SessionConfigKind::Select(select), _) => {
+            let best = match &select.options {
+                acp_v2::SessionConfigSelectOptions::Ungrouped(options) => options
+                    .iter()
+                    .filter_map(|opt| {
+                        rank_yolo_mode_candidate(opt.value.0.as_ref(), opt.name.as_str(), kind)
+                            .map(|rank| (rank, opt.value.clone()))
+                    })
+                    .min_by_key(|(rank, _)| *rank)
+                    .map(|(_, id)| id),
+                acp_v2::SessionConfigSelectOptions::Grouped(groups) => groups
+                    .iter()
+                    .flat_map(|group| group.options.iter())
+                    .filter_map(|opt| {
+                        rank_yolo_mode_candidate(opt.value.0.as_ref(), opt.name.as_str(), kind)
+                            .map(|rank| (rank, opt.value.clone()))
+                    })
+                    .min_by_key(|(rank, _)| *rank)
+                    .map(|(_, id)| id),
+                _ => None,
+            }?;
+            Some(acp_v2::SessionConfigOptionValue::id(best.0.to_string()))
+        }
+        _ => None,
+    }
+}
+
 fn mcp_configurations_for_project(
     project: &Entity<Project>,
     cx: &App,
@@ -1704,5 +1938,119 @@ done
             drop(connection);
             cx.run_until_parked();
         }
+    }
+
+    #[test]
+    fn test_select_yolo_v1_mode_id_across_external_agents() {
+        // Claude Code ACP
+        let claude_modes = vec![
+            acp::SessionMode::new("default", "Default"),
+            acp::SessionMode::new("acceptEdits", "Accept Edits"),
+            acp::SessionMode::new("plan", "Plan"),
+            acp::SessionMode::new("dontAsk", "Don't Ask"),
+            acp::SessionMode::new("bypassPermissions", "Bypass Permissions"),
+        ];
+        assert_eq!(
+            select_yolo_v1_mode_id(&claude_modes),
+            Some(acp::SessionModeId::new("bypassPermissions"))
+        );
+
+        // OpenAI Codex ACP
+        let codex_modes = vec![
+            acp::SessionMode::new("read-only", "Read Only"),
+            acp::SessionMode::new("auto", "Auto"),
+            acp::SessionMode::new("full-access", "Full Access"),
+        ];
+        assert_eq!(
+            select_yolo_v1_mode_id(&codex_modes),
+            Some(acp::SessionModeId::new("full-access"))
+        );
+
+        // Gemini CLI ACP
+        let gemini_modes = vec![
+            acp::SessionMode::new("default", "Default"),
+            acp::SessionMode::new("autoEdit", "Auto Edit"),
+            acp::SessionMode::new("yolo", "YOLO"),
+        ];
+        assert_eq!(
+            select_yolo_v1_mode_id(&gemini_modes),
+            Some(acp::SessionModeId::new("yolo"))
+        );
+
+        // Custom / Antigravity-style agent exposing descriptive auto-approve mode
+        let custom_modes = vec![
+            acp::SessionMode::new("ask", "Ask before running"),
+            acp::SessionMode::new("autonomous", "Auto-approve all actions"),
+        ];
+        assert_eq!(
+            select_yolo_v1_mode_id(&custom_modes),
+            Some(acp::SessionModeId::new("autonomous"))
+        );
+
+        // Restrictive-only agent must not select a non-YOLO mode
+        let restrictive_modes = vec![
+            acp::SessionMode::new("default", "Default"),
+            acp::SessionMode::new("plan", "Plan"),
+            acp::SessionMode::new("read-only", "Read Only"),
+            acp::SessionMode::new("acceptEdits", "Accept Edits"),
+        ];
+        assert_eq!(select_yolo_v1_mode_id(&restrictive_modes), None);
+    }
+
+    #[test]
+    fn test_select_yolo_config_option_value() {
+        let approval_option = acp_v2::SessionConfigOption::select(
+            "approval_policy",
+            "Approval Policy",
+            "on-request",
+            vec![
+                acp_v2::SessionConfigSelectOption::new("untrusted", "Untrusted"),
+                acp_v2::SessionConfigSelectOption::new("on-request", "On Request"),
+                acp_v2::SessionConfigSelectOption::new("never", "Never"),
+            ],
+        );
+        assert_eq!(
+            select_yolo_config_option_value(&approval_option),
+            Some(acp_v2::SessionConfigOptionValue::id("never"))
+        );
+
+        let sandbox_option = acp_v2::SessionConfigOption::select(
+            "sandbox_mode",
+            "Sandbox Mode",
+            "workspace-write",
+            vec![
+                acp_v2::SessionConfigSelectOption::new("read-only", "Read Only"),
+                acp_v2::SessionConfigSelectOption::new("workspace-write", "Workspace Write"),
+                acp_v2::SessionConfigSelectOption::new("danger-full-access", "Full Access"),
+            ],
+        );
+        assert_eq!(
+            select_yolo_config_option_value(&sandbox_option),
+            Some(acp_v2::SessionConfigOptionValue::id("danger-full-access"))
+        );
+
+        let mode_option = acp_v2::SessionConfigOption::select(
+            "mode",
+            "Mode",
+            "default",
+            vec![
+                acp_v2::SessionConfigSelectOption::new("default", "Default"),
+                acp_v2::SessionConfigSelectOption::new("bypassPermissions", "Bypass Permissions"),
+            ],
+        )
+        .category(acp_v2::SessionConfigOptionCategory::Mode);
+        assert_eq!(
+            select_yolo_config_option_value(&mode_option),
+            Some(acp_v2::SessionConfigOptionValue::id("bypassPermissions"))
+        );
+
+        let yolo_bool = acp_v2::SessionConfigOption::boolean("yolo_mode", "YOLO Mode", false);
+        assert_eq!(
+            select_yolo_config_option_value(&yolo_bool),
+            Some(acp_v2::SessionConfigOptionValue::boolean(true))
+        );
+
+        let unrelated_bool = acp_v2::SessionConfigOption::boolean("thinking", "Thinking", false);
+        assert_eq!(select_yolo_config_option_value(&unrelated_bool), None);
     }
 }

@@ -400,6 +400,15 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub auto_generate_thread_titles: Option<bool>,
+    /// Whether to automatically approve all agent tool actions, commands,
+    /// sandbox escalations, and external ACP agent permission requests without
+    /// prompting. When enabled, external ACP agents (such as Claude Code,
+    /// OpenAI Codex, Gemini CLI, Antigravity, and custom ACP servers) are also
+    /// switched to their advertised bypass/full-access/YOLO mode when
+    /// available.
+    ///
+    /// Default: false
+    pub yolo_mode: Option<bool>,
     /// Per-tool permission rules for granular control over which tool actions
     /// require confirmation.
     ///

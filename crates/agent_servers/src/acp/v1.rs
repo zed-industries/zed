@@ -6,8 +6,9 @@ use super::{
     ForegroundWork, ReadOnlyConfigOptions, UnsupportedVersion, apply_subagent_update,
     drain_foreground_queue, enqueue_notification, enqueue_request, first_class_terminal_auth_task,
     handle_elicitation, handle_v2_complete_elicitation, map_acp_error,
-    mcp_configurations_for_project, respond_err, respond_result, runtime, session_thread,
-    terminal_auth_task_id, transport, with_v2_client_ingress, work_dirs_from_session_info,
+    mcp_configurations_for_project, respond_err, respond_result, runtime,
+    select_yolo_config_option_value, select_yolo_v1_mode_id, session_thread, terminal_auth_task_id,
+    transport, with_v2_client_ingress, work_dirs_from_session_info, yolo_mode_enabled,
 };
 use acp_thread::{
     AgentConnection, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
@@ -751,7 +752,52 @@ impl AcpConnection {
         let settings_subscription = cx.update({
             let agent_id = agent_id.clone();
             let defaults = defaults.clone();
-            move |cx| defaults.observe_settings(agent_id, cx)
+            let sessions = sessions.clone();
+            let connection = connection.clone();
+            move |cx| {
+                if cx.try_global::<SettingsStore>().is_none() {
+                    return Subscription::new(|| {});
+                }
+                defaults.refresh_from_settings(&agent_id, cx);
+                let mut was_yolo_mode = yolo_mode_enabled(cx);
+                cx.observe_global::<SettingsStore>(move |cx| {
+                    defaults.refresh_from_settings(&agent_id, cx);
+                    let is_yolo_mode = yolo_mode_enabled(cx);
+                    if is_yolo_mode && !was_yolo_mode {
+                        let active_sessions: Vec<_> = sessions
+                            .borrow()
+                            .iter()
+                            .map(|(session_id, session)| {
+                                (
+                                    session_id.clone(),
+                                    session.session_modes.clone(),
+                                    session.config_options.clone(),
+                                )
+                            })
+                            .collect();
+                        for (session_id, modes, config_options) in active_sessions {
+                            if let Some(modes) = modes {
+                                apply_yolo_mode_to_v1_modes(
+                                    &connection,
+                                    acp::SessionId::new(session_id.0.clone()),
+                                    &modes,
+                                    &mut cx.to_async(),
+                                );
+                            }
+                            if let Some(config_options) = config_options {
+                                apply_yolo_config_options_v1(
+                                    connection.clone(),
+                                    session_id,
+                                    config_options,
+                                    &mut cx.to_async(),
+                                )
+                                .detach();
+                            }
+                        }
+                    }
+                    was_yolo_mode = is_yolo_mode;
+                })
+            }
         });
 
         let auth_status = auth_status.filter(|_| response.agent_capabilities.auth.status.is_some());
@@ -1144,8 +1190,27 @@ impl AcpConnection {
                                     "session was closed or replaced before load completed"
                                 )));
                             };
-                            session.session_modes = modes;
-                            session.config_options = config_options;
+                            session.session_modes = modes.clone();
+                            session.config_options = config_options.clone();
+                        }
+                        if cx.update(|cx| yolo_mode_enabled(cx)) {
+                            if let Some(modes) = modes {
+                                apply_yolo_mode_to_v1_modes(
+                                    &connection,
+                                    acp::SessionId::new(session_id.0.clone()),
+                                    &modes,
+                                    cx,
+                                );
+                            }
+                            if let Some(config_options) = config_options {
+                                apply_yolo_config_options_v1(
+                                    connection.clone(),
+                                    session_id.clone(),
+                                    config_options,
+                                    cx,
+                                )
+                                .detach();
+                            }
                         }
                         if let Some(replay) = replay {
                             replay.borrow_mut().finished = true;
@@ -1198,6 +1263,7 @@ impl AcpConnection {
         let session_id = session_id.clone();
         let config_options = config_options.clone();
         let connection = self.connection.clone();
+        let is_yolo_mode = cx.update(|cx| yolo_mode_enabled(cx));
         cx.spawn(async move |_| {
             let mut attempted_defaults = Vec::new();
             loop {
@@ -1208,6 +1274,25 @@ impl AcpConnection {
                     if attempted_defaults.iter().any(|(config_id, options)| {
                         config_id == &option.config_id && options == &current_options
                     }) {
+                        return None;
+                    }
+                    if is_yolo_mode
+                        && let Some(yolo_value) = select_yolo_config_option_value(option)
+                    {
+                        let already_set = match (&option.kind, &yolo_value) {
+                            (
+                                acp_v2::SessionConfigKind::Select(select),
+                                acp_v2::SessionConfigOptionValue::Id { value },
+                            ) => select.current_value == *value,
+                            (
+                                acp_v2::SessionConfigKind::Boolean(boolean),
+                                acp_v2::SessionConfigOptionValue::Boolean { value },
+                            ) => boolean.current_value == *value,
+                            _ => false,
+                        };
+                        if !already_set {
+                            return Some((option.clone(), Some(yolo_value), None));
+                        }
                         return None;
                     }
                     let value = defaults.config_option(option.config_id.0.as_ref())?;
@@ -1223,46 +1308,55 @@ impl AcpConnection {
                     if already_set {
                         return None;
                     }
-                    Some((option.clone(), value))
+                    Some((option.clone(), None, Some(value)))
                 });
-                let Some((config_option, default_value)) = next_default else {
+                let Some((config_option, yolo_value, default_value)) = next_default else {
                     break;
                 };
                 attempted_defaults.push((config_option.config_id.clone(), current_options));
 
-                let value_to_apply = match &config_option.kind {
-                    acp_v2::SessionConfigKind::Select(select) => default_value
-                        .as_value_id()
-                        .and_then(|value_id| match &select.options {
-                            acp_v2::SessionConfigSelectOptions::Ungrouped(options) => options
-                                .iter()
-                                .any(|opt| &*opt.value.0 == value_id)
-                                .then(|| {
-                                    acp_v2::SessionConfigOptionValue::id(value_id.to_string())
-                                }),
-                            acp_v2::SessionConfigSelectOptions::Grouped(groups) => groups
-                                .iter()
-                                .any(|group| {
-                                    group.options.iter().any(|opt| &*opt.value.0 == value_id)
-                                })
-                                .then(|| {
-                                    acp_v2::SessionConfigOptionValue::id(value_id.to_string())
-                                }),
-                            _ => None,
-                        }),
-                    acp_v2::SessionConfigKind::Boolean(_) => default_value
-                        .as_bool()
-                        .map(acp_v2::SessionConfigOptionValue::boolean),
-                    _ => None,
+                let value_to_apply = if let Some(yolo_value) = yolo_value {
+                    Some(yolo_value)
+                } else if let Some(default_value) = default_value {
+                    let resolved = match &config_option.kind {
+                        acp_v2::SessionConfigKind::Select(select) => default_value
+                            .as_value_id()
+                            .and_then(|value_id| match &select.options {
+                                acp_v2::SessionConfigSelectOptions::Ungrouped(options) => options
+                                    .iter()
+                                    .any(|opt| &*opt.value.0 == value_id)
+                                    .then(|| {
+                                        acp_v2::SessionConfigOptionValue::id(value_id.to_string())
+                                    }),
+                                acp_v2::SessionConfigSelectOptions::Grouped(groups) => groups
+                                    .iter()
+                                    .any(|group| {
+                                        group.options.iter().any(|opt| &*opt.value.0 == value_id)
+                                    })
+                                    .then(|| {
+                                        acp_v2::SessionConfigOptionValue::id(value_id.to_string())
+                                    }),
+                                _ => None,
+                            }),
+                        acp_v2::SessionConfigKind::Boolean(_) => default_value
+                            .as_bool()
+                            .map(acp_v2::SessionConfigOptionValue::boolean),
+                        _ => None,
+                    };
+                    if resolved.is_none() {
+                        log::warn!(
+                            "`{}` is not a valid value for config option `{}` in {}",
+                            default_value,
+                            config_option.config_id.0,
+                            id
+                        );
+                    }
+                    resolved
+                } else {
+                    None
                 };
 
                 let Some(value_to_apply) = value_to_apply else {
-                    log::warn!(
-                        "`{}` is not a valid value for config option `{}` in {}",
-                        default_value,
-                        config_option.config_id.0,
-                        id
-                    );
                     continue;
                 };
                 config_options
@@ -1277,6 +1371,88 @@ impl AcpConnection {
             }
         })
     }
+}
+
+fn apply_yolo_mode_to_v1_modes(
+    connection: &ConnectionTo<Agent>,
+    session_id: acp::SessionId,
+    modes: &Rc<RefCell<acp::SessionModeState>>,
+    cx: &mut AsyncApp,
+) -> bool {
+    let mut modes_ref = modes.borrow_mut();
+    let Some(yolo_mode_id) = select_yolo_v1_mode_id(&modes_ref.available_modes) else {
+        return false;
+    };
+    if modes_ref.current_mode_id == yolo_mode_id {
+        return true;
+    }
+
+    let initial_mode_id = modes_ref.current_mode_id.clone();
+    modes_ref.current_mode_id = yolo_mode_id.clone();
+    drop(modes_ref);
+
+    cx.spawn({
+        let modes = modes.clone();
+        let conn = connection.clone();
+        async move |_| {
+            let result = conn
+                .send_request(acp::SetSessionModeRequest::new(session_id, yolo_mode_id))
+                .block_task()
+                .await
+                .log_err();
+
+            if result.is_none() {
+                modes.borrow_mut().current_mode_id = initial_mode_id;
+            }
+        }
+    })
+    .detach();
+    true
+}
+
+fn apply_yolo_config_options_v1(
+    connection: ConnectionTo<Agent>,
+    session_id: acp_v2::SessionId,
+    config_options: ConfigOptions,
+    cx: &mut AsyncApp,
+) -> Task<()> {
+    cx.spawn(async move |_| {
+        let mut attempted = Vec::new();
+        loop {
+            let current_options = config_options.config_options.borrow().clone();
+            let next = current_options.iter().find_map(|option| {
+                if attempted.iter().any(|(config_id, options)| {
+                    config_id == &option.config_id && options == &current_options
+                }) {
+                    return None;
+                }
+                let yolo_value = select_yolo_config_option_value(option)?;
+                let already_set = match (&option.kind, &yolo_value) {
+                    (
+                        acp_v2::SessionConfigKind::Select(select),
+                        acp_v2::SessionConfigOptionValue::Id { value },
+                    ) => select.current_value == *value,
+                    (
+                        acp_v2::SessionConfigKind::Boolean(boolean),
+                        acp_v2::SessionConfigOptionValue::Boolean { value },
+                    ) => boolean.current_value == *value,
+                    _ => false,
+                };
+                if already_set {
+                    return None;
+                }
+                Some((option.config_id.clone(), yolo_value))
+            });
+            let Some((config_id, value_to_apply)) = next else {
+                break;
+            };
+            attempted.push((config_id.clone(), current_options));
+            config_options
+                .set_config_option(&connection, session_id.clone(), config_id, value_to_apply)
+                .await
+                .log_err();
+        }
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1471,7 +1647,20 @@ impl AgentConnection for AcpConnection {
 
             let (modes, config_options) = config_state(response.modes, response.config_options)?;
 
-            let default_mode = self.defaults.mode();
+            let yolo_mode_applied = if cx.update(|cx| yolo_mode_enabled(cx)) {
+                modes.as_ref().is_some_and(|modes| {
+                    apply_yolo_mode_to_v1_modes(
+                        &self.connection,
+                        response.session_id.clone(),
+                        modes,
+                        cx,
+                    )
+                })
+            } else {
+                false
+            };
+
+            let default_mode = (!yolo_mode_applied).then(|| self.defaults.mode()).flatten();
             if let Some(default_mode) = default_mode {
                 let default_mode = acp::SessionModeId::new(default_mode.0);
                 if let Some(modes) = modes.as_ref() {

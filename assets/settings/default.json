@@ -1247,6 +1247,10 @@
       //   "temperature": 1.0
       // }
     ],
+    // When enabled, automatically approves all commands, tool actions, sandbox
+    // escalations, and external ACP agent permission requests without prompting,
+    // and selects bypass/full-access/YOLO modes on external agents when available.
+    "yolo_mode": false,
     // Permission rules for tool actions.
     //
     // The "default" setting applies when no tool-specific rules match.

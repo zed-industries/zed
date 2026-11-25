@@ -165,6 +165,33 @@ pub const SUBAGENT_SESSION_INFO_META_KEY: &str = "subagent_session_info";
 
 pub const SANDBOX_AUTHORIZATION_META_KEY: &str = "sandbox_authorization";
 
+fn yolo_mode_enabled(cx: &App) -> bool {
+    cx.try_global::<SettingsStore>()
+        .is_some_and(|store| store.get::<AgentSettings>(None).yolo_mode)
+}
+
+fn select_yolo_permission_option(
+    options: &[acp_v2::PermissionOption],
+) -> Option<&acp_v2::PermissionOption> {
+    options
+        .iter()
+        .find(|option| option.kind == acp_v2::PermissionOptionKind::AllowAlways)
+        .or_else(|| {
+            options
+                .iter()
+                .find(|option| option.kind == acp_v2::PermissionOptionKind::AllowOnce)
+        })
+}
+
+fn select_yolo_permission_option_from_options(
+    options: &PermissionOptions,
+) -> Option<acp_v2::PermissionOption> {
+    options
+        .first_option_of_kind(acp_v2::PermissionOptionKind::AllowAlways)
+        .or_else(|| options.first_option_of_kind(acp_v2::PermissionOptionKind::AllowOnce))
+        .cloned()
+}
+
 /// Stable `PermissionOption` ids for the sandbox-escalation approval prompt.
 ///
 /// These are shared across the option construction (in the agent), the outcome
@@ -4148,6 +4175,9 @@ impl AcpThread {
         });
         let idle_sleep_settings_subscription = cx.observe_global::<SettingsStore>(|this, cx| {
             this.update_idle_sleep_prevention(cx);
+            if yolo_mode_enabled(cx) {
+                this.auto_approve_pending_permissions(cx);
+            }
         });
         let idle_sleep_event_subscription =
             cx.subscribe_self(|this, event: &AcpThreadEvent, cx| match event {
@@ -6904,8 +6934,17 @@ impl AcpThread {
             self.upsert_wire_tool_call(subject.tool_call.clone(), cx)?;
         }
 
-        let (respond_tx, receiver) = oneshot::channel();
         let id = PermissionRequestId(Uuid::new_v4());
+        if yolo_mode_enabled(cx)
+            && let Some(option) = select_yolo_permission_option(&request.options)
+        {
+            let outcome = acp_v2::RequestPermissionOutcome::Selected(
+                acp_v2::SelectedPermissionOutcome::new(option.option_id.clone()),
+            );
+            return Ok((id, Task::ready(outcome)));
+        }
+
+        let (respond_tx, receiver) = oneshot::channel();
         self.permission_requests.insert(
             id,
             PermissionRequest {
@@ -7036,6 +7075,36 @@ impl AcpThread {
         kind: AuthorizationKind,
         cx: &mut Context<Self>,
     ) -> Result<(PermissionRequestId, Task<RequestPermissionOutcome>)> {
+        if kind == AuthorizationKind::PermissionGrant
+            && yolo_mode_enabled(cx)
+            && let Some(option) = select_yolo_permission_option_from_options(&options)
+        {
+            if let Some(existing_id) = self
+                .tool_call(&tool_call_id)
+                .and_then(|(_, call)| call.authorization_id())
+            {
+                self.resolve_permission_request(
+                    existing_id,
+                    RequestPermissionOutcome::Cancelled,
+                    cx,
+                );
+            }
+            let (_, call) = self
+                .tool_call_mut(&tool_call_id)
+                .context("tool call disappeared while requesting authorization")?;
+            let current_status = call.permission_status().unwrap_or_default();
+            call.set_local_status(ToolCallStatus::status_after_permission_grant(
+                current_status,
+            ));
+            let id = PermissionRequestId(Uuid::new_v4());
+            return Ok((
+                id,
+                Task::ready(RequestPermissionOutcome::Selected(
+                    SelectedPermissionOutcome::new(option.option_id, option.kind),
+                )),
+            ));
+        }
+
         let (tx, rx) = oneshot::channel();
         if let Some(id) = self
             .tool_call(&tool_call_id)
@@ -7070,6 +7139,49 @@ impl AcpThread {
                 rx.await.unwrap_or(RequestPermissionOutcome::Cancelled)
             }),
         ))
+    }
+
+    fn auto_approve_pending_permissions(&mut self, cx: &mut Context<Self>) {
+        enum PendingAutoApproval {
+            Generic(PermissionRequestId, acp_v2::PermissionOptionId),
+            Legacy(PermissionRequestId, SelectedPermissionOutcome),
+        }
+
+        let approvals: Vec<PendingAutoApproval> = self
+            .permission_requests
+            .iter()
+            .filter_map(|(id, request)| match &request.data {
+                PermissionRequestData::Generic { request, .. } => {
+                    select_yolo_permission_option(&request.options)
+                        .map(|option| PendingAutoApproval::Generic(*id, option.option_id.clone()))
+                }
+                PermissionRequestData::LegacyTool {
+                    options,
+                    kind: AuthorizationKind::PermissionGrant,
+                    ..
+                } => select_yolo_permission_option_from_options(options).map(|option| {
+                    PendingAutoApproval::Legacy(
+                        *id,
+                        SelectedPermissionOutcome::new(option.option_id, option.kind),
+                    )
+                }),
+                PermissionRequestData::LegacyTool {
+                    kind: AuthorizationKind::ActionChoice,
+                    ..
+                } => None,
+            })
+            .collect();
+
+        for approval in approvals {
+            match approval {
+                PendingAutoApproval::Generic(id, option_id) => {
+                    self.select_permission_option(id, option_id, cx);
+                }
+                PendingAutoApproval::Legacy(id, outcome) => {
+                    self.authorize_permission_request(id, outcome, cx);
+                }
+            }
+        }
     }
 
     pub fn cancel_tool_call_authorization(
@@ -26624,5 +26736,150 @@ mod tests {
             .expect("backend should still be running");
         request.await.expect("turn should complete");
         assert_eq!(cx.active_idle_sleep_preventions(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_yolo_mode_auto_approves_v2_and_v1_permissions(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_user_settings(r#"{"agent": {"yolo_mode": true}}"#, cx)
+                    .expect("enable yolo mode");
+            });
+        });
+
+        // ACP v2 request_permission should prefer AllowAlways and never queue a pending request.
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let v2_request = acp_v2::RequestPermissionRequest::new(
+            session_id,
+            "Run command",
+            vec![
+                acp_v2::PermissionOption::new(
+                    "allow-once",
+                    "Allow Once",
+                    acp_v2::PermissionOptionKind::AllowOnce,
+                ),
+                acp_v2::PermissionOption::new(
+                    "allow-always",
+                    "Allow Always",
+                    acp_v2::PermissionOptionKind::AllowAlways,
+                ),
+                acp_v2::PermissionOption::new(
+                    "reject-once",
+                    "Reject",
+                    acp_v2::PermissionOptionKind::RejectOnce,
+                ),
+            ],
+        );
+        let (_request_id, v2_task) = thread
+            .update(cx, |thread, cx| thread.request_permission(v2_request, cx))
+            .expect("v2 permission request");
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.pending_permission_requests().count()),
+            0
+        );
+        assert_eq!(
+            v2_task.await,
+            acp_v2::RequestPermissionOutcome::Selected(acp_v2::SelectedPermissionOutcome::new(
+                "allow-always",
+            ))
+        );
+
+        // ACP v1 request_tool_call_authorization should auto-approve without queueing a prompt.
+        let tool_call_id = acp_v2::ToolCallId::new("yolo-v1-tool");
+        let (_v1_id, v1_task) = thread
+            .update(cx, |thread, cx| {
+                thread.request_tool_call_authorization_with_id(
+                    acp_v1::ToolCallUpdate::new(
+                        acp_v1::ToolCallId::new(tool_call_id.0.clone()),
+                        acp_v1::ToolCallUpdateFields::new().title("Run command"),
+                    ),
+                    PermissionOptions::Flat(vec![
+                        acp_v2::PermissionOption::new(
+                            "allow-once",
+                            "Allow Once",
+                            acp_v2::PermissionOptionKind::AllowOnce,
+                        ),
+                        acp_v2::PermissionOption::new(
+                            "reject-once",
+                            "Reject",
+                            acp_v2::PermissionOptionKind::RejectOnce,
+                        ),
+                    ]),
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+            })
+            .expect("v1 permission request");
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.pending_permission_requests().count()),
+            0
+        );
+        assert!(matches!(
+            v1_task.await,
+            RequestPermissionOutcome::Selected(outcome)
+                if outcome.option_id.0.as_ref() == "allow-once"
+        ));
+    }
+
+    #[gpui::test]
+    async fn test_enabling_yolo_mode_auto_approves_pending_permissions(cx: &mut TestAppContext) {
+        init_test(cx);
+        let thread = new_test_thread(cx).await;
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+
+        let v2_request = acp_v2::RequestPermissionRequest::new(
+            session_id,
+            "Run pending command",
+            vec![
+                acp_v2::PermissionOption::new(
+                    "allow-once",
+                    "Allow Once",
+                    acp_v2::PermissionOptionKind::AllowOnce,
+                ),
+                acp_v2::PermissionOption::new(
+                    "reject-once",
+                    "Reject",
+                    acp_v2::PermissionOptionKind::RejectOnce,
+                ),
+            ],
+        );
+        let (_v2_id, v2_task) = thread
+            .update(cx, |thread, cx| thread.request_permission(v2_request, cx))
+            .expect("pending v2 permission");
+        let (_v1_id, v1_task) =
+            request_test_permission_with_id(&thread, acp_v2::ToolCallId::new("pending-v1"), cx);
+
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.pending_permission_requests().count()),
+            2
+        );
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_user_settings(r#"{"agent": {"yolo_mode": true}}"#, cx)
+                    .expect("enable yolo mode");
+            });
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            thread.read_with(cx, |thread, _| thread.pending_permission_requests().count()),
+            0
+        );
+        assert_eq!(
+            v2_task.await,
+            acp_v2::RequestPermissionOutcome::Selected(acp_v2::SelectedPermissionOutcome::new(
+                "allow-once",
+            ))
+        );
+        assert!(matches!(
+            v1_task.await,
+            RequestPermissionOutcome::Selected(_)
+        ));
     }
 }
