@@ -41,12 +41,13 @@
 
 use client::ProjectId;
 use collections::{HashMap, HashSet};
+use fs::Fs;
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Global, Task, WeakEntity};
 use remote::RemoteConnectionIdentity;
 use rpc::{AnyProtoClient, proto};
 use settings::{Settings as _, WorktreeId};
 use std::{
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf, Prefix},
     sync::Arc,
 };
 use util::debug_panic;
@@ -58,6 +59,46 @@ pub fn init(db_trusted_paths: DbTrustedPaths, cx: &mut App) {
         let trusted_worktrees = cx.new(|_| TrustedWorktreesStore::new(db_trusted_paths));
         cx.set_global(TrustedWorktrees(trusted_worktrees))
     }
+}
+
+/// Returns the on-disk spelling of `path` when it differs from `path` only by ASCII case.
+///
+/// Paths through a symlink or junction are skipped, as resolving those may land in another
+/// directory whose name differs only by case. Components are checked from the root, so nothing
+/// under a link is looked up. Only local drive paths are resolved, `C:\` and `\\?\C:\` alike:
+/// paths with a component that cannot be checked are skipped, as are UNC paths (network shares,
+/// `\\wsl.localhost`).
+async fn on_disk_spelling(fs: &dyn Fs, path: &Path) -> Option<PathBuf> {
+    let Some(Component::Prefix(prefix)) = path.components().next() else {
+        return None;
+    };
+    // Local drives, including in the extended-length `\\?\C:\` form, which paths keep e.g. when
+    // longer than `MAX_PATH`.
+    if !matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_)) {
+        return None;
+    }
+    for ancestor in path.ancestors().collect::<Vec<_>>().into_iter().rev() {
+        if fs.is_symlink(ancestor).await.unwrap_or(true) {
+            return None;
+        }
+    }
+    // Resolved with the `Fs::canonicalize` worktree paths are opened with, which keeps mapped
+    // drive letters. Unlike worktree roots, the result is not simplified: it keeps the drive
+    // prefix form of `path`, so that a short `\\?\C:\` parent of a longer root keeps matching it.
+    let canonical = fs.canonicalize(path).await.ok()?;
+    (canonical != path && canonical.as_os_str().eq_ignore_ascii_case(path.as_os_str()))
+        .then_some(canonical)
+}
+
+fn starts_with_ignoring_ascii_case(path: &Path, prefix: &Path) -> bool {
+    let mut components = path.components();
+    prefix.components().all(|prefix_component| {
+        components.next().is_some_and(|component| {
+            component
+                .as_os_str()
+                .eq_ignore_ascii_case(prefix_component.as_os_str())
+        })
+    })
 }
 
 /// An initialization call to set up trust global for a particular project (remote or local).
@@ -136,6 +177,8 @@ pub struct TrustedWorktreesStore {
     trusted_paths: TrustedPaths,
     restricted: HashMap<WeakEntity<WorktreeStore>, HashSet<WorktreeId>>,
     worktree_trust_serialization: Task<()>,
+    #[cfg(feature = "test-support")]
+    casing_resolution_hold: Option<futures::channel::oneshot::Receiver<()>>,
 }
 
 #[derive(Debug, Default)]
@@ -204,7 +247,19 @@ impl TrustedWorktreesStore {
             worktree_stores: HashMap::default(),
             restricted: HashMap::default(),
             worktree_trust_serialization: Task::ready(()),
+            #[cfg(feature = "test-support")]
+            casing_resolution_hold: None,
         }
+    }
+
+    /// Holds the next casing resolution until the returned sender is used or dropped,
+    /// so that tests can let everything else run first.
+    /// Only a resolution with persisted paths to resolve takes the hold.
+    #[cfg(feature = "test-support")]
+    pub fn hold_next_casing_resolution(&mut self) -> futures::channel::oneshot::Sender<()> {
+        let (release, hold) = futures::channel::oneshot::channel();
+        self.casing_resolution_hold = Some(hold);
+        release
     }
 
     /// Whether a particular worktree store has associated worktrees that are restricted, or an associated host is restricted.
@@ -407,6 +462,88 @@ impl TrustedWorktreesStore {
             worktree_store,
             restricted,
         ));
+    }
+
+    /// Worktrees open with their canonical, on-disk path spelling, but a persisted trusted path keeps
+    /// the casing it was stored with, so it stops matching once those differ (#66915).
+    ///
+    /// To be awaited before a local worktree at `worktree_abs_path` joins `worktree_store`:
+    /// finds the persisted local trusted paths that match the worktree path only when ignoring
+    /// ASCII case, and trusts their on-disk spelling in that store.
+    /// The file system decides whether those name the same directory; nothing restricted is lifted.
+    pub(crate) fn resolve_trusted_path_casing(
+        &mut self,
+        worktree_store: &Entity<WorktreeStore>,
+        worktree_abs_path: &Path,
+        fs: Arc<dyn Fs>,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        let worktree_store = worktree_store.downgrade();
+        let is_local_store = self
+            .worktree_stores
+            .get(&worktree_store)
+            .is_some_and(|store_data| store_data.host.is_none());
+        let store_has_grant = self
+            .trusted_paths
+            .get(&worktree_store)
+            .into_iter()
+            .flatten()
+            .any(|trusted_path| match trusted_path {
+                PathTrust::AbsPath(path) => worktree_abs_path.starts_with(path),
+                PathTrust::Worktree(_) => false,
+            });
+        if !cfg!(windows)
+            || !is_local_store
+            || store_has_grant
+            || ProjectSettings::get_global(cx).session.trust_all_worktrees
+        {
+            return Task::ready(());
+        }
+        let mismatched_paths = self
+            .db_trusted_paths
+            .get(&None)
+            .into_iter()
+            .flatten()
+            .filter(|path| {
+                !worktree_abs_path.starts_with(path)
+                    && starts_with_ignoring_ascii_case(worktree_abs_path, path)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if mismatched_paths.is_empty() {
+            return Task::ready(());
+        }
+
+        #[cfg(feature = "test-support")]
+        let hold = self.casing_resolution_hold.take();
+        cx.spawn(async move |this, cx| {
+            #[cfg(feature = "test-support")]
+            if let Some(hold) = hold {
+                hold.await.ok();
+            }
+            let mut respelled_paths = Vec::new();
+            for path in mismatched_paths {
+                if let Some(respelled) = on_disk_spelling(fs.as_ref(), &path).await {
+                    respelled_paths.push((respelled, path));
+                }
+            }
+            this.update(cx, |this, _| {
+                let Some(local_paths) = this.db_trusted_paths.get_mut(&None) else {
+                    return;
+                };
+                for (respelled, path) in respelled_paths {
+                    // Skip the paths whose trust got cleared meanwhile.
+                    if local_paths.contains(&path) {
+                        local_paths.insert(respelled.clone());
+                        this.trusted_paths
+                            .entry(worktree_store.clone())
+                            .or_default()
+                            .insert(PathTrust::AbsPath(respelled));
+                    }
+                }
+            })
+            .ok();
+        })
     }
 
     /// Erases all trust information.
