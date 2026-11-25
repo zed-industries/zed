@@ -121,7 +121,7 @@ waker-fn = "1.2.0"
 lyon_path = "1.0.19"
 pin-project = "1.1.10"
 spin.workspace = true
-tiny-skia-path = "0.11"
+tiny-skia-path = "0.12"
 url.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 web-time = { workspace = true, optional = true }
