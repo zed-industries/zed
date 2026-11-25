@@ -5,7 +5,6 @@ name = "zed"
 version = "1.31.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
-authors = ["Zed Team <hi@zed.dev>"]
 default-run = "zed"
 
 [lints]

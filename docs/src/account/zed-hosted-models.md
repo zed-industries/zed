@@ -1,6 +1,6 @@
 ---
 title: Zed-Hosted Models - Zed
-description: AI models available via Zed Pro including Claude Fable 5.2, Claude Opus 5.5, GPT-6.1 Sol, and Gemini 4 Argon. Pricing, context windows, and tool call support.
+description: AI models available via Zed Pro including Claude Fable 5.2, Claude Opus 5.5, GPT-6.2 Astra and Sol, and Gemini 4 Carbon, Neon, and Hydrogen. Pricing, context windows, and tool call support.
 ---
 
 # Zed-Hosted Models
@@ -71,10 +71,18 @@ Zed's plans offer hosted versions of major LLMs with higher rate limits than dir
 |                   | Anthropic | Output              | $5.00                        | $5.50                   |
 |                   | Anthropic | Input - Cache Write | $1.25                        | $1.375                  |
 |                   | Anthropic | Input - Cache Read  | $0.10                        | $0.11                   |
+| GPT-6.2 Astra     | OpenAI    | Input               | $8.00                        | $8.80                   |
+|                   | OpenAI    | Output              | $40.00                       | $44.00                  |
+|                   | OpenAI    | Input - Cache Write | $10.00                       | $11.00                  |
+|                   | OpenAI    | Cached Input        | $0.40                        | $0.44                   |
 | GPT-6 Astra       | OpenAI    | Input               | $10.00                       | $11.00                  |
 |                   | OpenAI    | Output              | $50.00                       | $55.00                  |
 |                   | OpenAI    | Input - Cache Write | $12.50                       | $13.75                  |
 |                   | OpenAI    | Cached Input        | $1.00                        | $1.10                   |
+| GPT-6.2 Sol       | OpenAI    | Input               | $2.00                        | $2.20                   |
+|                   | OpenAI    | Output              | $10.00                       | $11.00                  |
+|                   | OpenAI    | Input - Cache Write | $2.50                        | $2.75                   |
+|                   | OpenAI    | Cached Input        | $0.10                        | $0.11                   |
 | GPT-6.1 Sol       | OpenAI    | Input               | $2.00                        | $2.20                   |
 |                   | OpenAI    | Output              | $10.00                       | $11.00                  |
 |                   | OpenAI    | Input - Cache Write | $2.50                        | $2.75                   |
@@ -121,6 +129,15 @@ Zed's plans offer hosted versions of major LLMs with higher rate limits than dir
 | GPT-5 nano        | OpenAI    | Input               | $0.05                        | $0.055                  |
 |                   | OpenAI    | Output              | $0.40                        | $0.44                   |
 |                   | OpenAI    | Cached Input        | $0.005                       | $0.0055                 |
+| Gemini 4 Carbon   | Google    | Input               | $4.00                        | $4.40                   |
+|                   | Google    | Output              | $20.00                       | $22.00                  |
+|                   | Google    | Cached Input        | $0.20                        | $0.22                   |
+| Gemini 4 Neon     | Google    | Input               | $3.00                        | $3.30                   |
+|                   | Google    | Output              | $15.00                       | $16.50                  |
+|                   | Google    | Cached Input        | $0.15                        | $0.165                  |
+| Gemini 4 Hydrogen | Google    | Input               | $1.50                        | $1.65                   |
+|                   | Google    | Output              | $7.50                        | $8.25                   |
+|                   | Google    | Cached Input        | $0.075                       | $0.0825                 |
 | Gemini 4 Argon    | Google    | Input               | $2.00                        | $2.20                   |
 |                   | Google    | Output              | $10.00                       | $11.00                  |
 |                   | Google    | Cached Input        | $0.10                        | $0.11                   |
@@ -155,7 +172,9 @@ Any usage of a Zed-hosted model will be billed at the Zed Price (rightmost colum
 
 For Claude Fable 5.2, the cache-write rate above is for the 5-minute cache. The 1-hour cache costs $16.00 per 1M tokens from Anthropic, or $17.60 through Zed. Fast mode doubles all Fable 5.2 token rates, including cache writes and reads.
 
-Gemini 4 Argon bills implicit cache hits at the cached-input rate above. Gemini 3 models do not use Google context caching and are billed only as input and output tokens, which preserves zero-data-retention behavior for those requests. For background, see Google's Vertex AI documentation on [context caching](https://cloud.google.com/vertex-ai/generative-ai/docs/context-cache/context-cache-overview) and [zero data retention](https://cloud.google.com/vertex-ai/generative-ai/docs/vertex-ai-zero-data-retention).
+Fast mode for GPT-6.2 Astra and Sol is available on Zed Pro and Zed Business. It doubles all token rates, including cache writes and reads.
+
+Zed bills implicit cache hits for Gemini 4 at the cached-input rates above. Gemini 3 models do not use Google context caching and are billed only as input and output tokens, which preserves zero-data-retention behavior for those requests. For background, see Google's Vertex AI documentation on [context caching](https://cloud.google.com/vertex-ai/generative-ai/docs/context-cache/context-cache-overview) and [zero data retention](https://cloud.google.com/vertex-ai/generative-ai/docs/vertex-ai-zero-data-retention).
 
 > LLMs can enter unproductive loops that require user intervention. Monitor longer-running tasks and interrupt if needed.
 
@@ -180,7 +199,9 @@ A context window is the maximum span of text and code an LLM can consider at onc
 | Claude Sonnet 4.6 | Anthropic | 1M                        |
 | Claude Haiku 5.5  | Anthropic | 100k                      |
 | Claude Haiku 4.5  | Anthropic | 200k                      |
+| GPT-6.2 Astra     | OpenAI    | 272k input / 400k total   |
 | GPT-6 Astra       | OpenAI    | 272k input / 400k total   |
+| GPT-6.2 Sol       | OpenAI    | 272k input / 400k total   |
 | GPT-6.1 Sol       | OpenAI    | 272k input / 400k total   |
 | GPT-6 Sol         | OpenAI    | 272k input / 400k total   |
 | GPT-6 Luna        | OpenAI    | 272k input / 400k total   |
@@ -195,11 +216,16 @@ A context window is the maximum span of text and code an LLM can consider at onc
 | GPT-5.2           | OpenAI    | 272k input / 400k total   |
 | GPT-5 mini        | OpenAI    | 272k input / 400k total   |
 | GPT-5 nano        | OpenAI    | 272k input / 400k total   |
+| Gemini 4 Carbon   | Google    | 1M                        |
+| Gemini 4 Neon     | Google    | 1M                        |
+| Gemini 4 Hydrogen | Google    | 1M                        |
 | Gemini 4 Argon    | Google    | 1M                        |
 | Gemini 3.1 Pro    | Google    | 200k                      |
 | Gemini 3.8 Flash  | Google    | 1M                        |
 | Gemini 3.5 Flash  | Google    | 1M                        |
 | Gemini 3 Flash    | Google    | 1M                        |
+
+> Zed limits Gemini 4 output to 65,536 tokens per response, including thinking tokens.
 
 > Zed currently limits hosted Gemini 3.1 Pro requests to 200k tokens because pricing changes above that context size.
 
