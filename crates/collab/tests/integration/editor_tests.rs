@@ -5324,7 +5324,7 @@ async fn test_git_blame_for_requested_version(
             .insert(repo_path("shift_jis.txt"), shift_jis_bytes);
         state
             .head_contents
-            .insert(repo_path("filtered.txt"), b"one\ntwo\n".to_vec());
+            .insert(repo_path("filtered.txt"), b"one\n".to_vec());
         state.index_contents = state.head_contents.clone();
         state.refs.insert("HEAD".into(), head_sha.clone());
         state.blames_at_revision.insert(

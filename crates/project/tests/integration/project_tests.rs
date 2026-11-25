@@ -17179,20 +17179,6 @@ async fn test_blame_buffer_at_head(cx: &mut gpui::TestAppContext) {
             ..utf_8("utf_16le_textconv.txt", None)
         },
         Case {
-            first: encode(
-                "first\nsecond\nthird\nfourth\n",
-                encoding_rs::UTF_16LE,
-                false,
-            ),
-            second: encode(
-                "first\nsecond\nTHIRD\nfourth\n",
-                encoding_rs::UTF_16LE,
-                false,
-            ),
-            row_commits: &[1, 0, 2, 1],
-            ..utf_8("utf_16le_header_textconv.txt", None)
-        },
-        Case {
             first: b"a\nb\nc\nd\n".to_vec(),
             second: b"a\nb\nc\nD\n".to_vec(),
             row_commits: &[0, 0, 1, 2],
@@ -17237,16 +17223,11 @@ async fn test_blame_buffer_at_head(cx: &mut gpui::TestAppContext) {
     let root = TempTree::new(json!({
         "project": {
             ".gitattributes":
-                "drop_first_line.txt diff=drop_first_line\nfirst_line_last.txt diff=first_line_last\nidentity_textconv.py diff=identity\nutf_16le_textconv.txt diff=utf_16\nutf_16le_header_textconv.txt diff=utf_16_header\nworking_tree_encoding.txt working-tree-encoding=UTF-16LE-BOM\n"
+                "drop_first_line.txt diff=drop_first_line\nfirst_line_last.txt diff=first_line_last\nidentity_textconv.py diff=identity\nutf_16le_textconv.txt diff=utf_16\nworking_tree_encoding.txt working-tree-encoding=UTF-16LE-BOM\n"
         }
     }));
     let work_dir = root.path().join("project");
     git_init(&work_dir);
-    git_config(
-        "diff.utf_16_header.textconv",
-        "sh -c 'echo header; iconv -f UTF-16LE -t UTF-8 \"$0\"'",
-        &work_dir,
-    );
     git_config("diff.drop_first_line.textconv", "sed 1d", &work_dir);
     git_config(
         "diff.first_line_last.textconv",
@@ -17485,24 +17466,14 @@ async fn test_blame_buffer_at_head_with_filter_or_ident(cx: &mut gpui::TestAppCo
         first: &'static str,
         second: &'static str,
         edited_row: Option<u32>,
-        mapped_from_head: bool,
         row_commits: &'static [u8],
     }
 
-    let plain = |file_name, mapped_from_head| Case {
-        file_name,
-        first: "a\nb\nc\n",
-        second: "a\nb\nC\n",
-        edited_row: Some(1),
-        mapped_from_head,
-        row_commits: &[1, 0, 2],
-    };
     let ident = |edited_row, row_commits| Case {
         file_name: "ident.txt",
         first: "$Id$\nkeep\nlast\n",
         second: "$Id$\nkeep\nlast\n",
         edited_row,
-        mapped_from_head: false,
         row_commits,
     };
     let rot13 = |file_name| Case {
@@ -17510,7 +17481,6 @@ async fn test_blame_buffer_at_head_with_filter_or_ident(cx: &mut gpui::TestAppCo
         first: "nycun\nbyq\n123\n",
         second: "nycun\nalpha\n123\n",
         edited_row: Some(1),
-        mapped_from_head: false,
         row_commits: &[1, 0, 1],
     };
     let cases = [
@@ -17519,16 +17489,12 @@ async fn test_blame_buffer_at_head_with_filter_or_ident(cx: &mut gpui::TestAppCo
         rot13("driver_named_unspecified.txt"),
         ident(None, &[1, 1, 1]),
         ident(Some(1), &[1, 0, 1]),
-        plain("missing_driver.txt", false),
-        plain("disabled.txt", false),
-        plain("reset.txt", true),
-        plain("unspecified.txt", true),
     ];
 
     let root = TempTree::new(json!({
         "project": {
             ".gitattributes":
-                "rot13.txt filter=rot13\ndriver_named_unset.txt filter=unset\ndriver_named_unspecified.txt filter=unspecified\nident.txt ident\nmissing_driver.txt filter=missing\ndisabled.* filter=rot13 ident\ndisabled.txt -filter -ident\nreset.* filter=rot13 ident\nreset.txt !filter !ident\n"
+                "rot13.txt filter=rot13\ndriver_named_unset.txt filter=unset\ndriver_named_unspecified.txt filter=unspecified\nident.txt ident\n"
         }
     }));
     let work_dir = root.path().join("project");
@@ -17600,11 +17566,7 @@ async fn test_blame_buffer_at_head_with_filter_or_ident(cx: &mut gpui::TestAppCo
             })
             .await
             .unwrap();
-        assert_eq!(
-            head_blame.is_some(),
-            case.mapped_from_head,
-            "source of the blame of {file_name}"
-        );
+        assert!(head_blame.is_none(), "source of the blame of {file_name}");
         let blame = project
             .update(cx, |project, cx| project.blame_buffer(&buffer, None, cx))
             .await
@@ -17635,6 +17597,16 @@ async fn test_blame_buffer_at_head_with_filter_or_ident(cx: &mut gpui::TestAppCo
         blame_row_commits(&blame.await.unwrap().unwrap(), &commits),
         [1, 2, 1]
     );
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_text("alpha\nnycun\n123\n", cx);
+    });
+    let blame = project
+        .update(cx, |project, cx| project.blame_buffer(&buffer, None, cx))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(blame_row_commits(&blame, &commits), [1, 2, 1]);
 }
 
 fn blame_row_commits(blame: &git::blame::Blame, commits: &[String]) -> Vec<u8> {

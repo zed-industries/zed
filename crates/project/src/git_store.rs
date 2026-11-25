@@ -11693,14 +11693,9 @@ fn blame_at_head(
         else {
             return Ok(None);
         };
-        let (has_filter_or_ident, head_content) = futures::join!(
-            backend.has_filter_or_ident_attribute(repo_path.clone()),
-            backend.load_textconv_revision(format!("{revision}:{}", repo_path.as_unix_str())),
-        );
-        if has_filter_or_ident.unwrap_or(true) {
-            return Ok(None);
-        }
-        let Some(mut head) = head_content
+        let Some(mut head) = backend
+            .load_textconv_revision(format!("{revision}:{}", repo_path.as_unix_str()))
+            .await
             .ok()
             .and_then(|content| decode_text(content).ok())
         else {
@@ -11712,6 +11707,16 @@ fn blame_at_head(
             return Ok(None);
         }
         text::LineEnding::normalize(&mut head.text);
+        let buffer_text = content.to_string();
+        if head.text != buffer_text
+            && backend
+                .has_filter_or_ident_attribute(repo_path.clone())
+                .await
+                .log_err()
+                .unwrap_or(true)
+        {
+            return Ok(None);
+        }
 
         let Blame {
             entries,
@@ -11721,7 +11726,7 @@ fn blame_at_head(
             .blame_at_revision(repo_path.clone(), revision)
             .await
             .with_context(|| format!("Failed to blame {:?}", repo_path.as_ref()))?;
-        let entries = map_head_blame_through_diff(&entries, &head.text, &content.to_string());
+        let entries = map_head_blame_through_diff(&entries, &head.text, &buffer_text);
         Ok(entries.map(|entries| Blame {
             entries,
             messages,
