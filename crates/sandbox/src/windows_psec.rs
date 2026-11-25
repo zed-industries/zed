@@ -31,10 +31,9 @@ use windows::Win32::System::Environment::{
     FreeEnvironmentStringsW, GetCommandLineW, GetEnvironmentStringsW,
 };
 use windows::Win32::System::JobObjects::{
-    JOB_OBJECT_LIMIT_BREAKAWAY_OK, JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
-    JOB_OBJECT_UILIMIT_READCLIPBOARD, JOB_OBJECT_UILIMIT_WRITECLIPBOARD,
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-    QueryInformationJobObject,
+    JOB_OBJECT_LIMIT_BREAKAWAY_OK, JOB_OBJECT_UILIMIT_READCLIPBOARD,
+    JOB_OBJECT_UILIMIT_WRITECLIPBOARD, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JobObjectExtendedLimitInformation, QueryInformationJobObject,
 };
 use windows::Win32::System::LibraryLoader::{
     GetProcAddress, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW,
@@ -269,7 +268,21 @@ pub(crate) fn wrap_invocation(
     Ok((launcher, launcher_args))
 }
 
+/// The launcher an embedding application named with [`set_launcher_path`].
+static LAUNCHER_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+/// Use `path` as the launcher instead of the Zed CLI, for an application that
+/// embeds this crate and ships its own console program. That program must call
+/// [`run_launcher_if_invoked`] first thing in `main`. Only the first call has
+/// any effect.
+pub fn set_launcher_path(path: PathBuf) {
+    LAUNCHER_PATH.get_or_init(|| path);
+}
+
 fn launcher_path() -> Result<PathBuf> {
+    if let Some(launcher) = LAUNCHER_PATH.get() {
+        return Ok(dunce::simplified(launcher).to_path_buf());
+    }
     // The launcher has to itself be a console-subsystem program, so it's implemented
     // in the CLI executable.
     let launcher = util::get_zed_cli_path()
@@ -546,13 +559,6 @@ fn current_job_limits() -> Option<u32> {
     }
     .ok()?;
     Some(limits.BasicLimitInformation.LimitFlags.0)
-}
-
-/// Whether the launcher can start a packaged (MSIX) app as the sandboxed command.
-pub fn can_launch_packaged_apps() -> bool {
-    current_job_limits().is_none_or(|flags| {
-        flags & (JOB_OBJECT_LIMIT_BREAKAWAY_OK.0 | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK.0) != 0
-    })
 }
 
 fn fixed_drive_roots() -> Vec<PathBuf> {

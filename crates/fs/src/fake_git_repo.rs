@@ -715,7 +715,15 @@ impl GitRepository for FakeGitRepository {
             // compute snapshot expects these to be sorted by ref_name
             // because that's what git itself does
             branches.sort_by(|a, b| a.ref_name.cmp(&b.ref_name));
-            Ok(branches.into())
+            Ok(git::repository::BranchesScanResult {
+                branches,
+                error: None,
+                remote_default_branch: state
+                    .default_branch_ref
+                    .as_deref()
+                    .and_then(|branch| branch.strip_prefix("refs/remotes/"))
+                    .map(SharedString::from),
+            })
         })
     }
 

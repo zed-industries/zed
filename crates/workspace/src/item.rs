@@ -607,6 +607,17 @@ impl dyn ItemHandle {
         self.act_as_type(TypeId::of::<V>(), cx)
             .and_then(|t| t.downcast().ok())
     }
+
+    /// Returns the project path of the single file this item stands for.
+    ///
+    /// Returns `None` for items like multibuffers, whose project path is just
+    /// the file under the cursor.
+    pub fn single_file_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        let is_single_file = self.buffer_kind(cx) == ItemBufferKind::Singleton
+            || self.downcast::<InvalidItemView>().is_some();
+
+        is_single_file.then(|| self.project_path(cx)).flatten()
+    }
 }
 
 impl<T: Item> ItemHandle for Entity<T> {

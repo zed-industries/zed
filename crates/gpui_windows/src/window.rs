@@ -260,9 +260,7 @@ impl WindowsWindowInner {
     /// has no notification for a window fully covered by other windows, so
     /// that case reports `Visible`.
     pub(crate) fn visibility(&self) -> WindowVisibility {
-        let is_visible =
-            unsafe { IsWindowVisible(self.hwnd).as_bool() && !IsIconic(self.hwnd).as_bool() };
-        if is_visible {
+        if is_window_presentable(self.hwnd) {
             WindowVisibility::Visible
         } else {
             WindowVisibility::Hidden
@@ -1683,6 +1681,26 @@ fn set_non_rude_hwnd(hwnd: HWND, non_rude: bool) {
     } else {
         unsafe { RemovePropW(hwnd, w!("NonRudeHWND")) }.log_err();
     }
+}
+
+/// Whether the window's contents can reach the screen: it's shown, not
+/// minimized, and not cloaked by DWM, which hides windows on other virtual
+/// desktops without changing their visible state.
+pub(crate) fn is_window_presentable(hwnd: HWND) -> bool {
+    unsafe { IsWindowVisible(hwnd).as_bool() && !IsIconic(hwnd).as_bool() && !is_cloaked(hwnd) }
+}
+
+fn is_cloaked(hwnd: HWND) -> bool {
+    let mut cloaked = 0u32;
+    unsafe {
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_CLOAKED,
+            (&raw mut cloaked).cast(),
+            std::mem::size_of::<u32>() as u32,
+        )
+    }
+    .is_ok_and(|()| cloaked != 0)
 }
 
 #[cfg(test)]
