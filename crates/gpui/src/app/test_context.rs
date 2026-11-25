@@ -1,12 +1,13 @@
 use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, AvailableSpace,
-    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DisplayId, DrawPhase,
-    Drawable, Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent,
-    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Platform, PlatformTextSystem, Point, Render, Result, SharedString, Size,
-    SystemNotification, SystemNotificationResponse, Task, TestDispatcher, TestPlatform,
-    TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
-    WindowHandle, WindowOptions, WindowVisibility, app::GpuiMode, window::ElementArenaScope,
+    BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, Decorations, DisplayId,
+    DrawPhase, Drawable, Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global,
+    InputEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, Platform, PlatformTextSystem, Point, Render, Result,
+    SharedString, Size, SystemNotification, SystemNotificationResponse, Task, TestDispatcher,
+    TestPlatform, TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window,
+    WindowBounds, WindowHandle, WindowOptions, WindowVisibility, app::GpuiMode,
+    window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -14,6 +15,19 @@ use futures::{Stream, StreamExt, channel::oneshot};
 use std::{
     cell::RefCell, future::Future, ops::Deref, path::PathBuf, rc::Rc, sync::Arc, time::Duration,
 };
+
+pub(crate) fn test_window(app: &AppCell, window: AnyWindowHandle) -> TestWindow {
+    app.borrow_mut()
+        .windows
+        .get_mut(window.id)
+        .expect("window not found")
+        .as_deref_mut()
+        .expect("window is being updated")
+        .platform_window
+        .as_test()
+        .expect("window is not a TestWindow")
+        .clone()
+}
 
 /// A TestAppContext is provided to tests created with `#[gpui::test]`, it provides
 /// an implementation of `Context` with additional methods that are useful in tests.
@@ -477,6 +491,16 @@ impl TestAppContext {
             .simulate_visibility_change(visibility);
     }
 
+    /// Simulates the platform changing how the window is decorated.
+    pub fn simulate_window_decorations_change(
+        &self,
+        window_handle: AnyWindowHandle,
+        decorations: Decorations,
+    ) {
+        self.test_window(window_handle)
+            .simulate_decorations_change(decorations);
+    }
+
     /// Simulates connecting a display.
     pub fn simulate_display_added(
         &self,
@@ -659,17 +683,7 @@ impl TestAppContext {
 
     /// Returns the `TestWindow` backing the given handle.
     pub(crate) fn test_window(&self, window: AnyWindowHandle) -> TestWindow {
-        self.app
-            .borrow_mut()
-            .windows
-            .get_mut(window.id)
-            .unwrap()
-            .as_deref_mut()
-            .unwrap()
-            .platform_window
-            .as_test()
-            .unwrap()
-            .clone()
+        test_window(&self.app, window)
     }
 
     /// Returns a stream of notifications whenever the Entity is updated.
@@ -1413,7 +1427,7 @@ mod tests {
             }]
         );
 
-        cx.update(|cx| cx.dismiss_system_notification("thread-1"));
+        cx.update(|cx| cx.dismiss_system_notification("thread-1").detach());
         assert!(cx.delivered_system_notifications().is_empty());
         assert_eq!(cx.dismissed_system_notifications(), ["thread-1"]);
     }
@@ -1488,7 +1502,7 @@ mod tests {
                 actions: Vec::new(),
             });
             cx.on_system_notification_response(|response, cx| {
-                cx.dismiss_system_notification(&response.tag);
+                cx.dismiss_system_notification(&response.tag).detach();
             });
         });
 

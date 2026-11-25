@@ -551,7 +551,6 @@ pub struct WaylandWindowStatePtr {
     callbacks: Rc<RefCell<Callbacks>>,
     frame_loop: Rc<Cell<FrameLoop>>,
     frame_ping: Ping,
-    scheduled_frame_at: Rc<Cell<Option<Instant>>>,
 }
 
 impl WaylandWindowState {
@@ -887,7 +886,6 @@ impl WaylandWindow {
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
             frame_loop: Rc::new(Cell::new(FrameLoop::Unconfigured)),
             frame_ping,
-            scheduled_frame_at: Rc::new(Cell::new(None)),
         });
 
         // Kick things off
@@ -1027,8 +1025,12 @@ impl WaylandWindowStatePtr {
 
     pub fn scheduled_frame_fired(&self) {
         if self.frame_loop.get() == FrameLoop::Scheduled {
+            // Stamped when the frame turn starts rather than when it was
+            // scheduled, as display-driven signals are on other platforms:
+            // input dispatched before then isn't the frame's work. The wait
+            // from the first invalidation is journaled as the pending frame.
             self.frame(
-                self.scheduled_frame_at.take(),
+                PlatformFrameSignal::capture(Instant::now),
                 FrameRequestSource::LocalSchedule,
             );
         }
@@ -1051,8 +1053,6 @@ impl WaylandWindowStatePtr {
         match self.frame_loop.get() {
             FrameLoop::Parked => {
                 self.frame_loop.set(FrameLoop::Scheduled);
-                self.scheduled_frame_at
-                    .set(PlatformFrameSignal::capture(Instant::now));
                 self.frame_ping.ping();
             }
             FrameLoop::Ticking => {
@@ -1114,6 +1114,8 @@ impl WaylandWindowStatePtr {
 
                 if let Some(mut configure) = state.in_progress_configure.take() {
                     let got_unmaximized = state.maximized && !configure.maximized;
+                    let fullscreen_changed = state.fullscreen != configure.fullscreen;
+                    let mode_changed = fullscreen_changed || state.maximized != configure.maximized;
                     state.fullscreen = configure.fullscreen;
                     state.maximized = configure.maximized;
                     state.tiling = configure.tiling;
@@ -1141,15 +1143,27 @@ impl WaylandWindowStatePtr {
                             }
                         }
                     }
+                    let resized = configure.size.is_some_and(|size| size != state.bounds.size);
                     drop(state);
                     if visibility_changed {
                         self.report_visibility(configure.visibility);
                     }
+                    if !throttled && let Some(size) = configure.size {
+                        self.resize(size);
+                    }
+                    if fullscreen_changed {
+                        self.notify_resize();
+                    }
                     if throttled {
                         return;
                     }
-                    if let Some(size) = configure.size {
-                        self.resize(size);
+                    // Same-size mode changes skip the resize callback, so report them as a move.
+                    if mode_changed && !resized && !fullscreen_changed {
+                        let callback = self.callbacks.borrow_mut().moved.take();
+                        if let Some(mut fun) = callback {
+                            fun();
+                            self.callbacks.borrow_mut().moved = Some(fun);
+                        }
                     }
                 }
             }
@@ -1546,6 +1560,18 @@ impl WaylandWindowStatePtr {
             viewport.set_destination(f32::from(size.width) as i32, f32::from(size.height) as i32);
         }
         update_window(state);
+    }
+
+    fn notify_resize(&self) {
+        let (size, scale) = {
+            let state = self.state.borrow();
+            (state.bounds.size, state.scale)
+        };
+        let callback = self.callbacks.borrow_mut().resize.take();
+        if let Some(mut fun) = callback {
+            fun(size, scale);
+            self.callbacks.borrow_mut().resize = Some(fun);
+        }
     }
 
     pub fn resize(&self, size: Size<Pixels>) {

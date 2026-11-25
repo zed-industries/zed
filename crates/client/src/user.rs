@@ -128,12 +128,6 @@ pub struct UserStore {
     weak_self: WeakEntity<Self>,
 }
 
-#[derive(Clone)]
-pub struct InviteInfo {
-    pub count: u32,
-    pub url: Arc<str>,
-}
-
 pub enum Event {
     Contact {
         user: Arc<User>,
@@ -157,7 +151,6 @@ impl EventEmitter<Event> for UserStore {}
 
 enum UpdateContacts {
     Update(proto::UpdateContacts),
-    Wait(postage::barrier::Sender),
     Clear(postage::barrier::Sender),
 }
 
@@ -339,10 +332,6 @@ impl UserStore {
 
     fn update_contacts(&mut self, message: UpdateContacts, cx: &Context<Self>) -> Task<Result<()>> {
         match message {
-            UpdateContacts::Wait(barrier) => {
-                drop(barrier);
-                Task::ready(Ok(()))
-            }
             UpdateContacts::Clear(barrier) => {
                 self.contacts.clear();
                 self.incoming_contact_requests.clear();
@@ -515,12 +504,6 @@ impl UserStore {
         self.perform_contact_request(user_id, proto::RemoveContact { user_id }, cx)
     }
 
-    pub fn has_incoming_contact_request(&self, user_id: u64) -> bool {
-        self.incoming_contact_requests
-            .iter()
-            .any(|user| user.legacy_id == user_id)
-    }
-
     pub fn respond_to_contact_request(
         &mut self,
         requester_id: u64,
@@ -539,24 +522,6 @@ impl UserStore {
             },
             cx,
         )
-    }
-
-    pub fn dismiss_contact_request(
-        &self,
-        requester_id: u64,
-        cx: &Context<Self>,
-    ) -> Task<Result<()>> {
-        let client = self.client.upgrade();
-        cx.spawn(async move |_, _| {
-            client
-                .context("can't upgrade client reference")?
-                .request(proto::RespondToContactRequest {
-                    requester_id,
-                    response: proto::ContactRequestResponse::Dismiss as i32,
-                })
-                .await?;
-            Ok(())
-        })
     }
 
     fn perform_contact_request<T: RequestMessage>(
@@ -594,16 +559,6 @@ impl UserStore {
         let (tx, mut rx) = postage::barrier::channel();
         self.update_contacts_tx
             .unbounded_send(UpdateContacts::Clear(tx))
-            .unwrap();
-        async move {
-            rx.next().await;
-        }
-    }
-
-    pub fn contact_updates_done(&self) -> impl Future<Output = ()> {
-        let (tx, mut rx) = postage::barrier::channel();
-        self.update_contacts_tx
-            .unbounded_send(UpdateContacts::Wait(tx))
             .unwrap();
         async move {
             rx.next().await;
@@ -655,15 +610,6 @@ impl UserStore {
 
     pub fn get_cached_user(&self, user_id: u64) -> Option<Arc<User>> {
         self.users.get(&user_id).cloned()
-    }
-
-    pub fn get_user_optimistic(&self, user_id: u64, cx: &Context<Self>) -> Option<Arc<User>> {
-        if let Some(user) = self.users.get(&user_id).cloned() {
-            return Some(user);
-        }
-
-        self.get_user(user_id, cx).detach_and_log_err(cx);
-        None
     }
 
     pub fn get_user(&self, user_id: u64, cx: &Context<Self>) -> Task<Result<Arc<User>>> {

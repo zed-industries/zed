@@ -128,6 +128,10 @@ struct Args {
     /// Will attempt to give the correct command to run
     #[arg(long)]
     system_specs: bool,
+    /// Print a JSON snapshot of the running Zed's GPUI and platform state
+    /// (windows, displays, frame scheduling, cursor), for debugging.
+    #[arg(long)]
+    debug_state: bool,
     /// Open the project in a dev container.
     ///
     /// Automatically triggers "Reopen in Dev Container" if a `.devcontainer/`
@@ -428,6 +432,9 @@ fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
 }
 
 fn main() {
+    #[cfg(target_os = "windows")]
+    sandbox::run_windows_sandbox_launcher_if_invoked();
+
     if let Err(error) = run() {
         eprintln!("error: {error:#}");
         std::process::exit(1);
@@ -684,7 +691,11 @@ fn run() -> Result<()> {
                     cwd: env::current_dir().ok(),
                 };
 
-                tx.send(open_request)?;
+                tx.send(if args.debug_state {
+                    CliRequest::DebugState
+                } else {
+                    open_request
+                })?;
 
                 while let Ok(response) = rx.recv() {
                     match response {

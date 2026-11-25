@@ -24,6 +24,7 @@ derive_more = { workspace = true, features = ["display"] }
 futures.workspace = true
 http_client.workspace = true
 itertools.workspace = true
+log.workspace = true
 parking_lot.workspace = true
 serde = { workspace = true, features = ["derive"] }
 semver.workspace = true

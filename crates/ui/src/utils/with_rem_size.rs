@@ -1,7 +1,6 @@
 use gpui::{
     AnyElement, App, Bounds, Div, DivFrameState, Element, ElementId, GlobalElementId, Hitbox,
-    InteractiveElement as _, IntoElement, LayoutId, ParentElement, Pixels, StyleRefinement, Styled,
-    Window, div,
+    InteractiveElement as _, LayoutId, ParentElement, Pixels, StyleRefinement, Styled, Window, div,
 };
 
 /// An element that sets a particular rem size for its children.
@@ -102,13 +101,5 @@ impl Element for WithRemSize {
                 cx,
             )
         })
-    }
-}
-
-impl IntoElement for WithRemSize {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
     }
 }

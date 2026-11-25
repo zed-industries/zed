@@ -445,7 +445,7 @@ impl DispatchTree {
         }
     }
 
-    fn bindings_for_input(
+    pub(crate) fn bindings_for_input(
         &self,
         input: &[Keystroke],
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
@@ -733,14 +733,6 @@ mod tests {
                     }
                 },
             );
-        }
-    }
-
-    impl IntoElement for PendingTextInputTestView {
-        type Element = Self;
-
-        fn into_element(self) -> Self::Element {
-            self
         }
     }
 
@@ -1211,14 +1203,6 @@ mod tests {
                 window.set_key_context(key_context);
                 window.handle_input(&self.focus_handle, self.clone(), cx);
                 window.on_action(std::any::TypeId::of::<TestAction>(), |_, _, _, _| {});
-            }
-        }
-
-        impl IntoElement for CustomElement {
-            type Element = Self;
-
-            fn into_element(self) -> Self::Element {
-                self
             }
         }
 

@@ -458,7 +458,7 @@ async fn test_completion_resolve_uses_matching_dynamic_registration(cx: &mut gpu
         .update(cx, |lsp_store, cx| {
             lsp_store.completions(
                 &buffer,
-                PointUtf16::new(0, 0),
+                buffer.read(cx).anchor_after(PointUtf16::new(0, 0)),
                 lsp::CompletionContext {
                     trigger_kind: lsp::CompletionTriggerKind::INVOKED,
                     trigger_character: None,

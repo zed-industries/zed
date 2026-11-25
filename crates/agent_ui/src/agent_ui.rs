@@ -1,7 +1,6 @@
 mod agent_configuration;
 pub mod agent_connection_store;
 mod agent_diff;
-mod agent_model_selector;
 mod agent_panel;
 mod agent_registry_ui;
 mod buffer_codegen;
@@ -14,10 +13,8 @@ mod diagnostics;
 pub mod draft_prompt_store;
 mod entry_view_state;
 mod external_source_prompt;
-mod favorite_models;
 mod inline_assistant;
 mod inline_prompt_editor;
-mod language_model_selector;
 mod mention_set;
 mod message_editor;
 mod mode_selector;
@@ -57,9 +54,7 @@ use language::{
     LanguageRegistry,
     language_settings::{AllLanguageSettings, EditPredictionProvider},
 };
-use language_model::{
-    LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
-};
+use language_model::{LanguageModelId, LanguageModelProviderId, LanguageModelRegistry};
 use project::{AgentId, DisableAiSettings, Project, ProjectPath};
 use prompt_store::{self, PromptBuilder, rules_to_skills_migration};
 use rope::Point;
@@ -94,7 +89,7 @@ pub use thread_import::{
     AcpThreadImportOnboarding, CrossChannelImportOnboarding, ThreadImportModal,
     channels_with_threads, import_threads_from_other_channels,
 };
-use zed_actions;
+pub use zed_actions::agent::CycleFavoriteModels;
 pub use zed_actions::{CreateWorktree, NewWorktreeBranchTarget, SwitchWorktree};
 
 pub(crate) fn resolve_agent_image(
@@ -302,8 +297,6 @@ actions!(
         ToggleProfileSelector,
         /// Cycles through available session modes.
         CycleModeSelector,
-        /// Cycles through favorited models in the ACP model selector.
-        CycleFavoriteModels,
         /// Expands the message editor to full size.
         ExpandMessageEditor,
         /// Archives the currently selected thread.
@@ -318,14 +311,6 @@ actions!(
         CycleNextInlineAssist,
         /// Cycles to the previous inline assist suggestion.
         CyclePreviousInlineAssist,
-        /// Moves focus up in the interface.
-        FocusUp,
-        /// Moves focus down in the interface.
-        FocusDown,
-        /// Moves focus left in the interface.
-        FocusLeft,
-        /// Moves focus right in the interface.
-        FocusRight,
         /// Opens the active thread as a markdown file.
         OpenActiveThreadAsMarkdown,
         /// Opens the agent diff view to review changes.
@@ -385,6 +370,12 @@ actions!(
         ToggleThinkingEffortMenu,
         /// Toggles fast mode for models that support it.
         ToggleFastMode,
+        /// Switches between Fast and Ultrafast when faster responses are enabled.
+        CycleResponseSpeed,
+        /// Resets a thread-only thread to your default profile, model, and model options.
+        ResetThreadToDefaults,
+        /// Saves a thread-only thread's profile, model, and model options as your defaults.
+        SaveThreadAsDefaults,
         /// Scroll the output by one page up.
         ScrollOutputPageUp,
         /// Scroll the output by one page down.
@@ -624,21 +615,6 @@ impl ManageProfiles {
     pub fn customize_tools(profile_id: AgentProfileId) -> Self {
         Self {
             customize_tools: Some(profile_id),
-        }
-    }
-}
-
-#[derive(Clone)]
-pub(crate) enum ModelUsageContext {
-    InlineAssistant,
-}
-
-impl ModelUsageContext {
-    pub fn model(&self, cx: &App) -> Option<LanguageModel> {
-        match self {
-            Self::InlineAssistant => {
-                LanguageModelRegistry::read_global(cx).inline_assistant_model()
-            }
         }
     }
 }
@@ -1052,6 +1028,136 @@ mod tests {
     use settings::{
         DockPosition, NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, Settings, SettingsStore,
     };
+
+    #[gpui::test]
+    fn test_removed_saved_hosted_default_and_background_model_recovery(cx: &mut TestAppContext) {
+        use language_model::{
+            LanguageModelProvider, LanguageModelProviderName,
+            fake_provider::FakeLanguageModelProvider,
+        };
+
+        let hosted = Arc::new(FakeLanguageModelProvider::new(
+            language_model::ZED_CLOUD_PROVIDER_ID,
+            language_model::ZED_CLOUD_PROVIDER_NAME,
+        ));
+        let claude = hosted.update_model("fake", |model| {
+            model.id = LanguageModelId("claude-opus-4-6".into());
+            model.name = "Claude Opus 4.6".to_string().into();
+        });
+        let personal = Arc::new(FakeLanguageModelProvider::new(
+            LanguageModelProviderId("personal".into()),
+            LanguageModelProviderName("Personal API key".into()),
+        ));
+        let personal_model = personal.model("personal-model");
+        let selection = |provider: &str, model: &str| LanguageModelSelection {
+            provider: provider.to_string().into(),
+            model: model.to_string(),
+            enable_thinking: false,
+            effort: None,
+            speed: None,
+        };
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            AgentSettings::register(cx);
+            language_model::init(cx);
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(hosted.clone(), cx);
+                registry.register_provider(personal.clone(), cx);
+            });
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let agent = settings.agent.get_or_insert_default();
+                    agent.default_model = Some(selection("zed.dev", "claude-opus-4-6"));
+                });
+            });
+            init_language_model_settings(cx);
+            let registry = LanguageModelRegistry::read_global(cx);
+            assert_eq!(registry.default_model().unwrap().id(), claude.id());
+            assert_eq!(registry.default_fast_model(cx).unwrap().id(), claude.id());
+            assert_eq!(registry.commit_message_model(cx).unwrap().id(), claude.id());
+        });
+        cx.run_until_parked();
+
+        let luna_only = Arc::new(FakeLanguageModelProvider::new(
+            language_model::ZED_CLOUD_PROVIDER_ID,
+            language_model::ZED_CLOUD_PROVIDER_NAME,
+        ));
+        let luna = luna_only.update_model("fake", |model| {
+            model.id = LanguageModelId("gpt-6-luna".into());
+            model.name = "GPT-6 Luna".to_string().into();
+        });
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(luna_only.clone(), cx);
+            });
+        });
+        cx.run_until_parked();
+        cx.read(|cx| {
+            let registry = LanguageModelRegistry::read_global(cx);
+            assert!(luna_only.default_fast_model(cx).is_some());
+            assert!(registry.default_model().is_none());
+            assert!(registry.default_fast_model(cx).is_none());
+            assert!(registry.commit_message_model(cx).is_none());
+            assert!(registry.thread_summary_model(cx).is_none());
+            assert!(registry.inline_assistant_model().is_none());
+            assert_eq!(
+                AgentSettings::get_global(cx)
+                    .default_model
+                    .as_ref()
+                    .unwrap()
+                    .model,
+                "claude-opus-4-6",
+                "catalog updates must not rewrite saved preferences"
+            );
+            assert!(registry.provider_for_model(&personal_model).is_ok());
+        });
+
+        // Explicitly changing the saved default restores background selection.
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let agent = settings.agent.get_or_insert_default();
+                    agent.default_model = Some(selection("zed.dev", "gpt-6-luna"));
+                    agent.commit_message_model = Some(selection("zed.dev", "claude-opus-4-6"));
+                });
+            });
+        });
+        cx.run_until_parked();
+        cx.read(|cx| {
+            let registry = LanguageModelRegistry::read_global(cx);
+            assert_eq!(registry.default_model().unwrap().id(), luna.id());
+            assert_eq!(registry.default_fast_model(cx).unwrap().id(), luna.id());
+            assert_eq!(registry.commit_message_model(cx).unwrap().id(), luna.id());
+            assert_eq!(registry.thread_summary_model(cx).unwrap().id(), luna.id());
+        });
+
+        // A personal default and explicit background override remain independent.
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let agent = settings.agent.get_or_insert_default();
+                    agent.default_model = Some(selection("personal", "personal-model"));
+                    agent.commit_message_model = Some(selection("personal", "personal-model"));
+                });
+            });
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(luna_only, cx);
+            });
+        });
+        cx.run_until_parked();
+        cx.read(|cx| {
+            let registry = LanguageModelRegistry::read_global(cx);
+            assert_eq!(
+                registry.default_model().unwrap().provider_id(),
+                personal.id()
+            );
+            assert_eq!(
+                registry.commit_message_model(cx).unwrap().provider_id(),
+                personal.id()
+            );
+        });
+    }
 
     #[gpui::test]
     fn test_agent_command_palette_visibility(cx: &mut TestAppContext) {

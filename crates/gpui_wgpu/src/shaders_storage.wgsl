@@ -7,8 +7,6 @@
 
 @group(1) @binding(0) var<storage, read> b_quads: array<Quad>;
 @group(1) @binding(0) var<storage, read> b_shadows: array<Shadow>;
-@group(1) @binding(0) var<storage, read> b_path_vertices: array<PathRasterizationVertex>;
-@group(1) @binding(0) var<storage, read> b_path_sprites: array<PathSprite>;
 @group(1) @binding(0) var<storage, read> b_underlines: array<Underline>;
 @group(1) @binding(0) var<storage, read> b_mono_sprites: array<MonochromeSprite>;
 @group(1) @binding(0) var<storage, read> b_poly_sprites: array<PolychromeSprite>;
@@ -21,12 +19,20 @@ fn load_shadow(instance_id: u32) -> Shadow {
     return b_shadows[instance_id];
 }
 
-fn load_path_vertex(vertex_id: u32) -> PathRasterizationVertex {
-    return b_path_vertices[vertex_id];
+@group(1) @binding(0) var<storage, read> b_path_tiles: array<PathTile>;
+@group(1) @binding(1) var<storage, read> b_path_curves: array<PathCurve>;
+@group(1) @binding(2) var<storage, read> b_path_paints: array<PathPaint>;
+
+fn load_path_tile(instance_id: u32) -> PathTile {
+    return b_path_tiles[instance_id];
 }
 
-fn load_path_sprite(instance_id: u32) -> PathSprite {
-    return b_path_sprites[instance_id];
+fn load_path_curve(index: u32) -> PathCurve {
+    return b_path_curves[index];
+}
+
+fn load_path_paint(index: u32) -> PathPaint {
+    return b_path_paints[index];
 }
 
 fn load_underline(instance_id: u32) -> Underline {

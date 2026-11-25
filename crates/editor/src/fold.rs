@@ -327,6 +327,69 @@ impl Editor {
         self.fold_at_level(&actions::FoldAtLevel(9), window, cx);
     }
 
+    /// Folds the document at the level derived from the newest selection's line
+    /// indentation.
+    ///
+    /// Empty and white-space only lines are ignored.
+    pub fn fold_at_current_indentation_level(
+        &mut self,
+        _: &actions::FoldAtCurrentIndentationLevel,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.buffer().read(cx).is_singleton() {
+            return;
+        }
+
+        let display_snapshot = self.display_snapshot(cx);
+        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let row = MultiBufferRow(
+            self.selections
+                .newest::<Point>(&display_snapshot)
+                .head()
+                .row,
+        );
+
+        if buffer_snapshot.is_line_blank(row) {
+            return;
+        }
+
+        let mut current_level = 1;
+        let mut current_row = 0;
+        while current_row < row.0 {
+            match self
+                .snapshot(window, cx)
+                .crease_for_buffer_row(MultiBufferRow(current_row))
+            {
+                Some(crease) => {
+                    let crease_range = crease.range();
+
+                    if row.0 > crease_range.end.row {
+                        current_row = (current_row + 1).max(crease_range.end.row);
+                    } else if row.0 < crease_range.end.row {
+                        current_row += 1;
+                        current_level += 1;
+                    } else {
+                        let row_indent = buffer_snapshot.line_indent_for_row(row).raw_len();
+                        let crease_indent = buffer_snapshot
+                            .line_indent_for_row(MultiBufferRow(crease_range.start.row))
+                            .raw_len();
+
+                        if row_indent > crease_indent {
+                            current_row += 1;
+                            current_level += 1;
+                        } else {
+                            current_row = (current_row + 1).max(crease_range.end.row);
+                        }
+                    }
+                }
+                None => current_row += 1,
+            }
+        }
+
+        self.fold_at_level(&actions::FoldAtLevel(current_level), window, cx);
+    }
+
     pub fn fold_all(&mut self, _: &actions::FoldAll, window: &mut Window, cx: &mut Context<Self>) {
         if self.buffer.read(cx).is_singleton() {
             let mut fold_ranges = Vec::new();

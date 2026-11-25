@@ -53,14 +53,14 @@ impl Database {
                 .await?
                 .context("could not find participant")?;
             if participant.room_id != room_id {
-                return Err(anyhow!("shared project on unexpected room"))?;
+                Err(anyhow!("shared project on unexpected room"))?;
             }
             if !participant
                 .role
                 .unwrap_or(ChannelRole::Member)
                 .can_edit_projects()
             {
-                return Err(anyhow!("guests cannot share projects"))?;
+                Err(anyhow!("guests cannot share projects"))?;
             }
 
             let project = project::ActiveModel {
@@ -233,7 +233,7 @@ impl Database {
         if update.removed_entries.len() > proto::MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE
             || update.updated_entries.len() > proto::MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE
         {
-            return Err(anyhow!(
+            Err(anyhow!(
                 "invalid worktree update. removed entries: {}, updated entries: {}",
                 update.removed_entries.len(),
                 update.updated_entries.len()
@@ -530,7 +530,7 @@ impl Database {
                 .await?
                 .context("no such project")?;
             if project.host_connection()? != connection {
-                return Err(anyhow!("can't update a project hosted by someone else"))?;
+                Err(anyhow!("can't update a project hosted by someone else"))?;
             }
 
             // Update summary.
@@ -580,7 +580,7 @@ impl Database {
                 .await?
                 .context("no such project")?;
             if project.host_connection()? != connection {
-                return Err(anyhow!("can't update a project hosted by someone else"))?;
+                Err(anyhow!("can't update a project hosted by someone else"))?;
             }
 
             // Add the newly-started language server.
@@ -635,7 +635,7 @@ impl Database {
                 .await?
                 .context("no such project")?;
             if project.host_connection()? != connection {
-                return Err(anyhow!("can't update a project hosted by someone else"))?;
+                Err(anyhow!("can't update a project hosted by someone else"))?;
             }
 
             if let Some(content) = &update.content {
@@ -898,6 +898,7 @@ impl Database {
                         head_commit_details,
                         branch_list: Vec::new(),
                         branch_list_error: None,
+                        remote_default_branch: None,
                         scan_id: db_repository_entry.scan_id as u64,
                         is_last_update: true,
                         merge_message: db_repository_entry.merge_message,
@@ -1135,12 +1136,12 @@ impl Database {
         match capability {
             Capability::ReadWrite => {
                 if !role.can_edit_projects() {
-                    return Err(anyhow!("not authorized to edit projects"))?;
+                    Err(anyhow!("not authorized to edit projects"))?;
                 }
             }
             Capability::ReadOnly => {
                 if !role.can_read_projects() {
-                    return Err(anyhow!("not authorized to read projects"))?;
+                    Err(anyhow!("not authorized to read projects"))?;
                 }
             }
         }

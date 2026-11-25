@@ -312,12 +312,6 @@ impl LanguageRegistry {
         Some(load_lsp_adapter())
     }
 
-    /// Checks if a language server adapter with the given name is available to be loaded.
-    pub fn is_lsp_adapter_available(&self, name: &LanguageServerName) -> bool {
-        let state = self.state.read();
-        state.available_lsp_adapters.contains_key(name)
-    }
-
     /// Returns the names of all available LSP adapters (registered via `register_available_lsp_adapter`).
     /// These are adapters that are not bound to a specific language but can be enabled via settings.
     pub fn available_lsp_adapter_names(&self) -> Vec<LanguageServerName> {

@@ -316,13 +316,6 @@ impl EditorTestContext {
         })
     }
 
-    // Returns anchors for the current buffer using `«` and `»`
-    pub fn text_anchor_range(&mut self, marked_text: &str) -> Range<language::Anchor> {
-        let ranges = self.ranges(marked_text);
-        let snapshot = self.buffer_snapshot();
-        snapshot.anchor_before(ranges[0].start)..snapshot.anchor_after(ranges[0].end)
-    }
-
     pub async fn wait_for_autoindent_applied(&mut self) {
         if let Some(fut) = self.update_buffer(|buffer, _| buffer.wait_for_autoindent_applied()) {
             fut.await.ok();
@@ -339,14 +332,6 @@ impl EditorTestContext {
             &[(path.as_unix_str(), diff_base.to_string())],
             "deadbeef",
         );
-        self.cx.run_until_parked();
-    }
-
-    pub fn clear_index_text(&mut self) {
-        self.cx.run_until_parked();
-        let fs =
-            self.update_editor(|editor, _, cx| editor.project().unwrap().read(cx).fs().as_fake());
-        fs.set_index_for_repo(&Self::root_path().join(".git"), &[]);
         self.cx.run_until_parked();
     }
 

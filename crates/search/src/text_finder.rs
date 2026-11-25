@@ -8,7 +8,7 @@ use db::{
 use editor::Editor;
 use gpui::{
     App, AppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    Modifiers, Subscription, Task, TaskExt as _, WeakEntity, actions,
+    Subscription, Task, TaskExt as _, WeakEntity, actions,
 };
 use language::Buffer;
 use picker::Picker;
@@ -33,7 +33,6 @@ actions!(text_finder, [ToProjectSearch, Fold, Unfold, ToggleFoldAll]);
 
 pub struct TextFinder {
     picker: Entity<Picker<Delegate>>,
-    init_modifiers: Option<Modifiers>,
     workspace_id: Option<WorkspaceId>,
     _subscription: Subscription,
 }
@@ -138,7 +137,6 @@ impl TextFinder {
             };
 
             text_picker.update(cx, |text_picker, cx| {
-                text_picker.init_modifiers = Some(window.modifiers());
                 text_picker.picker.update(cx, |picker, cx| {
                     picker.cycle_selection(window, cx);
                 });
@@ -478,7 +476,6 @@ impl TextFinder {
 
         Self {
             picker,
-            init_modifiers: window.modifiers().modified().then_some(window.modifiers()),
             workspace_id,
             _subscription: subscription,
         }

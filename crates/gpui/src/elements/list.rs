@@ -10,8 +10,8 @@
 use crate::{
     Along as _, AnyElement, App, AvailableSpace, Axis, Bounds, ContentMask, DispatchPhase, Edges,
     Element, EntityId, FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId,
-    IntoElement, Overflow, Pixels, Point, ScrollDelta, ScrollEvent, Size, Style, StyleRefinement,
-    Styled, Window, point, px, size,
+    Overflow, Pixels, Point, ScrollDelta, ScrollEvent, Size, Style, StyleRefinement, Styled,
+    Window, point, px, size,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -67,7 +67,6 @@ struct StateInner {
     alignment: ListAlignment,
     overdraw: Pixels,
     reset: bool,
-    #[allow(clippy::type_complexity)]
     scroll_handler: Option<Box<dyn FnMut(&ListScrollEvent, &mut Window, &mut App)>>,
     scrollbar_drag_start_height: Option<Pixels>,
     measuring_behavior: ListMeasuringBehavior,
@@ -1506,8 +1505,9 @@ impl Element for List {
                     let summary = state.items.summary();
                     let total_height = summary.height;
 
-                    window.request_measured_layout(
+                    window.request_keyed_measured_layout(
                         style,
+                        (max_element_width, total_height),
                         move |known_dimensions, available_space, _window, _cx| {
                             let width =
                                 known_dimensions
@@ -1656,14 +1656,6 @@ fn content_insets(style: &Style, size: Size<Pixels>, rem_size: Pixels) -> Edges<
     let border = style.border_widths.to_pixels(rem_size);
 
     padding + border
-}
-
-impl IntoElement for List {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
 }
 
 impl Styled for List {

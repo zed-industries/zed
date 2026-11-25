@@ -5,6 +5,9 @@ edition.workspace = true
 publish.workspace = true
 license = "Apache-2.0"
 
+[lints]
+workspace = true
+
 [lib]
 proc-macro = true
 test = false

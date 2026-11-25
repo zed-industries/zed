@@ -67,8 +67,8 @@ pub(crate) struct WebWindowInner {
     pub(crate) last_physical_size: Cell<(u32, u32)>,
     pub(crate) notify_scale: Cell<bool>,
     pub(crate) is_composing: Cell<bool>,
-    /// Set while `show_virtual_keyboard` blur/focus-cycles the hidden input.
-    /// The cycle is a keyboard-visibility hint, not a real activity change;
+    /// Set while the hidden input is refocused to show or hide the keyboard.
+    /// That is a keyboard-visibility hint, not a real activity change;
     /// letting the focus/blur listeners report it would re-enter GPUI
     /// synchronously from inside an input dispatch, and a `RefCell`
     /// double-borrow panic on wasm never unwinds, wedging the app.
@@ -141,7 +141,6 @@ impl WebWindow {
         Ok(canvas)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         _handle: AnyWindowHandle,
         _params: WindowParams,
@@ -741,9 +740,10 @@ impl PlatformWindow for WebWindow {
         style
             .set_property("width", &format!("{}px", f32::from(size.width)))
             .ok();
-        style
-            .set_property("height", &format!("{}px", f32::from(size.height)))
-            .ok();
+        self.inner
+            .viewport
+            .borrow_mut()
+            .set_canvas_height(&self.inner.canvas, &format!("{}px", f32::from(size.height)));
     }
 
     fn scale_factor(&self) -> f32 {
@@ -790,7 +790,7 @@ impl PlatformWindow for WebWindow {
         if !self.inner.touch_input {
             return;
         }
-        self.inner.ime_mirror.set_virtual_keyboard_enabled(false);
+        self.inner.set_virtual_keyboard_enabled(false);
         // Restart the browser input session without a software keyboard, but
         // keep receiving hardware keys that can move the caret back into an
         // editable region. GPUI focus, not this DOM element, owns their target.

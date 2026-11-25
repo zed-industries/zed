@@ -28,6 +28,7 @@ pub(crate) const WM_GPUI_FORCE_UPDATE_WINDOW: u32 = WM_USER + 5;
 pub(crate) const WM_GPUI_KEYBOARD_LAYOUT_CHANGED: u32 = WM_USER + 6;
 pub(crate) const WM_GPUI_GPU_DEVICE_LOST: u32 = WM_USER + 7;
 pub(crate) const WM_GPUI_DISPLAYS_CHANGED: u32 = WM_USER + 10;
+pub(crate) const WM_GPUI_PRESENTABILITY_CHANGED: u32 = WM_USER + 11;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 
@@ -157,6 +158,7 @@ impl WindowsWindowInner {
             WM_SHOWWINDOW => self.handle_window_visibility_changed(handle, wparam),
             DM_POINTERHITTEST => self.handle_dm_pointer_hit_test(wparam),
             WM_GETOBJECT => self.handle_wm_getobject(wparam, lparam),
+            WM_GPUI_PRESENTABILITY_CHANGED => self.handle_presentability_changed(wparam),
             WM_GPUI_CURSOR_STYLE_CHANGED
             | WM_GPUI_FORCE_UPDATE_WINDOW
             | WM_GPUI_GPU_DEVICE_LOST => self.handle_gpui_events(handle, msg, wparam, lparam),
@@ -169,7 +171,7 @@ impl WindowsWindowInner {
         }
     }
 
-    fn handle_move_msg(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {
+    fn handle_move_msg(self: &Rc<Self>, handle: HWND, lparam: LPARAM) -> Option<isize> {
         let origin = logical_point(
             lparam.signed_loword() as f32,
             lparam.signed_hiword() as f32,
@@ -944,7 +946,7 @@ impl WindowsWindowInner {
         Some(0)
     }
 
-    fn handle_display_change_msg(&self, handle: HWND) -> Option<isize> {
+    fn handle_display_change_msg(self: &Rc<Self>, handle: HWND) -> Option<isize> {
         let new_monitor = unsafe { MonitorFromWindow(handle, MONITOR_DEFAULTTONULL) };
         if new_monitor.is_invalid() {
             log::error!("No monitor detected!");
@@ -955,12 +957,20 @@ impl WindowsWindowInner {
         Some(0)
     }
 
-    fn set_display(&self, display: WindowsDisplay) {
+    // Windows can deliver `WM_DISPLAYCHANGE` and `WM_MOVE` while GPUI is
+    // updating a window (e.g. a clipboard read during a draw pumps sent
+    // messages), so report the change after that update completes.
+    fn set_display(self: &Rc<Self>, display: WindowsDisplay) {
         self.state.display.set(display);
-        if let Some(mut callback) = self.state.callbacks.display_changed.take() {
-            callback();
-            self.state.callbacks.display_changed.set(Some(callback));
-        }
+        let this = self.clone();
+        self.executor
+            .spawn(async move {
+                if let Some(mut callback) = this.state.callbacks.display_changed.take() {
+                    callback();
+                    this.state.callbacks.display_changed.set(Some(callback));
+                }
+            })
+            .detach();
     }
 
     fn handle_hit_test_msg(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {
@@ -1278,6 +1288,17 @@ impl WindowsWindowInner {
             self.draw_window(handle, false);
         }
         None
+    }
+
+    /// The vsync thread saw the window become presentable or stop being so.
+    /// Cloaking, e.g. switching virtual desktops, sends the window no message
+    /// of its own.
+    fn handle_presentability_changed(self: &Rc<Self>, wparam: WPARAM) -> Option<isize> {
+        if wparam.0 != self.validation_number {
+            return None;
+        }
+        self.report_visibility();
+        Some(0)
     }
 
     // The window procedure can run while GPUI is updating this window (e.g.

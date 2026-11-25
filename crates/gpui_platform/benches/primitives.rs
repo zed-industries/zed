@@ -12,9 +12,9 @@ use std::{fmt, rc::Rc, time::Duration};
 
 use gpui::{
     App, AtlasTextureId, AtlasTextureKind, AtlasTile, Background, BenchAppContext, Bounds,
-    BoxShadow, Context, Corners, DevicePixels, Hsla, IntoElement, Path, PathBuilder, Pixels,
-    Render, Scene, SharedString, Styled, TextAlign, TextRun, TileId, TransformationMatrix,
-    UnderlineStyle, Window, canvas, fill, hsla, point,
+    BoxShadow, ContentMask, Context, Corners, DevicePixels, Hsla, IntoElement, PaintedPath, Path,
+    PathBuilder, Pixels, Render, Scene, SharedString, Styled, TextAlign, TextRun, TileId,
+    TransformationMatrix, UnderlineStyle, Window, canvas, fill, hsla, point,
     private::rand::{Rng as _, SeedableRng as _, rngs::StdRng},
     px, size,
 };
@@ -80,9 +80,12 @@ enum Kind {
     Quad,
     Shadow,
     Underline,
-    /// Tessellated before timing: path tessellation is measured by the tree benchmarks,
-    /// and would otherwise dominate what these cases are for.
-    Path(Path<Pixels>),
+    /// Built and binned before timing, since binning would otherwise dominate what these
+    /// cases are for. The window paints `path`, and the scene takes a copy of `painted`.
+    Path {
+        path: Path,
+        painted: PaintedPath,
+    },
     Text(SharedString),
 }
 
@@ -113,7 +116,10 @@ fn random_rectangles(seed: u64, count: usize, extent: f32) -> Rc<[Rectangle]> {
                 0..9 => Kind::Quad,
                 9..11 => Kind::Shadow,
                 11..13 => Kind::Underline,
-                13..16 => triangle(bounds).map_or(Kind::Quad, Kind::Path),
+                13..16 => triangle(bounds).map_or(Kind::Quad, |path| Kind::Path {
+                    painted: PaintedPath::new(path.clone(), 1., scene_content_mask(), color.into()),
+                    path,
+                }),
                 _ => {
                     let length = rng.random_range(1..12);
                     Kind::Text("Ag3 Wq7 fixture"[..length].to_string().into())
@@ -130,7 +136,7 @@ fn random_rectangles(seed: u64, count: usize, extent: f32) -> Rc<[Rectangle]> {
         .into()
 }
 
-fn triangle(bounds: Bounds<Pixels>) -> Option<Path<Pixels>> {
+fn triangle(bounds: Bounds<Pixels>) -> Option<Path> {
     let mut path = PathBuilder::fill();
     path.move_to(bounds.origin);
     path.line_to(bounds.top_right());
@@ -236,7 +242,7 @@ fn paint(rectangle: &Rectangle, window: &mut Window, cx: &mut App) {
                 wavy: false,
             },
         ),
-        Kind::Path(path) => window.paint_path(path.clone(), rectangle.color),
+        Kind::Path { path, .. } => window.paint_path(path.clone(), rectangle.color),
         // Shaped every frame, as the text element does; the line layout cache makes
         // repeated shaping a lookup.
         Kind::Text(text) => {
@@ -283,11 +289,20 @@ fn glyph_tile(index: usize) -> AtlasTile {
     }
 }
 
+fn scene_content_mask() -> ContentMask<Pixels> {
+    ContentMask {
+        bounds: Bounds::new(point(px(0.), px(0.)), size(px(1_024.), px(1_024.))),
+    }
+}
+
 fn build_scene(scene: &mut Scene, rectangles: &[Rectangle]) {
+    insert_primitives(scene, rectangles);
+    scene.finish();
+}
+
+fn insert_primitives(scene: &mut Scene, rectangles: &[Rectangle]) {
     scene.clear();
-    let content_mask = gpui::ContentMask {
-        bounds: Bounds::new(point(px(0.), px(0.)), size(px(1_024.), px(1_024.))).scale(1.),
-    };
+    let content_mask = scene_content_mask().scale(1.);
     for (index, rectangle) in rectangles.iter().enumerate() {
         let bounds = rectangle.bounds.scale(1.);
         match &rectangle.kind {
@@ -304,13 +319,13 @@ fn build_scene(scene: &mut Scene, rectangles: &[Rectangle]) {
             Kind::Shadow => scene.insert_primitive(gpui::Shadow {
                 order: 0,
                 blur_radius: gpui::ScaledPixels(6.),
-                bounds,
-                corner_radii: Corners::all(gpui::ScaledPixels(4.)),
+                bounds: bounds.dilate(gpui::ScaledPixels(18.)),
+                corner_radii: Corners::default(),
                 content_mask,
                 color: rectangle.color,
-                element_bounds: bounds,
-                element_corner_radii: Corners::all(gpui::ScaledPixels(4.)),
-                inset: 0,
+                shape_bounds: bounds,
+                shape_corner_radii: Corners::all(gpui::ScaledPixels(4.)),
+                inset: false.into(),
                 pad: 0,
             }),
             Kind::Underline => scene.insert_primitive(gpui::Underline {
@@ -322,12 +337,7 @@ fn build_scene(scene: &mut Scene, rectangles: &[Rectangle]) {
                 thickness: bounds.size.height.min(gpui::ScaledPixels(4.)),
                 wavy: Default::default(),
             }),
-            Kind::Path(path) => {
-                let mut path = path.scale(1.);
-                path.content_mask = content_mask;
-                path.color = rectangle.background;
-                scene.insert_primitive(path);
-            }
+            Kind::Path { painted, .. } => scene.insert_primitive(painted.clone()),
             Kind::Text(text) => {
                 let glyph_size = bounds.size.height.min(gpui::ScaledPixels(32.));
                 for glyph in 0..text.len() {
@@ -335,7 +345,7 @@ fn build_scene(scene: &mut Scene, rectangles: &[Rectangle]) {
                         + point(glyph_size * (glyph as f32 * 0.6), gpui::ScaledPixels(0.));
                     scene.insert_primitive(gpui::MonochromeSprite {
                         order: 0,
-                        pad: 0,
+                        animation: gpui::SpriteAnimationId::NONE,
                         tile: glyph_tile(index + glyph),
                         bounds: Bounds::new(origin, size(glyph_size * 0.6, glyph_size)),
                         content_mask,
@@ -346,7 +356,26 @@ fn build_scene(scene: &mut Scene, rectangles: &[Rectangle]) {
             }
         }
     }
-    scene.finish();
+}
+
+fn scene_finish(criterion: &mut criterion::Criterion<gpui::BenchMeasurement>) {
+    let mut group = criterion.benchmark_group("Primitives/finish");
+    for case in cases() {
+        let mut fixture = None;
+        group.bench_function(case.to_string(), |bencher| {
+            let rectangles = fixture.get_or_insert_with(|| rectangles(&case, 512.));
+            bencher.iter_batched_ref(
+                || {
+                    let mut scene = Scene::default();
+                    insert_primitives(&mut scene, rectangles);
+                    scene
+                },
+                |scene| scene.finish(),
+                criterion::BatchSize::LargeInput,
+            );
+        });
+    }
+    group.finish();
 }
 
 fn scene_ordering(criterion: &mut criterion::Criterion<gpui::BenchMeasurement>) {
@@ -409,6 +438,6 @@ gpui::bench_group!(
         .warm_up_time(Duration::from_millis(500))
         .measurement_time(Duration::from_secs(1))
         .sample_size(20);
-    targets = paint_rectangles, scene_ordering
+    targets = paint_rectangles, scene_ordering, scene_finish
 );
 gpui::bench_main!(benches);

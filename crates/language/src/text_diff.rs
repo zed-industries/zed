@@ -373,7 +373,7 @@ fn diff_internal(
 }
 
 fn tokenize_chars(text: &str) -> impl Iterator<Item = &str> {
-    let mut chars = text.char_indices().peekable();
+    let mut chars = text.char_indices();
     iter::from_fn(move || {
         let (start, c) = chars.next()?;
         Some(&text[start..start + c.len_utf8()])

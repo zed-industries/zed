@@ -209,7 +209,7 @@ impl ActivityGuard {
 #[inline]
 pub fn guess_compositor() -> &'static str {
     if std::env::var_os("ZED_HEADLESS").is_some() {
-        return "Headless";
+        return "headless";
     }
     GraphicalEnvironment::detect().guess_compositor()
 }
@@ -231,6 +231,11 @@ pub struct GraphicalEnvironment {
     pub x11_display: Option<OsString>,
     /// `XDG_RUNTIME_DIR`: the directory containing Wayland sockets.
     pub xdg_runtime_dir: Option<OsString>,
+    /// `XDG_CURRENT_DESKTOP`: the session's desktop environment, such as `ubuntu:GNOME`.
+    ///
+    /// Only reported by [`GraphicalEnvironment::desktop_environment`]; [`GraphicalEnvironment::apply_to`]
+    /// leaves it alone.
+    pub current_desktop: Option<OsString>,
     /// `XDG_ACTIVATION_TOKEN`: lets the first window take focus on Wayland.
     ///
     /// A platform takes this process's token from its environment when it's created, and uses
@@ -272,6 +277,11 @@ impl GraphicalEnvironment {
     /// Does nothing on this platform: programs inherit the session of the process that
     /// starts them.
     pub fn apply_to(&self, _command: &mut std::process::Command) {}
+
+    /// Returns `None`: this platform has no desktop environments to tell apart.
+    pub fn desktop_environment(&self) -> Option<String> {
+        None
+    }
 }
 
 /// The graphical session to connect to. Carries nothing yet on this platform.
@@ -288,6 +298,11 @@ impl GraphicalEnvironment {
 
     /// Does nothing on this platform.
     pub fn apply_to(&self, _command: &mut std::process::Command) {}
+
+    /// Returns `None`: this platform has no desktop environments to tell apart.
+    pub fn desktop_environment(&self) -> Option<String> {
+        None
+    }
 }
 
 /// A display mode for [`App::request_windowing`] to switch to.
@@ -310,6 +325,7 @@ impl GraphicalEnvironment {
             wayland_display: std::env::var_os("WAYLAND_DISPLAY"),
             x11_display: std::env::var_os("DISPLAY"),
             xdg_runtime_dir: std::env::var_os("XDG_RUNTIME_DIR"),
+            current_desktop: std::env::var_os("XDG_CURRENT_DESKTOP"),
             activation_token: None,
         }
     }
@@ -330,6 +346,18 @@ impl GraphicalEnvironment {
         }
     }
 
+    /// Returns the session's desktop environment, if `XDG_CURRENT_DESKTOP` names one.
+    ///
+    /// The value is a colon-separated list ordered from most to least specific,
+    /// such as `ubuntu:GNOME`.
+    pub fn desktop_environment(&self) -> Option<String> {
+        self.current_desktop
+            .as_ref()
+            .and_then(|desktop| desktop.to_str())
+            .filter(|desktop| !desktop.is_empty())
+            .map(str::to_owned)
+    }
+
     /// Returns the compositor this environment selects: Wayland, then X11, then headless.
     ///
     /// Does not attempt to connect to the compositor.
@@ -341,7 +369,7 @@ impl GraphicalEnvironment {
         } else if cfg!(feature = "x11") && is_set(&self.x11_display) {
             "X11"
         } else {
-            "Headless"
+            "headless"
         }
     }
 }
@@ -443,6 +471,13 @@ pub trait Platform: 'static {
         None
     }
 
+    /// Returns the factor by which text should be scaled, on top of the window's scale factor.
+    fn text_scale_factor(&self) -> f32 {
+        1.0
+    }
+
+    fn on_text_scale_factor_change(&self, _callback: Box<dyn FnMut()>) {}
+
     fn open_url(&self, url: &str);
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>);
     fn register_url_scheme(&self, url: &str) -> Task<Result<()>>;
@@ -510,6 +545,11 @@ pub trait Platform: 'static {
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
 
+    /// Platform-specific diagnostic state, for [`App::debug_state`].
+    fn debug_state(&self) -> serde_json::Value {
+        serde_json::Value::Null
+    }
+
     fn thermal_state(&self) -> ThermalState;
     fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>);
     fn prevent_idle_sleep(&self, reason: &str) -> Task<Result<ActivityGuard>>;
@@ -546,8 +586,12 @@ pub trait Platform: 'static {
     ///
     /// Best-effort: some platforms cannot retract a notification once shown,
     /// in which case it ages out of the notification center on its own.
-    fn dismiss_system_notification(&self, tag: &str) {
+    /// The task completes after the platform calls return, not after any
+    /// asynchronous work inside the operating system. Dropping it does not
+    /// cancel dismissal.
+    fn dismiss_system_notification(&self, tag: &str) -> Task<()> {
         _ = tag;
+        Task::ready(())
     }
 
     /// Registers the callback invoked when the user activates a system
@@ -1304,6 +1348,10 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn zoom(&self);
     fn toggle_fullscreen(&self);
     fn is_fullscreen(&self) -> bool;
+    /// Platform-specific diagnostic state, for [`App::debug_state`].
+    fn debug_state(&self) -> serde_json::Value {
+        serde_json::Value::Null
+    }
     fn frame_waker(&self) -> Option<Rc<dyn Fn()>> {
         None
     }
@@ -1324,6 +1372,46 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>);
     fn on_hit_test_window_control(&self, callback: Box<dyn FnMut() -> Option<WindowControlArea>>);
     fn on_close(&self, callback: Box<dyn FnOnce()>);
+
+    /// Adds a platform view beneath the window's rendered content, hidden
+    /// until a drawn scene contains a [`PaintNativeView`](crate::PaintNativeView)
+    /// for it. Dropping the returned value removes the view from the window.
+    /// Returns `None` when the platform cannot composite native views.
+    ///
+    /// # Safety
+    ///
+    /// `view` must point to a live view of the kind this platform embeds,
+    /// which is not in another view hierarchy.
+    unsafe fn attach_native_view(
+        &self,
+        _id: crate::NativeViewId,
+        _view: std::ptr::NonNull<std::ffi::c_void>,
+    ) -> Option<Box<dyn std::any::Any>> {
+        None
+    }
+    /// Gives keyboard input to the native view, or back to the window's own
+    /// content for `None`.
+    fn set_focused_native_view(&self, _id: Option<crate::NativeViewId>) {}
+    /// Registers the callback that decides whether a mouse event at a
+    /// position belongs to a native view instead of the window's content.
+    fn on_hit_test_native_view(
+        &self,
+        _callback: Box<dyn FnMut(Point<Pixels>) -> Option<crate::NativeViewId>>,
+    ) {
+    }
+    /// Registers the callback invoked when the user moves keyboard input to
+    /// a native view through the platform, such as by clicking in it.
+    fn on_native_view_focused(&self, _callback: Box<dyn FnMut(crate::NativeViewId)>) {}
+    /// Registers the callback offered each key press before the native view
+    /// that has keyboard input, which returns whether it used the key.
+    ///
+    /// The native view receives the keys it doesn't use, and the ones the
+    /// view doesn't use either arrive afterwards as ordinary input.
+    fn on_key_down_before_native_view(
+        &self,
+        _callback: Box<dyn FnMut(crate::KeyDownEvent) -> bool>,
+    ) {
+    }
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn on_button_layout_changed(&self, _callback: Box<dyn FnMut()>) {}
     fn draw(&self, scene: &Scene);
@@ -1349,6 +1437,8 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
     #[cfg(target_os = "macos")]
     fn set_traffic_light_position(&self, _position: Point<Pixels>) {}
+    #[cfg(target_os = "macos")]
+    fn set_native_titlebar_visibility(&self, _visible: bool) {}
     fn show_character_palette(&self) {}
     fn titlebar_double_click(&self, _is_resizable: bool, _is_minimizable: bool) {}
     fn on_move_tab_to_new_window(&self, _callback: Box<dyn FnMut()>) {}
@@ -2168,6 +2258,12 @@ impl PlatformInputHandler {
         self.handler.apple_press_and_hold_enabled()
     }
 
+    /// Ends a composition from inside an update, where [`Self::unmark_text`]
+    /// cannot borrow the app.
+    pub(crate) fn unmark_text_during_update(&mut self, window: &mut Window, cx: &mut App) {
+        self.handler.unmark_text(window, cx);
+    }
+
     pub fn dispatch_input(&mut self, input: &str, window: &mut Window, cx: &mut App) {
         self.handler.replace_text_in_range(None, input, window, cx);
     }
@@ -2659,8 +2755,8 @@ pub struct WindowOptions {
     /// Whether the window should be minimized by the user
     pub is_minimizable: bool,
 
-    /// The display to create the window on, if this is None,
-    /// the window will be created on the main display
+    /// The display to create the window on. If neither this nor `window_bounds` is set, the window
+    /// is created on the active window's display. Otherwise, it falls back to the primary display.
     pub display_id: Option<DisplayId>,
 
     /// The appearance of the window background.
@@ -2783,9 +2879,10 @@ impl WindowBounds {
         }
     }
 
-    /// Creates a new window bounds that centers the window on the screen.
-    pub fn centered(size: Size<Pixels>, cx: &App) -> Self {
-        WindowBounds::Windowed(Bounds::centered(None, size, cx))
+    /// Creates window bounds centered on the given display, or the primary display if none is
+    /// provided.
+    pub fn centered(display_id: Option<DisplayId>, size: Size<Pixels>, cx: &App) -> Self {
+        WindowBounds::Windowed(Bounds::centered(display_id, size, cx))
     }
 }
 
@@ -3010,7 +3107,9 @@ impl From<&str> for PromptButton {
 }
 
 /// The style of the cursor (pointer)
-#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Copy, Clone, Default, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, EnumIter,
+)]
 pub enum CursorStyle {
     /// The default cursor
     #[default]

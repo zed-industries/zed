@@ -13,11 +13,7 @@ use indoc::indoc;
 use project::{FakeFs, Project};
 #[cfg(test)]
 use settings::Settings;
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
+use std::{path::Path, sync::Arc, time::Duration};
 use util::path;
 use util::path_list::PathList;
 
@@ -507,27 +503,6 @@ pub async fn run_until_first_tool_call(
             ix.unwrap()
         }
     }
-}
-
-pub fn get_zed_path() -> PathBuf {
-    let mut zed_path = std::env::current_exe().unwrap();
-
-    while zed_path
-        .file_name()
-        .is_none_or(|name| name.to_string_lossy() != "debug")
-    {
-        if !zed_path.pop() {
-            panic!("Could not find target directory");
-        }
-    }
-
-    zed_path.push("zed");
-
-    if !zed_path.exists() {
-        panic!("\n🚨 Run `cargo build` at least once before running e2e tests\n\n");
-    }
-
-    zed_path
 }
 
 #[cfg(test)]

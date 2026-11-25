@@ -496,7 +496,7 @@ impl Database {
                 .exec(&*tx)
                 .await?;
             if participant_update.rows_affected == 0 {
-                return Err(anyhow!("room does not exist or was already joined"))?;
+                Err(anyhow!("room does not exist or was already joined"))?;
             }
 
             let mut reshared_projects = Vec::new();
@@ -507,7 +507,7 @@ impl Database {
                     .await?
                     .context("project does not exist")?;
                 if project.host_user_id != Some(user_id) {
-                    return Err(anyhow!("no such project"))?;
+                    Err(anyhow!("no such project"))?;
                 }
 
                 let mut collaborators = project
@@ -542,6 +542,12 @@ impl Database {
 
                 self.update_project_worktrees(project_id, &reshared_project.worktrees, &tx)
                     .await?;
+                if rejoin_room.resends_worktree_settings {
+                    worktree_settings_file::Entity::delete_many()
+                        .filter(worktree_settings_file::Column::ProjectId.eq(project_id))
+                        .exec(&*tx)
+                        .await?;
+                }
 
                 reshared_projects.push(ResharedProject {
                     id: project_id,
@@ -740,7 +746,7 @@ impl Database {
                     while let Some(db_status) = db_statuses.next().await {
                         let db_status: project_repository_statuses::Model = db_status?;
                         if db_status.is_deleted {
-                            removed_statuses.push(db_status.repo_path.clone());
+                            removed_statuses.push(db_status.repo_path);
                         } else {
                             updated_statuses.push(db_status_to_proto(db_status)?);
                         }
@@ -793,6 +799,7 @@ impl Database {
                             head_commit_details,
                             branch_list: Vec::new(),
                             branch_list_error: None,
+                            remote_default_branch: None,
                             project_id: project_id.to_proto(),
                             id: db_repository.id as u64,
                             abs_path: db_repository.abs_path.clone(),

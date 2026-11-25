@@ -39,6 +39,8 @@
       rustBin = inputs.rust-overlay.lib.mkRustBin { } pkgs;
       rustToolchain = rustBin.fromRustupToolchainFile ../../rust-toolchain.toml;
 
+      corgi = (import "${inputs.corgi-src}/nix/toolchain.nix" { inherit inputs; }) pkgs;
+
       baseEnv =
         (zed-editor.overrideAttrs (attrs: {
           passthru.env = attrs.env;
@@ -59,11 +61,16 @@
             NIX_WRAPPER=1 CARGO=${rustToolchain}/bin/cargo ${pathToCargoScript} "$@"
           '';
       };
-    in
-    {
-      devShells.default = (pkgs.mkShell.override { inherit (zed-editor) stdenv; }) {
+
+      defaultShell = (pkgs.mkShell.override { inherit (zed-editor) stdenv; }) {
         name = "zed-editor-dev";
         inputsFrom = [ zed-editor ];
+
+        shellHook = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+          # The pkg-config setup hook replaces PKG_CONFIG with a relative command,
+          # which corgi's sandboxed build scripts cannot resolve.
+          export PKG_CONFIG="${pkgs.pkg-config}/bin/pkg-config"
+        '';
 
         packages =
           with pkgs;
@@ -94,7 +101,10 @@
               ps.pygobject3
             ]))
           ]
-          ++ lib.optionals stdenv.hostPlatform.isLinux [ accerciser ];
+          ++ lib.optionals stdenv.hostPlatform.isLinux [
+            accerciser
+            corgi
+          ];
 
         env =
           (removeAttrs baseEnv [
@@ -124,7 +134,30 @@
             ZED_ZSTD_MUSL_LIB = "${pkgs.pkgsCross.musl64.pkgsStatic.zstd.out}/lib";
             # For aws-lc-sys musl cross-compilation
             CC_x86_64_unknown_linux_musl = "${muslCross.stdenv.cc}/bin/x86_64-unknown-linux-musl-gcc";
+          }
+          // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+            # The cmake that corgi.toml downloads for Linux expects a standard
+            # dynamic loader, which NixOS does not have.
+            CMAKE = "${pkgs.cmake}/bin/cmake";
+            CORGI_RUST_TOOLCHAIN = "${rustToolchain}";
+            CORGI_CC = "${zed-editor.stdenv.cc}/bin/clang";
+            CORGI_NATIVE_RUNTIME_ROOTS = pkgs.lib.concatStringsSep ":" [
+              "${pkgs.pkg-config}"
+              "${pkgs.cmake}"
+              # The hook references libclang and the compiler inputs in its flags.
+              "${pkgs.rustPlatform.bindgenHook}"
+            ];
+            # Dev shells have no installed output; its rpath would embed the checkout.
+            NIX_NO_SELF_RPATH = "1";
           };
+      };
+    in
+    {
+      devShells = {
+        default = defaultShell;
+      }
+      // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+        corgi = defaultShell;
       };
     };
 }

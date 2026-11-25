@@ -25,7 +25,6 @@ pub(super) struct LspColorData {
 #[derive(Debug, Default)]
 struct BufferColors {
     colors: Vec<(Range<Anchor>, DocumentColor, InlayId)>,
-    inlay_colors: HashMap<InlayId, usize>,
 }
 
 impl LspColorData {
@@ -40,52 +39,48 @@ impl LspColorData {
         &mut self,
         new_render_mode: DocumentColorsRenderMode,
     ) -> Option<InlaySplice> {
-        if self.render_mode == new_render_mode {
+        let old_render_mode = self.render_mode;
+        if old_render_mode == new_render_mode {
             return None;
         }
         self.render_mode = new_render_mode;
-        match new_render_mode {
-            DocumentColorsRenderMode::Inlay => Some(InlaySplice {
-                to_remove: Vec::new(),
-                to_insert: self
-                    .buffer_colors
-                    .values()
-                    .flat_map(|buffer_colors| buffer_colors.colors.iter())
-                    .map(|(range, color, id)| {
-                        Inlay::color(
-                            id.id(),
-                            range.start,
-                            Rgba {
-                                r: color.color.red,
-                                g: color.color.green,
-                                b: color.color.blue,
-                                a: color.color.alpha,
-                            },
-                        )
-                    })
-                    .collect(),
-            }),
-            DocumentColorsRenderMode::None => Some(InlaySplice {
-                to_remove: self
-                    .buffer_colors
-                    .drain()
-                    .flat_map(|(_, buffer_colors)| buffer_colors.inlay_colors)
-                    .map(|(id, _)| id)
-                    .collect(),
-                to_insert: Vec::new(),
-            }),
-            DocumentColorsRenderMode::Border | DocumentColorsRenderMode::Background => {
-                Some(InlaySplice {
-                    to_remove: self
-                        .buffer_colors
-                        .iter_mut()
-                        .flat_map(|(_, buffer_colors)| buffer_colors.inlay_colors.drain())
-                        .map(|(id, _)| id)
-                        .collect(),
-                    to_insert: Vec::new(),
+        let to_remove = if old_render_mode == DocumentColorsRenderMode::Inlay {
+            self.buffer_colors
+                .values()
+                .flat_map(|buffer_colors| buffer_colors.colors.iter())
+                .map(|(_, _, id)| *id)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let to_insert = match new_render_mode {
+            DocumentColorsRenderMode::Inlay => self
+                .buffer_colors
+                .values()
+                .flat_map(|buffer_colors| buffer_colors.colors.iter())
+                .map(|(range, color, id)| {
+                    Inlay::color(
+                        id.id(),
+                        range.start,
+                        Rgba {
+                            r: color.color.red,
+                            g: color.color.green,
+                            b: color.color.blue,
+                            a: color.color.alpha,
+                        },
+                    )
                 })
+                .collect(),
+            DocumentColorsRenderMode::None => {
+                self.buffer_colors.clear();
+                Vec::new()
             }
-        }
+            DocumentColorsRenderMode::Border | DocumentColorsRenderMode::Background => Vec::new(),
+        };
+        Some(InlaySplice {
+            to_remove,
+            to_insert,
+        })
     }
 
     fn set_colors(
@@ -97,12 +92,6 @@ impl LspColorData {
         if buffer_colors.colors == colors {
             return false;
         }
-
-        buffer_colors.inlay_colors = colors
-            .iter()
-            .enumerate()
-            .map(|(i, (_, _, id))| (*id, i))
-            .collect();
         buffer_colors.colors = colors;
         true
     }
@@ -438,7 +427,7 @@ mod tests {
     };
 
     use futures::StreamExt;
-    use gpui::{Rgba, TestAppContext};
+    use gpui::{Entity, Rgba, TestAppContext, VisualTestContext};
     use language::FakeLspAdapter;
     use languages::rust_lang;
     use project::{FakeFs, Project};
@@ -450,17 +439,11 @@ mod tests {
     };
 
     use crate::{
-        Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT, actions::MoveToEnd, editor_tests::init_test,
+        Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT,
+        actions::MoveToEnd,
+        editor_settings::DocumentColorsRenderMode,
+        editor_tests::{init_test, update_test_editor_settings},
     };
-
-    fn extract_color_inlays(editor: &Editor, cx: &gpui::App) -> Vec<Rgba> {
-        editor
-            .all_inlays(cx)
-            .into_iter()
-            .filter_map(|inlay| inlay.get_color())
-            .map(Rgba::from)
-            .collect()
-    }
 
     #[gpui::test(iterations = 10)]
     async fn test_document_colors(cx: &mut TestAppContext) {
@@ -599,6 +582,7 @@ mod tests {
                 "Should have an initial inlay"
             );
         });
+        assert_color_render_modes(&editor, &[expected_color], cx);
 
         // opening another file in a split should not influence the LSP query counter
         workspace.update_in(cx, |workspace, window, cx| {
@@ -768,5 +752,72 @@ mod tests {
                 "Should clear all colors when the server returns an empty response"
             );
         });
+        assert_color_render_modes(&editor, &[], cx);
+    }
+
+    fn assert_color_render_modes(
+        editor: &Entity<Editor>,
+        expected_colors: &[Rgba],
+        cx: &mut VisualTestContext,
+    ) {
+        for _ in 0..2 {
+            for render_mode in [
+                DocumentColorsRenderMode::Inlay,
+                DocumentColorsRenderMode::Border,
+                DocumentColorsRenderMode::Inlay,
+                DocumentColorsRenderMode::Background,
+                DocumentColorsRenderMode::Inlay,
+                DocumentColorsRenderMode::None,
+                DocumentColorsRenderMode::Inlay,
+            ] {
+                update_test_editor_settings(cx, &|settings| {
+                    settings.lsp_document_colors = Some(render_mode);
+                });
+                cx.executor().advance_clock(LSP_REQUEST_DEBOUNCE_TIMEOUT);
+                cx.run_until_parked();
+                editor.update_in(cx, |editor, window, cx| {
+                    let expected_inlays = if render_mode == DocumentColorsRenderMode::Inlay {
+                        expected_colors
+                    } else {
+                        &[]
+                    };
+                    assert_eq!(
+                        extract_color_inlays(editor, cx),
+                        expected_inlays,
+                        "Unexpected inlays in {render_mode:?} mode",
+                    );
+                    let snapshot = editor.snapshot(window, cx);
+                    let (actual_mode, highlights) = editor
+                        .colors
+                        .as_ref()
+                        .unwrap()
+                        .editor_display_highlights(&snapshot);
+                    assert_eq!(actual_mode, render_mode);
+                    let expected_highlights = match render_mode {
+                        DocumentColorsRenderMode::Border | DocumentColorsRenderMode::Background => {
+                            expected_colors
+                        }
+                        DocumentColorsRenderMode::None | DocumentColorsRenderMode::Inlay => &[],
+                    };
+                    assert_eq!(
+                        highlights
+                            .into_iter()
+                            .map(|(_, color)| Rgba::from(color))
+                            .collect::<Vec<_>>(),
+                        expected_highlights,
+                        "Unexpected highlights in {render_mode:?} mode",
+                    );
+                });
+            }
+        }
+    }
+
+    fn extract_color_inlays(editor: &Editor, cx: &gpui::App) -> Vec<Rgba> {
+        editor
+            .all_inlays(cx)
+            .into_iter()
+            .filter_map(|inlay| inlay.get_color())
+            .map(Rgba::from)
+            .collect()
     }
 }

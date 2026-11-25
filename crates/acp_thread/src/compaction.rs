@@ -21,7 +21,8 @@ pub fn update_from_v1(update: acp_v1::CompactionUpdate) -> Result<acp_v2::Compac
         ),
     };
     Ok(
-        acp_v2::CompactionUpdate::new(acp_v2::CompactionId::new(update.compaction_id.0), status)
+        acp_v2::CompactionUpdate::new(acp_v2::CompactionId::new(update.compaction_id.0))
+            .status(status)
             .summary(summary)
             .error(update.error)
             .meta(update.meta),
@@ -103,7 +104,7 @@ mod tests {
             let original_id = update.compaction_id.0.clone();
             let converted = update_from_v1(update)?;
             assert!(Arc::ptr_eq(&converted.compaction_id.0, &original_id));
-            assert_eq!(converted.status, status);
+            assert_eq!(converted.status, MaybeUndefined::Value(status));
             assert_eq!(serde_json::to_value(converted)?, wire);
         }
 

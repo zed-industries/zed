@@ -199,6 +199,9 @@ type: (primitive_type) @type.builtin
   (preproc_directive)
 ] @keyword.preproc @preproc
 
+(preproc_call
+  argument: (preproc_arg) @preproc)
+
 (preproc_defined
   "defined" @keyword.preproc)
 
