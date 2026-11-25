@@ -1,5 +1,6 @@
 //! Native Windows sandbox built on the Process Security Environment (PSEC) API.
 
+use std::collections::BTreeSet;
 use std::ffi::{CStr, OsStr, OsString, c_void};
 use std::os::windows::ffi::{OsStrExt as _, OsStringExt as _};
 use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle};
@@ -51,9 +52,11 @@ use windows_core::{BOOL, HRESULT, PCSTR, PCWSTR, PWSTR};
 /// Argv flag that makes the Zed CLI act as the PSEC launcher.
 pub(crate) const LAUNCHER_FLAG: &str = "--windows-sandbox-launcher";
 
-/// Vtable offset of the spec's `fs_read_write` field, which the launcher also
-/// reads back to pin the granted folders.
+/// Vtable offsets of the spec's filesystem fields, which the launcher also reads
+/// back to pin folders.
 const FS_READ_WRITE: VOffsetT = 12;
+const FS_READ_ONLY: VOffsetT = 14;
+const FS_DENY: VOffsetT = 16;
 
 /// The network access a PSEC-sandboxed command gets.
 #[derive(Clone, Copy, Debug)]
@@ -149,8 +152,6 @@ fn encode_spec(paths: &PolicyPaths, network: NetworkAccess) -> Result<Vec<u8>> {
     const VERSION: VOffsetT = 4;
     const CAPABILITIES: VOffsetT = 6;
     const UI_RESTRICTIONS: VOffsetT = 10;
-    const FS_READ_ONLY: VOffsetT = 14;
-    const FS_DENY: VOffsetT = 16;
     const NETWORK_POLICY: VOffsetT = 18;
     const NETWORK_POLICY_PROXY: VOffsetT = 4;
     const NETWORK_POLICY_EGRESS: VOffsetT = 6;
@@ -353,6 +354,8 @@ fn run_launcher(command_line: &str) -> Result<u32> {
     // we open each folder (without sharing DELETE access, so it can't be renamed) and check it still
     // resolves to the same path. The handles stay open until the environment exists.
     let pinned_folders = pin_read_write_folders(&spec)?;
+    // Unlike the read-write folders, these stay pinned until the command exits.
+    let _pinned_ancestors = pin_folders_above_restricted_paths(&spec)?;
     let environment = SecurityEnvironment::create(&spec)?;
     drop(pinned_folders);
 
@@ -486,6 +489,8 @@ impl flatbuffers::Verifiable for SpecTable<'_> {
         verifier
             .visit_table(position)?
             .visit_field::<PathVector>("fs_read_write", FS_READ_WRITE, false)?
+            .visit_field::<PathVector>("fs_read_only", FS_READ_ONLY, false)?
+            .visit_field::<PathVector>("fs_deny", FS_DENY, false)?
             .finish();
         Ok(())
     }
@@ -497,14 +502,43 @@ fn pin_read_write_folders(spec: &[u8]) -> Result<Vec<OwnedHandle>> {
     paths
         .into_iter()
         .flatten()
-        .filter_map(|path| pin_folder(path).transpose())
+        .filter_map(|path| pin_folder(Path::new(path)).transpose())
+        .collect()
+}
+
+/// Pin every folder above the spec's read-only and denied paths.
+///
+/// PSEC matches a path each time it's accessed, so its rules follow names rather
+/// than files. A command that could rename a folder above one of those paths
+/// could reach the path's contents under the new name, or put a folder or
+/// junction of its own in its place. The volume root is left alone, since
+/// nothing inside the sandbox can write to it.
+fn pin_folders_above_restricted_paths(spec: &[u8]) -> Result<Vec<OwnedHandle>> {
+    let root = flatbuffers::root::<SpecTable>(spec).context("malformed sandbox policy")?;
+    let mut folders = BTreeSet::new();
+    for field in [FS_READ_ONLY, FS_DENY] {
+        let paths = unsafe { root.0.get::<PathVector>(field, None) };
+        for path in paths.into_iter().flatten() {
+            folders.extend(
+                Path::new(path)
+                    .ancestors()
+                    .skip(1)
+                    .filter(|folder| folder.parent().is_some()),
+            );
+        }
+    }
+    folders
+        .into_iter()
+        // A path PSEC can't protect because it doesn't exist has nothing to pin.
+        .filter(|folder| !matches!(folder.try_exists(), Ok(false)))
+        .filter_map(|folder| pin_folder(folder).transpose())
         .collect()
 }
 
 /// Open `path` so that neither it nor any folder above it can be renamed or
 /// deleted while the handle is open, then check that it still names itself.
-fn pin_folder(path: &str) -> Result<Option<OwnedHandle>> {
-    let wide_path: Vec<u16> = OsStr::new(path).encode_wide().chain([0]).collect();
+fn pin_folder(path: &Path) -> Result<Option<OwnedHandle>> {
+    let wide_path: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
     let handle = match unsafe {
         CreateFileW(
             PCWSTR(wide_path.as_ptr()),
@@ -519,7 +553,8 @@ fn pin_folder(path: &str) -> Result<Option<OwnedHandle>> {
         Ok(handle) => unsafe { OwnedHandle::from_raw_handle(handle.0) },
         Err(error) if error.code() == ERROR_ACCESS_DENIED.to_hresult() => return Ok(None),
         Err(error) => {
-            return Err(error).with_context(|| format!("failed to open the write grant `{path}`"));
+            return Err(error)
+                .with_context(|| format!("failed to open the sandbox path `{}`", path.display()));
         }
     };
 
@@ -533,13 +568,15 @@ fn pin_folder(path: &str) -> Result<Option<OwnedHandle>> {
     } as usize;
     ensure!(
         length != 0 && length < buffer.len(),
-        "failed to resolve the write grant `{path}`"
+        "failed to resolve the sandbox path `{}`",
+        path.display()
     );
     let final_path = PathBuf::from(OsString::from_wide(&buffer[..length]));
     let final_path = dunce::simplified(&final_path);
     ensure!(
-        final_path == Path::new(path),
-        "the write grant `{path}` was redirected to `{}`",
+        final_path == path,
+        "the sandbox path `{}` was redirected to `{}`",
+        path.display(),
         final_path.display()
     );
     Ok(Some(handle))
