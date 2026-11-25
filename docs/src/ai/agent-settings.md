@@ -179,11 +179,11 @@ Choose an `effort` value supported by the selected model. Omitting `effort` from
 
 To find supported effort values:
 
-1. Choose the target provider and model from the model selector in a native Zed Agent thread, even if it is already selected, to save it as `agent.default_model`.
+1. Choose the target provider and model from the model selector in a new native Zed Agent thread, even if it is already selected, to save it as `agent.default_model`.
 2. Enable thinking if it is off, then open the thinking effort menu. The "Change Thinking Effort" menu lists the model's supported levels. If the model offers no effort choices, omit `effort`.
 3. Choose a level and read `agent.default_model.effort` in `settings.json` for the exact value to use in `agent.subagent_model.effort`.
 
-These controls change the current thread and saved default model settings, and can update a matching favorite model. Restore your previous selections afterward if needed.
+These controls change the current thread. They also update `agent.default_model` when the thread uses the default model, and a matching favorite model, unless the thread is [thread-only](./agent-panel.md#changing-models). Restore your previous selections afterward if needed.
 
 The optional `speed` field accepts `"fast"` or `"standard"`. It applies only to models that support fast mode. Omitting it from `agent.subagent_model` leaves speed unspecified rather than inheriting the parent's speed.
 
