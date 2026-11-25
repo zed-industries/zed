@@ -41,10 +41,6 @@ impl AbsPath {
         AbsPathBuf(self.0.join(name.as_ref()))
     }
 
-    pub fn join_rel_path(&self, relative_path: &RelPath) -> AbsPathBuf {
-        AbsPathBuf(self.0.join(relative_path.as_std_path()))
-    }
-
     pub fn parent(&self) -> Option<&AbsPath> {
         let parent = self.0.parent()?;
         Some(AbsPath::new_unchecked(parent))

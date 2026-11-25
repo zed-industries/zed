@@ -7362,7 +7362,6 @@ async fn test_document_symbols(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
         ..lsp::ServerCapabilities::default()
     };
     client_a.language_registry().add(rust_lang());
-    #[allow(deprecated)]
     let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {

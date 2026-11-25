@@ -556,27 +556,23 @@ fn show_hover(
                         (range, Some(fallback_state))
                     });
 
-                let parsed_content =
-                    parse_blocks(&blocks, language_registry.as_ref(), language, cx);
-                if parsed_content.is_none() {
+                let Some(parsed_content) =
+                    parse_blocks(&blocks, language_registry.as_ref(), language, cx)
+                else {
                     continue;
-                }
+                };
                 let scroll_handle = ScrollHandle::new();
                 hover_highlights.push(range.clone());
                 let subscriptions = this
                     .update(cx, |_, cx| {
-                        let mut subscriptions = Vec::new();
-                        if let Some(parsed_content) = parsed_content.as_ref() {
-                            subscriptions.push(cx.observe(parsed_content, |_, _, cx| cx.notify()));
-                        }
-                        subscriptions
+                        vec![cx.observe(&parsed_content, |_, _, cx| cx.notify())]
                     })
                     .ok()
                     .unwrap_or_default();
                 info_popovers.push(InfoPopover {
                     symbol_range: RangeInEditor::Text(range),
                     fallback_state,
-                    parsed_content,
+                    parsed_content: Some(parsed_content),
                     debugger_hover: None,
                     scroll_handle,
                     keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),

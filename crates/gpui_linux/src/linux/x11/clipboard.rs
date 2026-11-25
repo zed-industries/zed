@@ -1203,7 +1203,6 @@ pub(crate) enum WaitConfig {
     Until(Instant),
 
     /// Waits forever until a new event is reached.
-    #[allow(unused)]
     #[allow(
         unused,
         reason = "Right now we don't wait for clipboard contents to sync on app close, but we may in the future"

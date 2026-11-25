@@ -1362,7 +1362,6 @@ mod tests {
             next_valid: point,
             nearest_valid: point,
             exact_unclipped: point,
-            column_overshoot_after_line_end: 0,
         };
 
         let buffer = cx.editor(|editor, _, cx| {
@@ -3322,13 +3321,7 @@ mod tests {
     #[gpui::test]
     async fn test_urls(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});
-        let mut cx = EditorLspTestContext::new_rust(
-            lsp::ServerCapabilities {
-                ..Default::default()
-            },
-            cx,
-        )
-        .await;
+        let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
 
         cx.set_state(indoc! {"
             Let's test a [complex](https://zed.dev/channel/had-(oops)) caseˇ.
@@ -3511,13 +3504,7 @@ mod tests {
     #[gpui::test]
     async fn test_hover_preconditions(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});
-        let mut cx = EditorLspTestContext::new_rust(
-            lsp::ServerCapabilities {
-                ..Default::default()
-            },
-            cx,
-        )
-        .await;
+        let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
 
         macro_rules! assert_no_highlight {
             ($cx:expr) => {
@@ -3565,13 +3552,7 @@ mod tests {
     #[gpui::test]
     async fn test_urls_at_beginning_of_buffer(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});
-        let mut cx = EditorLspTestContext::new_rust(
-            lsp::ServerCapabilities {
-                ..Default::default()
-            },
-            cx,
-        )
-        .await;
+        let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
 
         cx.set_state(indoc! {"https://zed.dev/releases is a cool ˇwebpage."});
 
@@ -3592,13 +3573,7 @@ mod tests {
     #[gpui::test]
     async fn test_urls_at_end_of_buffer(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});
-        let mut cx = EditorLspTestContext::new_rust(
-            lsp::ServerCapabilities {
-                ..Default::default()
-            },
-            cx,
-        )
-        .await;
+        let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
 
         cx.set_state(indoc! {"A cool ˇwebpage is https://zed.dev/releases"});
 
@@ -3715,13 +3690,7 @@ mod tests {
     #[gpui::test]
     async fn test_surrounding_filename(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});
-        let mut cx = EditorLspTestContext::new_rust(
-            lsp::ServerCapabilities {
-                ..Default::default()
-            },
-            cx,
-        )
-        .await;
+        let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
 
         let test_cases = [
             ("file ˇ name", None),
@@ -3799,13 +3768,7 @@ mod tests {
     #[gpui::test]
     async fn test_hover_filenames(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});
-        let mut cx = EditorLspTestContext::new_rust(
-            lsp::ServerCapabilities {
-                ..Default::default()
-            },
-            cx,
-        )
-        .await;
+        let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
 
         // Insert a new file
         let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
@@ -3969,13 +3932,7 @@ Sentence ending file2.rs.
     #[gpui::test]
     async fn test_hover_filename_with_row_column(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});
-        let mut cx = EditorLspTestContext::new_rust(
-            lsp::ServerCapabilities {
-                ..Default::default()
-            },
-            cx,
-        )
-        .await;
+        let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
 
         // Insert a new file with multiple lines
         let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
@@ -4048,13 +4005,7 @@ Sentence ending file2.rs.
     #[gpui::test]
     async fn test_hover_filename_with_row_only(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});
-        let mut cx = EditorLspTestContext::new_rust(
-            lsp::ServerCapabilities {
-                ..Default::default()
-            },
-            cx,
-        )
-        .await;
+        let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
 
         let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
         fs.as_fake()
@@ -4109,13 +4060,7 @@ Sentence ending file2.rs.
     #[gpui::test]
     async fn test_hover_filename_with_non_numeric_suffix(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});
-        let mut cx = EditorLspTestContext::new_rust(
-            lsp::ServerCapabilities {
-                ..Default::default()
-            },
-            cx,
-        )
-        .await;
+        let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
 
         let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
         fs.as_fake()
@@ -4167,13 +4112,7 @@ Sentence ending file2.rs.
     #[gpui::test]
     async fn test_hover_markdown_link_with_row_column(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});
-        let mut cx = EditorLspTestContext::new_rust(
-            lsp::ServerCapabilities {
-                ..Default::default()
-            },
-            cx,
-        )
-        .await;
+        let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
 
         let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
         fs.as_fake()
@@ -4245,13 +4184,7 @@ Sentence ending file2.rs.
     #[gpui::test]
     async fn test_hover_directories(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});
-        let mut cx = EditorLspTestContext::new_rust(
-            lsp::ServerCapabilities {
-                ..Default::default()
-            },
-            cx,
-        )
-        .await;
+        let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
 
         // Insert a new file
         let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
@@ -4290,13 +4223,7 @@ Sentence ending file2.rs.
     #[gpui::test]
     async fn test_hover_unicode(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});
-        let mut cx = EditorLspTestContext::new_rust(
-            lsp::ServerCapabilities {
-                ..Default::default()
-            },
-            cx,
-        )
-        .await;
+        let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
 
         cx.set_state(indoc! {"
             You can't open ˇ\"🤩\" because it's an emoji.

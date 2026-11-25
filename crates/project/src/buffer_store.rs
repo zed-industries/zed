@@ -33,7 +33,6 @@ use worktree::{File, PathChange, ProjectEntryId, Worktree, WorktreeId, WorktreeS
 /// A set of open buffers.
 pub struct BufferStore {
     state: BufferStoreState,
-    #[allow(clippy::type_complexity)]
     loading_buffers: HashMap<ProjectPath, Shared<Task<Result<Entity<Buffer>, Arc<anyhow::Error>>>>>,
     worktree_store: Entity<WorktreeStore>,
     opened_buffers: HashMap<BufferId, OpenBuffer>,

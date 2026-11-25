@@ -81,7 +81,6 @@ impl Focusable for ThemePreview {
         self.focus_handle.clone()
     }
 }
-impl ThemePreview {}
 
 impl Item for ThemePreview {
     type Event = ();
@@ -341,7 +340,7 @@ impl ThemePreview {
             .bg(layer.bg(cx))
             .text_color(cx.theme().colors().text)
             .gap_2()
-            .child(Headline::new(layer.clone().to_string()).size(HeadlineSize::Medium))
+            .child(Headline::new(layer.to_string()).size(HeadlineSize::Medium))
             .child(self.render_text(layer, window, cx))
             .child(self.render_colors(layer, window, cx))
     }

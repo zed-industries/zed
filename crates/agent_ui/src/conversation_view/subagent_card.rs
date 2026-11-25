@@ -1,6 +1,6 @@
 use acp_thread::{
     AcpThread, AgentThreadEntry, MessageIdentity, SessionMessage, SessionMessageSide, ToolCall,
-    ToolCallContent, ToolCallStatus,
+    ToolCallStatus,
 };
 use agent_client_protocol::v2::schema as acp_v2;
 use gpui::{App, Entity, SharedString};
@@ -111,14 +111,15 @@ pub(crate) enum SubagentStatus {
     Completed,
     Failed,
     Canceled,
+    /// Foreground work has stopped, but the agent hasn't reported a known outcome.
+    Idle,
     /// An ACP subagent that has reported no state yet, or reported that its state is unknown.
     Unknown,
 }
 
 impl SubagentStatus {
     /// An ACP subagent's status from the state it last reported, with the error to show for a
-    /// failure. Idle with no stop reason, or with one this version does not know, is a normal
-    /// end, as it is for any ACP session.
+    /// failure. Only an explicit successful stop reason warrants a success indicator.
     pub(crate) fn from_reported_state(
         state: Option<&acp_v2::StateUpdate>,
     ) -> (Self, Option<SharedString>) {
@@ -130,6 +131,7 @@ impl SubagentStatus {
                 (Self::Running, None)
             }
             acp_v2::StateUpdate::Idle(idle) => match &idle.stop_reason {
+                Some(acp_v2::StopReason::EndTurn) => (Self::Completed, None),
                 Some(acp_v2::StopReason::Cancelled) => (Self::Canceled, None),
                 Some(acp_v2::StopReason::Error(error)) => (
                     Self::Failed,
@@ -152,7 +154,7 @@ impl SubagentStatus {
                     Self::Failed,
                     Some("The subagent's model refused to continue.".into()),
                 ),
-                _ => (Self::Completed, None),
+                _ => (Self::Idle, None),
             },
             _ => (Self::Unknown, None),
         }
@@ -286,9 +288,10 @@ impl SubagentCardState {
         title.unwrap_or_else(|| match self.status {
             SubagentStatus::Canceled => "Subagent Canceled".into(),
             SubagentStatus::Failed => "Subagent Failed".into(),
-            SubagentStatus::Running | SubagentStatus::Completed | SubagentStatus::Unknown => {
-                "Spawning Agent…".into()
-            }
+            SubagentStatus::Running
+            | SubagentStatus::Completed
+            | SubagentStatus::Unknown
+            | SubagentStatus::Idle => "Spawning Agent…".into(),
         })
     }
 
@@ -318,12 +321,10 @@ impl SubagentCardState {
 }
 
 fn has_user_canceled_output(tool_call: &ToolCall, cx: &App) -> bool {
-    tool_call.content().iter().any(|content| match content {
-        ToolCallContent::ContentBlock { block, .. } => {
-            block.text_content(cx) == Some(USER_CANCELED_OUTPUT)
-        }
-        _ => false,
-    })
+    tool_call
+        .content()
+        .iter()
+        .any(|content| content.text_content(cx) == Some(USER_CANCELED_OUTPUT))
 }
 
 fn tool_call_error(tool_call: &ToolCall, cx: &App) -> Option<SharedString> {
@@ -331,10 +332,7 @@ fn tool_call_error(tool_call: &ToolCall, cx: &App) -> Option<SharedString> {
         return None;
     }
     tool_call.content().iter().find_map(|content| {
-        let ToolCallContent::ContentBlock { block, .. } = content else {
-            return None;
-        };
-        block
+        content
             .text_content(cx)
             .filter(|text| !text.is_empty() && *text != USER_CANCELED_OUTPUT)
             .map(SharedString::from)
@@ -428,7 +426,14 @@ mod tests {
                 SubagentStatus::Unknown,
                 None,
             ),
-            (Some(idle(None)), SubagentStatus::Completed, None),
+            (Some(idle(None)), SubagentStatus::Idle, None),
+            (
+                Some(idle(Some(acp_v2::StopReason::Other(
+                    acp_v2::OtherStopReason::new("_custom", Default::default()),
+                )))),
+                SubagentStatus::Idle,
+                None,
+            ),
             (
                 Some(idle(Some(acp_v2::StopReason::EndTurn))),
                 SubagentStatus::Completed,

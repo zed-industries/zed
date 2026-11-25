@@ -2239,7 +2239,7 @@ impl RecentProjectsDelegate {
             cx.spawn_in(window, async move |this, cx| {
                 let Some(fs) = fs else { return };
                 let deleted_workspace_ids = db
-                    .delete_recent_workspace_group(&recent_workspace)
+                    .delete_recent_workspace_group(&recent_workspace, fs.as_ref())
                     .await
                     .log_err()
                     .unwrap_or_default();

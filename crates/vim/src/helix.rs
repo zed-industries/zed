@@ -1949,7 +1949,7 @@ mod test {
     use project::FakeFs;
     use search::{ProjectSearchView, project_search};
     use serde_json::json;
-    use settings::{SettingsStore, ThemeColorsContent, ThemeStyleContent};
+    use settings::{SettingsStore, ThemeColorsContent, ThemeStyleContent, UseSystemClipboard};
     use theme::ActiveTheme as _;
     use util::path;
     use workspace::{DeploySearch, MultiWorkspace};
@@ -2847,13 +2847,36 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_helix_yank(cx: &mut gpui::TestAppContext) {
+    async fn test_helix_yank_default(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.enable_helix();
 
         cx.write_to_clipboard(gpui::ClipboardItem::new_string("external".into()));
 
-        // Test yanking a single character (no explicit selection) should not clobber the system clipboard
+        // Test yanking a single character (no explicit selection) should use the system clipboard
+        cx.set_state("hello ˇworld", Mode::HelixNormal);
+        cx.simulate_keystrokes("y");
+        cx.assert_state("hello ˇworld", Mode::HelixNormal);
+        cx.shared_clipboard().assert_eq("w");
+        cx.simulate_keystrokes("l p");
+        cx.assert_state("hello wo«wˇ»rld", Mode::HelixNormal);
+
+        // Test yanking a multi-char selection
+        cx.set_state("hello «worlˇ»d", Mode::HelixNormal);
+        cx.simulate_keystrokes("y");
+        cx.shared_clipboard().assert_eq("worl");
+        cx.assert_state("hello «worlˇ»d", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_yank_system_clipboard_never(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_use_system_clipboard(UseSystemClipboard::Never);
+
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string("external".into()));
+
+        // Test yanking a single character (no explicit selection) should not use the system clipboard
         cx.set_state("hello ˇworld", Mode::HelixNormal);
         cx.simulate_keystrokes("y");
         cx.assert_state("hello ˇworld", Mode::HelixNormal);
@@ -2920,7 +2943,7 @@ mod test {
         for action in ["d", "c escape"] {
             cx.set_state("«deletedˇ»", Mode::HelixNormal);
             cx.simulate_keystrokes(action);
-            cx.shared_clipboard().assert_eq("external");
+            cx.shared_clipboard().assert_eq("deleted");
 
             cx.set_state("ˇ", Mode::HelixNormal);
             cx.simulate_keystrokes("\" 0 p");
@@ -2940,11 +2963,11 @@ mod test {
         cx.set_state("ˇ", Mode::HelixNormal);
         cx.simulate_keystrokes("\" 2 p");
         cx.assert_state("«first\nˇ»", Mode::HelixNormal);
-        cx.shared_clipboard().assert_eq("external");
+        cx.shared_clipboard().assert_eq("second\n");
 
         cx.set_state("ˇ\nsecond line", Mode::HelixNormal);
         cx.simulate_keystrokes("d");
-        cx.shared_clipboard().assert_eq("external");
+        cx.shared_clipboard().assert_eq("\n");
     }
 
     #[gpui::test]
@@ -2952,15 +2975,7 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.enable_helix();
         cx.write_to_clipboard(gpui::ClipboardItem::new_string("external".into()));
-        cx.set_state("«internalˇ»", Mode::HelixNormal);
-        cx.simulate_keystrokes("y");
 
-        for action in ["p", "\" \" p", "shift-r", "\" \" shift-r"] {
-            cx.set_state("ˇ", Mode::HelixNormal);
-            cx.simulate_keystrokes(action);
-            cx.assert_state("«internalˇ»", Mode::HelixNormal);
-            cx.shared_clipboard().assert_eq("external");
-        }
         cx.set_state("«namedˇ»", Mode::HelixNormal);
         cx.simulate_keystrokes("\" a y");
         cx.set_state("ˇ", Mode::HelixNormal);

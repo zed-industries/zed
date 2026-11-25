@@ -199,6 +199,7 @@ impl Ord for SettingsFile {
         use std::cmp::Ordering;
         match (self, other) {
             (User, User) => Ordering::Equal,
+            (Global, Global) => Ordering::Equal,
             (Server, Server) => Ordering::Equal,
             (Default, Default) => Ordering::Equal,
             (Project((id1, rel_path1)), Project((id2, rel_path2))) => id1
@@ -278,6 +279,7 @@ pub trait AnySettingValue: 'static + Send + Sync {
     fn set_global_value(&mut self, value: Box<dyn Any>);
     fn set_local_value(&mut self, root_id: WorktreeId, path: Arc<RelPath>, value: Box<dyn Any>);
     fn clear_local_values(&mut self, root_id: WorktreeId);
+    fn has_local_values(&self, root_id: WorktreeId) -> bool;
 }
 
 /// Parameters that are used when generating some JSON schemas at runtime.
@@ -1195,6 +1197,15 @@ impl SettingsStore {
         Ok(())
     }
 
+    pub fn has_local_settings(&self, root_id: WorktreeId, cx: &App) -> bool {
+        self.local_settings(root_id).next().is_some()
+            || self
+                .setting_values
+                .values()
+                .any(|setting_value| setting_value.has_local_values(root_id))
+            || self.editorconfig_store.read(cx).has_worktree_state(root_id)
+    }
+
     pub fn local_settings(
         &self,
         root_id: WorktreeId,
@@ -1682,6 +1693,15 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
     fn clear_local_values(&mut self, root_id: WorktreeId) {
         self.local_values
             .retain(|(worktree_id, _, _)| *worktree_id != root_id);
+    }
+
+    fn has_local_values(&self, root_id: WorktreeId) -> bool {
+        let ix = self
+            .local_values
+            .partition_point(|(worktree_id, _, _)| *worktree_id < root_id);
+        self.local_values
+            .get(ix)
+            .is_some_and(|(worktree_id, _, _)| *worktree_id == root_id)
     }
 }
 
@@ -3153,6 +3173,7 @@ mod tests {
             &wt1_subdir,
             &wt0_child2,
             &SettingsFile::Server,
+            &SettingsFile::Global,
             &wt0_child1,
             &SettingsFile::User,
         ];
@@ -3168,9 +3189,27 @@ mod tests {
                 &wt1_root,
                 &SettingsFile::Server,
                 &SettingsFile::User,
+                &SettingsFile::Global,
                 &SettingsFile::Default,
             ]
-        )
+        );
+
+        // The sort above can't detect a non-reflexive `cmp`.
+        for (left_index, left) in files.iter().enumerate() {
+            for (right_index, right) in files.iter().enumerate() {
+                assert_eq!(
+                    left.cmp(right),
+                    left_index.cmp(&right_index),
+                    "{left:?} compared to {right:?}"
+                );
+            }
+        }
+
+        let mut file_errors = BTreeMap::default();
+        file_errors.insert(SettingsFile::Global, 1);
+        file_errors.insert(SettingsFile::Global, 2);
+        assert_eq!(file_errors.len(), 1);
+        assert_eq!(file_errors.get(&SettingsFile::Global), Some(&2));
     }
 
     #[test]

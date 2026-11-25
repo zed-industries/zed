@@ -132,10 +132,6 @@ fn build_extension_to_language_map() -> HashMap<String, String> {
 
     for entry in entries.flatten() {
         let config_path = entry.path().join("config.toml");
-        if !config_path.exists() {
-            continue;
-        }
-
         let content_str = match std::fs::read_to_string(&config_path) {
             Ok(s) => s,
             Err(_) => continue,
@@ -282,14 +278,12 @@ pub fn run_filter_languages(
         .map(|(lang, _)| (lang.to_lowercase(), lang))
         .collect();
 
-    if !allowed_languages.is_empty() {
-        for lang in &allowed_languages {
-            if !language_name_lower_map.contains_key(lang) {
-                eprintln!(
-                    "Warning: '{}' is not a recognized language name. Use --list to see available languages.",
-                    lang
-                );
-            }
+    for lang in &allowed_languages {
+        if !language_name_lower_map.contains_key(lang) {
+            eprintln!(
+                "Warning: '{}' is not a recognized language name. Use --list to see available languages.",
+                lang
+            );
         }
     }
 

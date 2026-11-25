@@ -3,7 +3,7 @@
 
   inputs = {
     corgi-src = {
-      url = "github:ConradIrwin/corgi/v0.1.106";
+      url = "github:ConradIrwin/corgi/v0.1.107";
       flake = false;
     };
     treefmt-nix.url = "github:numtide/treefmt-nix";

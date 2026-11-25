@@ -42,6 +42,9 @@ use gpui::*;
 struct TrackedWindow {
     handle: SafeHwnd,
     frame_signal: Arc<PlatformFrameSignal>,
+    /// Whether the window was presentable at the last vsync. Only the vsync
+    /// thread uses it.
+    presentable: AtomicBool,
 }
 
 impl TrackedWindow {
@@ -464,17 +467,28 @@ impl WindowsPlatform {
                         break;
                     };
                     for hwnd in all_windows.read().iter() {
-                        unsafe {
-                            if let Some(signal_at) = signal_at {
-                                if IsWindowVisible(hwnd.as_raw()).as_bool()
-                                    && !IsIconic(hwnd.as_raw()).as_bool()
-                                {
-                                    hwnd.frame_signal.record(signal_at, signal_source);
-                                } else {
-                                    // Hidden windows may not consume WM_PAINT until shown again.
-                                    hwnd.frame_signal.take();
-                                }
+                        let presentable = is_window_presentable(hwnd.as_raw());
+                        if hwnd.presentable.swap(presentable, Ordering::Relaxed) != presentable {
+                            unsafe {
+                                PostMessageW(
+                                    Some(hwnd.as_raw()),
+                                    WM_GPUI_PRESENTABILITY_CHANGED,
+                                    WPARAM(validation_number),
+                                    LPARAM(0),
+                                )
                             }
+                            .log_err();
+                        }
+                        if let Some(signal_at) = signal_at {
+                            if presentable {
+                                hwnd.frame_signal.record(signal_at, signal_source);
+                            } else {
+                                // Hidden, minimized or cloaked windows may not
+                                // paint until shown, so don't latch a signal.
+                                hwnd.frame_signal.take();
+                            }
+                        }
+                        unsafe {
                             RedrawWindow(Some(hwnd.as_raw()), None, None, RDW_INVALIDATE)
                                 .ok()
                                 .log_err();
@@ -752,6 +766,7 @@ impl Platform for WindowsPlatform {
         self.raw_window_handles.write().push(TrackedWindow {
             handle: handle.into(),
             frame_signal: window.state.frame_signal.clone(),
+            presentable: AtomicBool::new(false),
         });
 
         Ok(Box::new(window))
@@ -1920,6 +1935,7 @@ unsafe fn username_and_password(credential: &CREDENTIALW) -> Result<(String, Vec
 mod tests {
     use std::ffi::{OsStr, OsString};
 
+    use crate::clipboard::read_raw_clipboard_text;
     use crate::{read_from_clipboard, write_to_clipboard};
     use gpui::ClipboardItem;
     use windows::Win32::Security::Credentials::{
@@ -2021,6 +2037,23 @@ mod tests {
             Some(ClipboardItem::new_string_with_json_metadata(
                 "before after".to_string(),
                 vec![12],
+            )),
+        );
+
+        let item = ClipboardItem::new_string_with_json_metadata("a\nb\nc".to_string(), vec![5]);
+        write_to_clipboard(item.clone());
+        assert_eq!(read_raw_clipboard_text().as_deref(), Some("a\r\nb\r\nc"));
+        assert_eq!(read_from_clipboard(), Some(item));
+
+        let item =
+            ClipboardItem::new_string_with_json_metadata("a\r\nb\nc\rd".to_string(), vec![6]);
+        write_to_clipboard(item);
+        assert_eq!(read_raw_clipboard_text().as_deref(), Some("a\r\nb\r\nc\rd"));
+        assert_eq!(
+            read_from_clipboard(),
+            Some(ClipboardItem::new_string_with_json_metadata(
+                "a\nb\nc\rd".to_string(),
+                vec![6],
             )),
         );
     }

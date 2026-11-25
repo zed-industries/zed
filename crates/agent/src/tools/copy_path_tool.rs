@@ -1,21 +1,21 @@
 use super::tool_permissions::{
     authorize_symlink_escapes, canonicalize_worktree_roots, collect_symlink_escapes,
-    resolve_creatable_global_skill_descendant_path, resolve_global_skill_descendant_path,
-    sensitive_settings_kind,
+    global_skill_settings_kind, sensitive_settings_kind,
 };
 use crate::{
-    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
+    AgentTool, GlobalSkillFiles, ToolCallEventStream, ToolInput, ToolPermissionDecision,
     authorize_with_sensitive_settings, decide_permission_for_paths,
 };
 use agent_client_protocol::v2::schema as acp;
 use agent_settings::AgentSettings;
+use agent_skills::GlobalSkillFileOperation;
 use futures::FutureExt as _;
 use gpui::{App, Entity, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
@@ -102,14 +102,13 @@ impl AgentTool for CopyPathTool {
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
-            let global_source_path =
-                resolve_global_skill_descendant_path(Path::new(&input.source_path), fs.as_ref())
-                    .await;
-            let global_destination_path = resolve_creatable_global_skill_descendant_path(
-                Path::new(&input.destination_path),
-                fs.as_ref(),
-            )
-            .await;
+            let global_skill_files = cx.update(|cx| GlobalSkillFiles::for_project(&project, cx));
+            let global_source_path = global_skill_files
+                .resolve_descendant(Path::new(&input.source_path), cx)
+                .await;
+            let global_destination_path = global_skill_files
+                .resolve_creatable_descendant(Path::new(&input.destination_path), cx)
+                .await;
 
             let symlink_escapes: Vec<(&str, std::path::PathBuf)> =
                 project.read_with(cx, |project, cx| {
@@ -133,7 +132,12 @@ impl AgentTool for CopyPathTool {
                 &canonical_roots,
                 fs.as_ref(),
             )
-            .await);
+            .await)
+            .or(global_skill_settings_kind(
+                global_source_path
+                    .as_ref()
+                    .or(global_destination_path.as_ref()),
+            ));
 
             let needs_confirmation = matches!(decision, ToolPermissionDecision::Confirm)
                 || (matches!(decision, ToolPermissionDecision::Allow) && sensitive_kind.is_some());
@@ -172,8 +176,10 @@ impl AgentTool for CopyPathTool {
             }
 
             if global_source_path.is_some() || global_destination_path.is_some() {
-                let source_path = if let Some(global_source_path) = global_source_path {
-                    global_source_path
+                // A global skill path is resolved again where the operation is
+                // applied, so it's passed as the agent wrote it.
+                let source = if global_source_path.is_some() {
+                    PathBuf::from(&input.source_path)
                 } else {
                     project.read_with(cx, |project, cx| {
                         let project_path = project.find_project_path(&input.source_path, cx).ok_or_else(|| {
@@ -188,9 +194,8 @@ impl AgentTool for CopyPathTool {
                     })?
                 };
 
-                let destination_path = if let Some(global_destination_path) = global_destination_path
-                {
-                    global_destination_path
+                let destination = if global_destination_path.is_some() {
+                    PathBuf::from(&input.destination_path)
                 } else {
                     project.read_with(cx, |project, cx| {
                         let project_path = project.find_project_path(&input.destination_path, cx).ok_or_else(|| {
@@ -208,13 +213,12 @@ impl AgentTool for CopyPathTool {
                     })?
                 };
 
+                let operation = GlobalSkillFileOperation::Copy {
+                    source,
+                    destination,
+                };
                 futures::select! {
-                    result = fs::copy_recursive(
-                        fs.as_ref(),
-                        &source_path,
-                        &destination_path,
-                        fs::CopyOptions::default(),
-                    ).fuse() => {
+                    result = global_skill_files.apply(operation, cx).fuse() => {
                         result.map_err(|e| format!("Copying {} to {}: {e}", input.source_path, input.destination_path))?;
                     }
                     _ = event_stream.cancelled_by_user().fuse() => {

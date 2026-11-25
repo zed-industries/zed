@@ -63,6 +63,11 @@ pub fn language_model(model: &CopilotChatModel) -> LanguageModel {
         supports_streaming_tools: true,
         supports_images: model.supports_vision(),
         supports_thinking: model.can_think(),
+        supports_system_prompt_updates: if model.supports_messages() {
+            anthropic::supports_mid_conversation_system_messages(model.id())
+        } else {
+            model.supports_response()
+        },
         supported_effort_levels: supported_effort_levels.into(),
         tool_choice_support: LanguageModelToolChoiceSupport {
             auto: supports_tools,
@@ -148,6 +153,8 @@ pub fn stream_completion(
                 } else {
                     AnthropicModelMode::Default
                 },
+                None,
+                false,
                 AnthropicPromptCacheMode::Legacy,
                 &PROVIDER_ID,
             )?;
@@ -913,7 +920,8 @@ fn into_copilot_chat(
                         | MessageContent::RedactedThinking(_)
                         | MessageContent::ToolResult(_)
                         | MessageContent::Image(_)
-                        | MessageContent::Compaction(_) => None,
+                        | MessageContent::Compaction(_)
+                        | MessageContent::ReasoningEffort { .. } => None,
                     }) {
                         buffer.push_str(string);
                     }

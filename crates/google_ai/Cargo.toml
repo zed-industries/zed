@@ -20,6 +20,7 @@ language_model_core.workspace = true
 log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
 http_client = { workspace = true, features = ["test-support"] }

@@ -1759,7 +1759,7 @@ async fn call(
         .has_contact(calling_user_id, called_user_id)
         .await?
     {
-        return Err(anyhow!("cannot call a user who isn't a contact"))?;
+        Err(anyhow!("cannot call a user who isn't a contact"))?;
     }
 
     let incoming_call = {
@@ -2809,7 +2809,7 @@ async fn request_contact(
     let requester_id = session.user_id();
     let responder_id = UserId::from_proto(request.responder_id);
     if requester_id == responder_id {
-        return Err(anyhow!("cannot add yourself as a contact"))?;
+        Err(anyhow!("cannot add yourself as a contact"))?;
     }
 
     let notifications = session

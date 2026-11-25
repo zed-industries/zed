@@ -2,15 +2,18 @@ use super::*;
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use gpui::{App, Entity, TestAppContext};
 use indoc::indoc;
-use language::{Buffer, Rope};
+use language::{Buffer, DiskState, LocalFile, Rope};
 use parking_lot::RwLock;
 use rand::prelude::*;
-use settings::SettingsStore;
+use settings::{SettingsStore, WorktreeId};
+use std::cell::Cell;
 use std::env;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use util::RandomCharIter;
-use util::rel_path::rel_path;
+use util::paths::PathStyle;
+use util::rel_path::{RelPath, rel_path};
 use util::test::sample_text;
 
 #[gpui::test]
@@ -379,6 +382,189 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
             })
             .collect::<Vec<_>>()
     }
+}
+
+#[gpui::test]
+async fn test_excerpt_boundaries_in_subranges_with_diff_hunks(cx: &mut TestAppContext) {
+    // Four buffers, one excerpt each. The second has two expanded diff hunks.
+    //
+    //  0   a1
+    //  1   a2
+    //  2   b1
+    //  3 - b2
+    //  4 + B2
+    //  5   b3
+    //  6 - b4
+    //  7 + B4
+    //  8   b5
+    //  9   c1
+    // 10   c2
+    // 11   d1
+    let buffers = [
+        cx.new(|cx| Buffer::local("a1\na2", cx)),
+        cx.new(|cx| Buffer::local("b1\nB2\nb3\nB4\nb5", cx)),
+        cx.new(|cx| Buffer::local("c1\nc2", cx)),
+        cx.new(|cx| Buffer::local("d1", cx)),
+    ];
+    let diff = cx.new(|cx| {
+        BufferDiff::new_with_base_text(
+            "b1\nb2\nb3\nb4\nb5",
+            &buffers[1].read(cx).text_snapshot(),
+            cx,
+        )
+    });
+    cx.run_until_parked();
+
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+        for (index, buffer) in buffers.iter().enumerate() {
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(index as u64),
+                buffer.clone(),
+                [Point::zero()..buffer.read(cx).max_point()],
+                0,
+                cx,
+            );
+        }
+        multibuffer.add_diff(diff, cx);
+        multibuffer.expand_diff_hunks(vec![Anchor::Min..Anchor::Max], cx);
+        multibuffer
+    });
+    cx.run_until_parked();
+
+    let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+    assert_eq!(
+        snapshot.text(),
+        "a1\na2\nb1\nb2\nB2\nb3\nb4\nB4\nb5\nc1\nc2\nd1"
+    );
+
+    fn boundaries<T: ToOffset>(
+        snapshot: &MultiBufferSnapshot,
+        range: impl RangeBounds<T>,
+    ) -> Vec<(u32, Option<BufferId>, BufferId)> {
+        snapshot
+            .excerpt_boundaries_in_range(range)
+            .map(|boundary| {
+                (
+                    boundary.row.0,
+                    boundary.prev.as_ref().map(|prev| prev.buffer_id()),
+                    boundary.next.buffer_id(),
+                )
+            })
+            .collect()
+    }
+
+    let [id_1, id_2, id_3, id_4] =
+        buffers.map(|buffer| buffer.read_with(cx, |buffer, _| buffer.remote_id()));
+    let all_boundaries = [
+        (0, None, id_1),
+        (2, Some(id_1), id_2),
+        (9, Some(id_2), id_3),
+        (11, Some(id_3), id_4),
+    ];
+    assert_eq!(
+        boundaries(&snapshot, MultiBufferOffset(0)..),
+        all_boundaries
+    );
+    // The last row of each excerpt: a2, b5, c2 and d1.
+    assert_eq!(
+        snapshot
+            .excerpt_boundaries_in_range(MultiBufferOffset(0)..)
+            .map(|boundary| boundary.next.end_row.0)
+            .collect::<Vec<_>>(),
+        [1, 8, 10, 11]
+    );
+
+    // Rows 3 to 8 each start a diff transform in the middle of buffer 2. A range
+    // that starts there must not treat that row as the start of an excerpt: buffer 2
+    // stays the excerpt before the range, and is `prev` of the boundary at row 9.
+    let max_row = snapshot.max_point().row;
+    for start_row in 0..=max_row {
+        let start = Point::new(start_row, 0);
+        let expected = all_boundaries
+            .iter()
+            .copied()
+            .filter(|(row, _, _)| *row >= start_row)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            boundaries(&snapshot, start..),
+            expected,
+            "range {start_row}.."
+        );
+
+        for end_row in start_row..=max_row {
+            let end = Point::new(end_row, 0);
+            let expected = all_boundaries
+                .iter()
+                .copied()
+                .filter(|(row, _, _)| *row >= start_row && *row < end_row)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                boundaries(&snapshot, start..end),
+                expected,
+                "range {start_row}..{end_row}"
+            );
+
+            let expected = all_boundaries
+                .iter()
+                .copied()
+                .filter(|(row, _, _)| *row >= start_row && *row <= end_row)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                boundaries(&snapshot, start..=end),
+                expected,
+                "range {start_row}..={end_row}"
+            );
+        }
+    }
+}
+
+thread_local! {
+    pub(super) static EXCERPT_BOUNDARY_STEPS: Cell<usize> = const { Cell::new(0) };
+}
+
+#[gpui::test]
+fn test_excerpt_boundaries_in_range_stops_at_range_end(cx: &mut App) {
+    let buffer_count = 200;
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+        for index in 0..buffer_count {
+            let buffer = cx.new(|cx| Buffer::local(format!("line {index}"), cx));
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(index),
+                buffer.clone(),
+                [Point::zero()..buffer.read(cx).max_point()],
+                0,
+                cx,
+            );
+        }
+        multibuffer
+    });
+    let snapshot = multibuffer.read(cx).snapshot(cx);
+    assert_eq!(snapshot.max_point().row as u64, buffer_count - 1);
+
+    EXCERPT_BOUNDARY_STEPS.set(0);
+    let rows = boundary_rows(&snapshot, Point::new(10, 0)..Point::new(13, 0));
+    let steps = EXCERPT_BOUNDARY_STEPS.get();
+
+    assert_eq!(rows, [10, 11, 12]);
+    // One more than the boundaries found: the excerpt after the range ends the walk.
+    assert_eq!(
+        steps,
+        rows.len() + 1,
+        "visited {steps} excerpts for a range that covers {} of {buffer_count}",
+        rows.len()
+    );
+}
+
+fn boundary_rows<T: ToOffset>(
+    snapshot: &MultiBufferSnapshot,
+    range: impl RangeBounds<T>,
+) -> Vec<u32> {
+    snapshot
+        .excerpt_boundaries_in_range(range)
+        .map(|boundary| boundary.row.0)
+        .collect()
 }
 
 #[gpui::test]
@@ -854,6 +1040,120 @@ fn test_excerpt_events(cx: &mut App) {
         follower_multibuffer.read(cx).snapshot(cx).text(),
     );
     assert_eq!(*follower_edit_event_count.read(), 5);
+}
+
+#[gpui::test]
+fn test_dirty_state_across_buffers(cx: &mut App) {
+    let buffers = (0..3)
+        .map(|_| cx.new(|cx| Buffer::local(sample_text(3, 3, 'a'), cx)))
+        .collect::<Vec<_>>();
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+    multibuffer.update(cx, |multibuffer, cx| {
+        for (ix, buffer) in buffers.iter().enumerate() {
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(ix as u64),
+                buffer.clone(),
+                [Point::zero()..Point::new(1, 0)],
+                0,
+                cx,
+            );
+        }
+    });
+    let is_dirty = |cx: &App| multibuffer.read(cx).is_dirty(cx);
+    let edit = |buffer: &Entity<Buffer>, cx: &mut App| {
+        buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "x")], None, cx));
+    };
+    assert!(!is_dirty(cx));
+
+    edit(&buffers[0], cx);
+    edit(&buffers[1], cx);
+    assert!(is_dirty(cx));
+    buffers[0].update(cx, |buffer, cx| buffer.did_save(buffer.version(), None, cx));
+    assert!(is_dirty(cx));
+    buffers[1].update(cx, |buffer, cx| buffer.did_save(buffer.version(), None, cx));
+    assert!(!is_dirty(cx));
+
+    edit(&buffers[2], cx);
+    assert!(is_dirty(cx));
+    buffers[2].update(cx, |buffer, cx| {
+        buffer.did_reload(buffer.version(), buffer.line_ending(), None, cx)
+    });
+    assert!(!is_dirty(cx));
+
+    edit(&buffers[1], cx);
+    assert!(is_dirty(cx));
+    buffers[1].update(cx, |buffer, cx| {
+        buffer.set_capability(Capability::ReadOnly, cx)
+    });
+    assert!(!is_dirty(cx));
+    buffers[1].update(cx, |buffer, cx| {
+        buffer.set_capability(Capability::ReadWrite, cx)
+    });
+    assert!(is_dirty(cx));
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.remove_excerpts(PathKey::sorted(1), cx);
+    });
+    assert!(!is_dirty(cx));
+}
+
+#[gpui::test]
+fn test_deleted_file_and_conflict_state_across_buffers(cx: &mut App) {
+    let buffers = (0..2)
+        .map(|_| cx.new(|cx| Buffer::local(sample_text(3, 3, 'a'), cx)))
+        .collect::<Vec<_>>();
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+    multibuffer.update(cx, |multibuffer, cx| {
+        for (ix, buffer) in buffers.iter().enumerate() {
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(ix as u64),
+                buffer.clone(),
+                [Point::zero()..Point::new(1, 0)],
+                0,
+                cx,
+            );
+        }
+    });
+    let has_deleted_file = |cx: &App| multibuffer.read(cx).has_deleted_file(cx);
+    let has_conflict = |cx: &App| multibuffer.read(cx).has_conflict(cx);
+    let set_disk_state = |buffer: &Entity<Buffer>, disk_state: DiskState, cx: &mut App| {
+        let file = Arc::new(TestFile {
+            path: rel_path("file").into_arc(),
+            disk_state,
+        });
+        buffer.update(cx, |buffer, cx| buffer.file_updated(file, cx));
+    };
+
+    set_disk_state(&buffers[0], DiskState::Deleted, cx);
+    set_disk_state(&buffers[1], DiskState::Deleted, cx);
+    assert!(has_deleted_file(cx));
+    set_disk_state(&buffers[0], DiskState::New, cx);
+    assert!(has_deleted_file(cx));
+    set_disk_state(&buffers[1], DiskState::New, cx);
+    assert!(!has_deleted_file(cx));
+
+    buffers[0].update(cx, |buffer, _| buffer.set_conflict());
+    buffers[1].update(cx, |buffer, _| buffer.set_conflict());
+    assert!(has_conflict(cx));
+    buffers[0].update(cx, |buffer, cx| buffer.did_save(buffer.version(), None, cx));
+    assert!(has_conflict(cx));
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.remove_excerpts(PathKey::sorted(1), cx);
+    });
+    assert!(!has_conflict(cx));
+}
+
+#[gpui::test]
+fn test_clone_with_pending_changes(cx: &mut App) {
+    let buffer = cx.new(|cx| Buffer::local("abc", cx));
+    let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+    assert_eq!(multibuffer.read(cx).snapshot(cx).text(), "abc");
+
+    buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "x")], None, cx));
+    let cloned_multibuffer =
+        multibuffer.update(cx, |multibuffer, cx| cx.new(|cx| multibuffer.clone(cx)));
+    assert_eq!(cloned_multibuffer.read(cx).snapshot(cx).text(), "xabc");
+    assert_eq!(multibuffer.read(cx).snapshot(cx).text(), "xabc");
 }
 
 #[gpui::test]
@@ -6247,9 +6547,7 @@ impl ReferenceMultibuffer {
                 let base_buffer = diff.base_text();
 
                 let mut offset = buffer_range.start;
-                let hunks = diff
-                    .hunks_intersecting_range(excerpt.range.clone(), buffer)
-                    .peekable();
+                let hunks = diff.hunks_intersecting_range(excerpt.range.clone(), buffer);
 
                 for hunk in hunks {
                     // Ignore hunks that are outside the excerpt range.
@@ -6657,11 +6955,60 @@ fn check_multibuffer(
 ) {
     let snapshot = multibuffer.snapshot(cx);
     let actual_text = snapshot.text();
-    let actual_boundary_rows = snapshot
-        .excerpt_boundaries_in_range(MultiBufferOffset(0)..)
-        .map(|b| b.row)
-        .collect::<HashSet<_>>();
     let actual_row_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
+
+    type BoundarySide = (BufferId, ExcerptRange<text::Anchor>, MultiBufferRow);
+    fn boundaries<T: ToOffset>(
+        snapshot: &MultiBufferSnapshot,
+        range: impl RangeBounds<T>,
+    ) -> Vec<(u32, Option<BoundarySide>, BoundarySide)> {
+        let side =
+            |info: &ExcerptBoundaryInfo| (info.buffer_id(), info.range.clone(), info.end_row);
+        snapshot
+            .excerpt_boundaries_in_range(range)
+            .map(|boundary| {
+                (
+                    boundary.row.0,
+                    boundary.prev.as_ref().map(side),
+                    side(&boundary.next),
+                )
+            })
+            .collect()
+    }
+    let all_boundaries = boundaries(&snapshot, MultiBufferOffset(0)..);
+    let actual_boundary_rows = all_boundaries
+        .iter()
+        .map(|(row, _, _)| MultiBufferRow(*row))
+        .collect::<HashSet<_>>();
+    let max_row = snapshot.max_point().row;
+    for _ in 0..8 {
+        let start_row = rng.random_range(0..=max_row);
+        let end_row = rng.random_range(start_row..=max_row);
+        let start = Point::new(start_row, 0);
+        let end = Point::new(end_row, 0);
+        let expected = |contains: &dyn Fn(u32) -> bool| {
+            all_boundaries
+                .iter()
+                .filter(|(row, _, _)| contains(*row))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            boundaries(&snapshot, start..),
+            expected(&|row| row >= start_row),
+            "range {start_row}.."
+        );
+        assert_eq!(
+            boundaries(&snapshot, start..end),
+            expected(&|row| row >= start_row && row < end_row),
+            "range {start_row}..{end_row}"
+        );
+        assert_eq!(
+            boundaries(&snapshot, start..=end),
+            expected(&|row| row >= start_row && row <= end_row),
+            "range {start_row}..={end_row}"
+        );
+    }
 
     let anchors_to_check = anchors
         .iter()
@@ -7378,4 +7725,47 @@ enum AnchorContractOp {
         index: u16,
         right: bool,
     },
+}
+
+struct TestFile {
+    path: Arc<RelPath>,
+    disk_state: DiskState,
+}
+
+impl File for TestFile {
+    fn as_local(&self) -> Option<&dyn LocalFile> {
+        None
+    }
+
+    fn disk_state(&self) -> DiskState {
+        self.disk_state
+    }
+
+    fn path(&self) -> &Arc<RelPath> {
+        &self.path
+    }
+
+    fn full_path(&self, _: &App) -> PathBuf {
+        self.path.as_std_path().to_path_buf()
+    }
+
+    fn path_style(&self, _: &App) -> PathStyle {
+        PathStyle::local()
+    }
+
+    fn file_name<'a>(&'a self, _: &'a App) -> &'a str {
+        self.path.file_name().unwrap_or_default()
+    }
+
+    fn worktree_id(&self, _: &App) -> WorktreeId {
+        WorktreeId::from_usize(0)
+    }
+
+    fn to_proto(&self, _: &App) -> language::proto::File {
+        unimplemented!()
+    }
+
+    fn is_private(&self) -> bool {
+        false
+    }
 }

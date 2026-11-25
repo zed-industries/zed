@@ -61,10 +61,7 @@ enum SelectionMode {
     SelectAndMove,
 }
 
-pub(crate) const MAX_TEXT_BLOCK_WIDTH: f32 = 9999.0;
-pub(crate) const SMALL_SPACING_SIZE: f32 = 8.0;
 pub(crate) const MEDIUM_SPACING_SIZE: f32 = 12.0;
-pub(crate) const LARGE_SPACING_SIZE: f32 = 16.0;
 pub(crate) const GUTTER_WIDTH: f32 = 19.0;
 pub(crate) const CODE_BLOCK_INSET: f32 = MEDIUM_SPACING_SIZE;
 pub(crate) const CONTROL_SIZE: f32 = 20.0;

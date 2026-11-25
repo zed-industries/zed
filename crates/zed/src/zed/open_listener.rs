@@ -229,7 +229,7 @@ impl OpenRequest {
 
     fn parse_agent_url(&mut self, agent_path: &str) {
         // Format: "" or "?prompt=<text>".
-        let agent_path = agent_path.strip_prefix('/').unwrap_or(agent_path);
+        let agent_path = agent_path.trim_prefix('/');
         let external_source_prompt = agent_path.strip_prefix('?').and_then(|query| {
             url::form_urlencoded::parse(query.as_bytes())
                 .find_map(|(key, value)| (key == "prompt").then_some(value))
@@ -249,7 +249,7 @@ impl OpenRequest {
 
     fn parse_git_clone_url(&mut self, clone_path: &str) -> Result<()> {
         // Format: /?repo=<url> or ?repo=<url>
-        let clone_path = clone_path.strip_prefix('/').unwrap_or(clone_path);
+        let clone_path = clone_path.trim_prefix('/');
 
         let query = clone_path
             .strip_prefix('?')

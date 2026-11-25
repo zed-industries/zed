@@ -351,7 +351,7 @@ impl LspAdapter for VtslsLspAdapter {
                 }
             });
 
-            let _ = cx.update(|cx| {
+            cx.update(|cx| {
                 update_settings_file(self.fs.clone(), cx, move |content, _| {
                     let lsp_settings = content
                         .project

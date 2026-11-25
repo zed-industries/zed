@@ -198,7 +198,6 @@ impl TasksModal {
             picker.delegate.last_used_candidate_index = last_used_candidate_index;
             picker.delegate.candidates = Some(new_candidates);
             picker.refresh(window, cx);
-            cx.notify();
         })
     }
 }
@@ -373,7 +372,7 @@ impl PickerDelegate for TasksModalDelegate {
                         let index = delegate
                             .matches
                             .partition_point(|matching_task| matching_task.candidate_id <= index);
-                        Some(index).and_then(|index| (index != 0).then(|| index - 1))
+                        (index != 0).then(|| index - 1)
                     });
 
                     if delegate.matches.is_empty() {

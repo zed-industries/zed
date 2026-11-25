@@ -95,8 +95,6 @@ pub struct ComponentExampleGroup {
     pub title: Option<SharedString>,
     pub examples: Vec<ComponentExample>,
     pub width: Option<Pixels>,
-    pub grow: bool,
-    pub vertical: bool,
 }
 
 impl RenderOnce for ComponentExampleGroup {
@@ -155,8 +153,6 @@ impl ComponentExampleGroup {
             title: None,
             examples,
             width: None,
-            grow: false,
-            vertical: false,
         }
     }
     pub fn with_title(title: impl Into<SharedString>, examples: Vec<ComponentExample>) -> Self {
@@ -164,20 +160,10 @@ impl ComponentExampleGroup {
             title: Some(title.into()),
             examples,
             width: None,
-            grow: false,
-            vertical: false,
         }
     }
     pub fn width(mut self, width: Pixels) -> Self {
         self.width = Some(width);
-        self
-    }
-    pub fn grow(mut self) -> Self {
-        self.grow = true;
-        self
-    }
-    pub fn vertical(mut self) -> Self {
-        self.vertical = true;
         self
     }
 }
@@ -187,10 +173,6 @@ pub fn single_example(
     example: AnyElement,
 ) -> ComponentExample {
     ComponentExample::new(variant_name, example)
-}
-
-pub fn empty_example(variant_name: impl Into<SharedString>) -> ComponentExample {
-    ComponentExample::new(variant_name, div().w_full().text_center().items_center().text_xs().opacity(0.4).child("This space is intentionally left blank. It indicates a case that should render nothing.").into_any_element())
 }
 
 pub fn example_group(examples: Vec<ComponentExample>) -> ComponentExampleGroup {

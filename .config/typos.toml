@@ -90,10 +90,6 @@ extend-ignore-re = [
     "#fof",
     # Stripped version of reserved keyword `type`
     "typ",
-    # AMD GPU Services
-    "ags",
-    # AMD GPU Services
-    "AGS",
     # "noet" is a vim variable (ideally to ignore locally)
     "noet",
     # Yarn Plug'n'Play
@@ -118,4 +114,7 @@ check-filename = true
 [default.extend-words]
 flate = "flate"
 scap = "scap"
+# `RTA_OIF` in `crates/sandbox_linux/src/net.rs` is a rtnetlink attribute
+# ("output interface"), not a misspelling of "of".
+OIF = "OIF"
 writeable = "writeable"

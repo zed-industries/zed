@@ -1068,12 +1068,6 @@ impl settings::Settings for AllLanguageSettings {
     }
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq)]
-pub struct JsxTagAutoCloseSettings {
-    /// Enables or disables auto-closing of JSX tags.
-    pub enabled: bool,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

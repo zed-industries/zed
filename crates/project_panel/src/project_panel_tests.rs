@@ -1215,7 +1215,40 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
         panel.filename_editor.update(cx, |editor, cx| {
             editor.set_text("   ", window, cx);
         });
+    });
+    panel.update_in(cx, |panel, window, cx| {
+        let validation_state = panel
+            .state
+            .edit_state
+            .as_ref()
+            .map(|edit_state| &edit_state.validation_state);
+        assert!(
+            matches!(
+                validation_state,
+                Some(ValidationState::Error(message))
+                    if message == "File or directory name cannot be empty."
+            ),
+            "Unexpected validation state: {validation_state:?}"
+        );
         assert!(panel.confirm_edit(true, window, cx).is_none());
+        panel.filename_editor.update(cx, |editor, cx| {
+            editor.set_text(" a ", window, cx);
+        });
+    });
+    panel.update_in(cx, |panel, window, cx| {
+        let validation_state = panel
+            .state
+            .edit_state
+            .as_ref()
+            .map(|edit_state| &edit_state.validation_state);
+        assert!(
+            matches!(
+                validation_state,
+                Some(ValidationState::Warning(message))
+                    if message == "File or directory name contains leading or trailing whitespace."
+            ),
+            "Unexpected validation state: {validation_state:?}"
+        );
         panel.cancel(&menu::Cancel, window, cx);
     });
     cx.run_until_parked();
@@ -13469,6 +13502,316 @@ async fn test_file_rows_reserve_the_chevron_slot(cx: &mut gpui::TestAppContext) 
             "{indicator:?}: a directory draws its own chevron, so it reserves nothing"
         );
     }
+}
+
+#[gpui::test]
+async fn test_empty_folder_chevrons(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".gitignore": "ignored_dir\n*.log",
+            "empty_dir": {},
+            "full_dir": { "file.rs": "" },
+            "hidden_only_dir": { ".hidden": "" },
+            "ignored_dir": {},
+            "ignored_only_dir": { "debug.log": "" },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    let chevron_of = |name: &str, cx: &mut VisualTestContext| {
+        let (_, chevron, _) = visible_entry_indicators(&panel, 0..50, cx)
+            .into_iter()
+            .find(|(filename, _, _)| filename == name)
+            .unwrap_or_else(|| panic!("no row named {name:?}"));
+        chevron
+    };
+    let collapsed = Some("chevron_right.svg".to_string());
+
+    set_folder_indicator(FolderIndicator::Chevron, cx);
+    cx.run_until_parked();
+    assert_eq!(
+        chevron_of("empty_dir", cx),
+        collapsed,
+        "`chevron` mode keeps the chevron so an empty folder is not mistaken for a file"
+    );
+
+    set_folder_indicator(FolderIndicator::Both, cx);
+    cx.run_until_parked();
+    assert_eq!(chevron_of("empty_dir", cx), None);
+    assert_eq!(chevron_of("full_dir", cx), collapsed);
+    assert_eq!(
+        chevron_of("hidden_only_dir", cx),
+        collapsed,
+        "hidden entries are shown by default, so the directory is not empty"
+    );
+    assert_eq!(
+        chevron_of("ignored_only_dir", cx),
+        collapsed,
+        "gitignored entries are shown by default, so the directory is not empty"
+    );
+    assert_eq!(
+        chevron_of("ignored_dir", cx),
+        collapsed,
+        "an unloaded gitignored directory has unknown contents and keeps its chevron"
+    );
+    toggle_expand_dir(&panel, "root/ignored_dir", cx);
+    assert_eq!(
+        chevron_of("ignored_dir", cx),
+        None,
+        "expanding loads the directory, and it turns out to be empty"
+    );
+
+    cx.update(|_, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                let project_panel = settings.project_panel.get_or_insert_default();
+                project_panel.hide_hidden = Some(true);
+                project_panel.hide_gitignore = Some(true);
+            });
+        });
+    });
+    cx.run_until_parked();
+    for directory in ["hidden_only_dir", "ignored_only_dir"] {
+        assert_eq!(
+            chevron_of(directory, cx),
+            None,
+            "a directory holding only entries the panel hides counts as empty"
+        );
+    }
+
+    fs.insert_file(path!("/root/empty_dir/new.rs"), Vec::new())
+        .await;
+    cx.run_until_parked();
+    assert_eq!(chevron_of("empty_dir", cx), collapsed);
+
+    fs.remove_file(path!("/root/empty_dir/new.rs").as_ref(), Default::default())
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(chevron_of("empty_dir", cx), None);
+
+    select_path(&panel, "root/empty_dir", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.new_directory(&NewDirectory, window, cx)
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..3, cx),
+        &[
+            "v root",
+            "    v empty_dir",
+            "        > [EDITOR: '']  <== selected"
+        ]
+    );
+    assert_eq!(
+        chevron_of("empty_dir", cx),
+        Some("chevron_down.svg".to_string()),
+        "the parent shows the new directory's row, so it keeps its chevron"
+    );
+    let new_directory_row = visible_entry_indicators(&panel, 2..3, cx);
+    assert_eq!(
+        new_directory_row
+            .first()
+            .map(|(_, chevron, _)| chevron.clone()),
+        Some(collapsed.clone()),
+        "a directory being created has not been scanned, so its row keeps its chevron"
+    );
+    panel.update_in(cx, |panel, window, cx| {
+        panel.cancel(&menu::Cancel, window, cx)
+    });
+    cx.run_until_parked();
+    assert_eq!(chevron_of("empty_dir", cx), None);
+    toggle_expand_dir(&panel, "root/empty_dir", cx);
+    cx.run_until_parked();
+
+    // Keyboard expand/collapse on an empty directory still behaves like any other directory.
+    select_path(&panel, "root/empty_dir", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.expand_selected_entry(&ExpandSelectedEntry, window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(chevron_of("empty_dir", cx), None);
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..3, cx),
+        &["v root", "    v empty_dir  <== selected", "    > full_dir"]
+    );
+    panel.update_in(cx, |panel, window, cx| {
+        panel.expand_selected_entry(&ExpandSelectedEntry, window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..3, cx),
+        &["v root", "    v empty_dir", "    > full_dir  <== selected"],
+        "expanding an already expanded empty directory moves on to the next entry"
+    );
+    panel.update_in(cx, |panel, window, cx| {
+        panel.select_previous(&SelectPrevious, window, cx);
+        panel.collapse_selected_entry(&CollapseSelectedEntry, window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..3, cx),
+        &["v root", "    > empty_dir  <== selected", "    > full_dir"]
+    );
+
+    toggle_expand_dir(&panel, "root/empty_dir", cx);
+    cx.run_until_parked();
+
+    set_folder_indicator(FolderIndicator::Chevron, cx);
+    cx.run_until_parked();
+    assert_eq!(
+        chevron_of("empty_dir", cx),
+        Some("chevron_down.svg".to_string())
+    );
+}
+
+#[gpui::test]
+async fn test_folded_folder_keeps_chevron_above_new_entry_editor(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "outer": { "inner": {} } }))
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    cx.update(|_, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .auto_fold_dirs = Some(true);
+            });
+        });
+    });
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    set_folder_indicator(FolderIndicator::Both, cx);
+    cx.run_until_parked();
+
+    let folded_row_chevron = |cx: &mut VisualTestContext| {
+        visible_entry_indicators(&panel, 1..2, cx)
+            .first()
+            .and_then(|(_, chevron, _)| chevron.clone())
+    };
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root", "    > outer/inner"]
+    );
+    assert_eq!(
+        folded_row_chevron(cx),
+        None,
+        "the row stands for its last folder, which is empty"
+    );
+
+    // Selecting the folded-away `outer` itself leaves the chain folded while the editor is open.
+    select_path(&panel, "root/outer", cx);
+    panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "    > outer/inner",
+            "          [EDITOR: '']  <== selected"
+        ]
+    );
+    assert!(
+        folded_row_chevron(cx).is_some(),
+        "a row with the new entry's editor beneath it has something to show"
+    );
+}
+
+#[gpui::test]
+async fn test_remote_folders_keep_chevrons(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/local"), json!({ "local_empty_dir": {} }))
+        .await;
+    let project = Project::test(fs.clone(), [path!("/local").as_ref()], cx).await;
+
+    let remote_worktree = project.update(cx, |project, cx| {
+        project.add_test_remote_worktree("/remote/project", cx)
+    });
+    let remote_worktree_id = remote_worktree.read_with(cx, |worktree, _| worktree.id().to_proto());
+    let remote_entry = |id: u64, path: &str| client::proto::Entry {
+        id,
+        is_dir: true,
+        path: path.to_string(),
+        inode: id,
+        mtime: Some(client::proto::Timestamp {
+            seconds: 0,
+            nanos: 0,
+        }),
+        is_ignored: false,
+        is_hidden: false,
+        is_external: false,
+        is_fifo: false,
+        size: None,
+        canonical_path: None,
+        is_unloaded: false,
+    };
+    remote_worktree.update(cx, |worktree, _| {
+        worktree
+            .as_remote()
+            .unwrap()
+            .update_from_remote(client::proto::UpdateWorktree {
+                project_id: 0,
+                worktree_id: remote_worktree_id,
+                abs_path: "/remote/project".to_string(),
+                root_name: "project".to_string(),
+                // Ids far from the local worktree's, since `empty_dir_ids` is keyed by entry id.
+                updated_entries: vec![remote_entry(1000, ""), remote_entry(1001, "remote_dir")],
+                removed_entries: vec![],
+                scan_id: 1,
+                is_last_update: false,
+                updated_repositories: vec![],
+                removed_repositories: vec![],
+                root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
+            });
+    });
+
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    set_folder_indicator(FolderIndicator::Both, cx);
+    cx.run_until_parked();
+
+    let chevron_of = |name: &str, cx: &mut VisualTestContext| {
+        let (_, chevron, _) = visible_entry_indicators(&panel, 0..50, cx)
+            .into_iter()
+            .find(|(filename, _, _)| filename == name)
+            .unwrap_or_else(|| panic!("no row named {name:?}"));
+        chevron
+    };
+    assert_eq!(chevron_of("local_empty_dir", cx), None);
+    assert_eq!(
+        chevron_of("remote_dir", cx),
+        Some("chevron_right.svg".to_string()),
+        "a remote folder with no entries yet may still be scanning on the host"
+    );
 }
 
 #[gpui::test]

@@ -33,7 +33,6 @@ pub struct DropdownMenu {
     attach: Option<Anchor>,
     offset: Option<Point<Pixels>>,
     tab_index: Option<isize>,
-    chevron: bool,
     aria_label: Option<SharedString>,
     aria_description: Option<SharedString>,
     aria_value: Option<SharedString>,
@@ -59,7 +58,6 @@ impl DropdownMenu {
             attach: None,
             offset: None,
             tab_index: None,
-            chevron: true,
             aria_label: None,
             aria_description: None,
             aria_value: None,
@@ -85,7 +83,6 @@ impl DropdownMenu {
             attach: None,
             offset: None,
             tab_index: None,
-            chevron: true,
             aria_label: None,
             aria_description: None,
             aria_value: None,
@@ -142,11 +139,6 @@ impl DropdownMenu {
 
     pub fn tab_index(mut self, arg: isize) -> Self {
         self.tab_index = Some(arg);
-        self
-    }
-
-    pub fn no_chevron(mut self) -> Self {
-        self.chevron = false;
         self
     }
 
@@ -240,7 +232,7 @@ impl RenderOnce for DropdownMenu {
                         .when_some(aria_value, |this, value| this.aria_value(value))
                         .aria_expanded(expanded)
                         .style(button_style)
-                        .when_some(self.trigger_icon.filter(|_| self.chevron), |this, icon| {
+                        .when_some(self.trigger_icon, |this, icon| {
                             this.end_icon(
                                 Icon::new(icon).size(IconSize::XSmall).color(Color::Muted),
                             )
@@ -265,13 +257,11 @@ impl RenderOnce for DropdownMenu {
                         .aria_expanded(expanded)
                         .child(element)
                         .style(button_style)
-                        .when(self.chevron, |this| {
-                            this.child(
-                                Icon::new(IconName::ChevronUpDown)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Muted),
-                            )
-                        })
+                        .child(
+                            Icon::new(IconName::ChevronUpDown)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
                         .when(full_width, |this| this.full_width())
                         .size(trigger_size)
                         .disabled(self.disabled)

@@ -3,9 +3,10 @@ use gh_workflow::*;
 use crate::tasks::workflows::{
     deploy_docs::deploy_docs_workflow_call,
     release::{self, notify_on_failure},
-    runners,
+    runners::{self, Arch},
     steps::{
-        CommonJobConditions, CommonPermissionSets, NamedJob, checkout_repo, dependant_job, named,
+        CommonJobConditions, CommonPermissionSets, FluentBuilder, NamedJob, checkout_repo,
+        dependant_job, named,
     },
     vars::{self, StepOutput, WorkflowInput},
 };
@@ -26,12 +27,16 @@ pub fn after_release() -> Workflow {
     let deploy_docs = deploy_docs_workflow_call(DOCS_CHANNEL, TAG_NAME_ENV);
     let post_to_discord = post_to_discord(&[&refresh_zed_dev]);
     let publish_winget = publish_winget();
+    let publish_snap = [Arch::X86_64, Arch::AARCH64].map(publish_snap);
     let create_sentry_release = create_sentry_release();
     let notify_on_failure = {
+        let [publish_snap_x86_64, publish_snap_aarch64] = &publish_snap;
         let notify_on_failure = notify_on_failure(&[
             &refresh_zed_dev,
             &post_to_discord,
             &publish_winget,
+            publish_snap_x86_64,
+            publish_snap_aarch64,
             &create_sentry_release,
         ]);
         NamedJob {
@@ -56,6 +61,11 @@ pub fn after_release() -> Workflow {
         .add_job(deploy_docs.name, deploy_docs.job)
         .add_job(post_to_discord.name, post_to_discord.job)
         .add_job(publish_winget.name, publish_winget.job)
+        .map(|workflow| {
+            publish_snap.into_iter().fold(workflow, |workflow, job| {
+                workflow.add_job(job.name, job.job)
+            })
+        })
         .add_job(create_sentry_release.name, create_sentry_release.job)
         .add_job(notify_on_failure.name, notify_on_failure.job)
 }
@@ -188,6 +198,20 @@ echo "PACKAGE_NAME=$PACKAGE_NAME" >> $env:GITHUB_OUTPUT
             .add_step(set_package_name)
             .add_step(winget_releaser(&package_name)),
     )
+}
+
+fn publish_snap(arch: Arch) -> NamedJob {
+    fn download_release_tarball(arch: Arch) -> Step<Run> {
+        named::bash(format!(
+            r#"gh release download "$TAG_NAME" --repo="$GITHUB_REPOSITORY" --pattern="zed-linux-{arch}.tar.gz" --dir=target/release"#
+        ))
+        .add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN))
+    }
+
+    release::publish_snap(arch, &[], |job| {
+        job.add_step(checkout_repo().with_ref(TAG_NAME))
+            .add_step(download_release_tarball(arch))
+    })
 }
 
 fn create_sentry_release() -> NamedJob {

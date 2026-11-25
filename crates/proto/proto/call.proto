@@ -29,6 +29,7 @@ message RejoinRoom {
   uint64 id = 1;
   repeated UpdateProject reshared_projects = 2;
   repeated RejoinProject rejoined_projects = 3;
+  bool resends_worktree_settings = 4;
 }
 
 message RejoinRemoteProjects {
