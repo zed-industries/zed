@@ -3576,7 +3576,6 @@ mod tests {
             };
             search_bar.deploy(&deploy, None, window, cx);
         });
-        cx.run_until_parked();
         search_bar
             .update_in(cx, |search_bar, window, cx| {
                 search_bar.search("aaa", None, true, window, cx)
