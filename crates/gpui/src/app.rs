@@ -1860,7 +1860,9 @@ impl App {
     /// Invokes a handler when the system is about to sleep.
     ///
     /// The platform gives the process only a short time before suspending, so
-    /// handlers should record state or cancel work rather than start it.
+    /// handlers should record state or cancel work rather than start it. The
+    /// handler is invoked asynchronously, so it may not run until after the
+    /// system resumes, though always before the corresponding wake handler.
     pub fn on_system_sleep<F>(&self, mut callback: F) -> Subscription
     where
         F: 'static + FnMut(&mut App),
