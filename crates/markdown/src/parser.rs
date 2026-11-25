@@ -225,7 +225,7 @@ fn is_br_tag(html: &str) -> bool {
     else {
         return false;
     };
-    let inner = inner.strip_suffix('/').unwrap_or(inner);
+    let inner = inner.trim_suffix('/');
     inner
         .split_ascii_whitespace()
         .next()

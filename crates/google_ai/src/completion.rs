@@ -47,7 +47,9 @@ pub fn into_google(
                     }
                 }
                 MessageContent::Thinking { .. } => {}
-                MessageContent::RedactedThinking(_) | MessageContent::Compaction(_) => {}
+                MessageContent::RedactedThinking(_)
+                | MessageContent::Compaction(_)
+                | MessageContent::ReasoningEffort { .. } => {}
                 MessageContent::Image(image) => {
                     mapped_parts.push(Part::InlineDataPart(InlineDataPart {
                         inline_data: GenerativeContentBlob {

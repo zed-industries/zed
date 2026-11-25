@@ -40,6 +40,7 @@ use menu::{
 };
 use notifications::status_toast::StatusToast;
 use platform_title_bar::{SidebarWindowControls, TitleBarSettings, apply_title_bar_insets};
+use project::project_settings::ProjectSettings;
 use project::{AgentId, AgentRegistryStore, Event as ProjectEvent, WorktreeId};
 use recent_projects::sidebar_recent_projects::SidebarRecentProjects;
 use remote::RemoteConnectionOptions;
@@ -72,6 +73,7 @@ use workspace::{
 };
 
 use git_ui_core::worktree_labels::workspace_menu_worktree_labels;
+use git_ui_core::worktree_picker::WorktreePicker;
 use git_ui_core::worktree_service::{RemoteBranchName, worktree_create_targets};
 use zed_actions::editor::{MoveDown, MoveUp};
 use zed_actions::{CreateWorktree, NewWorktreeBranchTarget, OpenRecent};
@@ -786,6 +788,63 @@ fn defer_menu_dismissal(menu: &WeakEntity<ContextMenu>, window: &mut Window, cx:
     let menu = menu.clone();
     window.defer(cx, move |_, cx| {
         menu.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+    });
+}
+
+fn worktree_picker_workspace(
+    multi_workspace: &MultiWorkspace,
+    project_group_key: &ProjectGroupKey,
+    cx: &App,
+) -> Option<Entity<Workspace>> {
+    if !ProjectSettings::get_global(cx).git.enabled.status {
+        return None;
+    }
+    let has_worktree_picker = |workspace: &Entity<Workspace>| {
+        let project = workspace.read(cx).project().read(cx);
+        !project.is_via_collab()
+            && !project.is_disconnected(cx)
+            && project.active_repository(cx).is_some()
+    };
+    multi_workspace
+        .last_active_workspace_for_group(project_group_key, cx)
+        .filter(&has_worktree_picker)
+        .or_else(|| {
+            multi_workspace
+                .workspaces_for_project_group(project_group_key, cx)
+                .find(|workspace| has_worktree_picker(workspace))
+                .cloned()
+        })
+}
+
+fn open_worktree_picker(
+    multi_workspace: &WeakEntity<MultiWorkspace>,
+    project_group_key: &ProjectGroupKey,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let Some(multi_workspace) = multi_workspace.upgrade() else {
+        return;
+    };
+    let Some(workspace) =
+        worktree_picker_workspace(multi_workspace.read(cx), project_group_key, cx)
+    else {
+        return;
+    };
+    multi_workspace.update(cx, |multi_workspace, cx| {
+        if multi_workspace.workspace() != &workspace {
+            multi_workspace.activate(workspace.clone(), None, window, cx);
+        }
+    });
+    workspace.update(cx, |workspace, cx| {
+        if workspace.active_modal::<WorktreePicker>(cx).is_some() {
+            workspace.hide_modal(window, cx);
+        }
+        let project = workspace.project().clone();
+        let workspace_handle = workspace.weak_handle();
+        let focused_dock = workspace.focused_dock_position(window, cx);
+        workspace.toggle_modal(window, cx, |window, cx| {
+            WorktreePicker::new_modal(project, workspace_handle, focused_dock, window, cx)
+        });
     });
 }
 
@@ -3285,6 +3344,39 @@ impl Sidebar {
                                         defer_menu_dismissal(&activate_weak_menu, window, cx);
                                     },
                                 );
+                            }
+
+                            let shows_worktree_picker = multi_workspace
+                                .read_with(menu_cx, |multi_workspace, cx| {
+                                    worktree_picker_workspace(
+                                        multi_workspace,
+                                        &project_group_key,
+                                        cx,
+                                    )
+                                    .is_some()
+                                })
+                                .unwrap_or(false);
+                            if shows_worktree_picker {
+                                let multi_workspace = multi_workspace.clone();
+                                let project_group_key = project_group_key.clone();
+                                let weak_menu = weak_menu.clone();
+                                menu = menu.separator();
+                                menu = menu.entry("Switch Worktree…", None, move |window, cx| {
+                                    let multi_workspace = multi_workspace.clone();
+                                    let project_group_key = project_group_key.clone();
+                                    let weak_menu = weak_menu.clone();
+                                    window.defer(cx, move |window, cx| {
+                                        weak_menu.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+                                        window.defer(cx, move |window, cx| {
+                                            open_worktree_picker(
+                                                &multi_workspace,
+                                                &project_group_key,
+                                                window,
+                                                cx,
+                                            );
+                                        });
+                                    });
+                                });
                             }
 
                             menu

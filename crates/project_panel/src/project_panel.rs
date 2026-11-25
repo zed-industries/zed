@@ -2159,9 +2159,7 @@ impl ProjectPanel {
             // on windows, trailing dots are ignored in paths
             // this can cause project panel to create a new entry with a trailing dot
             // while the actual one without the dot gets populated by the file watcher
-            while let Some(trimmed) = filename.strip_suffix('.') {
-                filename = trimmed.to_string();
-            }
+            filename.truncate(filename.trim_end_matches('.').len());
         }
         if filename.trim().is_empty() {
             return None;

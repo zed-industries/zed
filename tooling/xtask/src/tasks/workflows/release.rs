@@ -190,11 +190,14 @@ pub(crate) fn publish_snap(
     fetch_tarball: impl FnOnce(Job) -> Job,
 ) -> NamedJob {
     fn setup_snapcraft() -> Step<Use> {
+        // Temporary: Use latest/edge until the next stable snapcraft release
+        // ships a fix for snapcraft#6410
         named::uses(
             "canonical",
             "craft-actions/snapcraft/setup",
             "d2add174925f9bca7b0a826010c8e1ce2a4bbc3d", // v1.0.0
         )
+        .add_with(("channel", "latest/edge"))
     }
 
     NamedJob {

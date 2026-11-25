@@ -708,7 +708,7 @@ async fn sanitize_path(path: &Path) -> Result<String> {
         .with_context(|| format!("Failed to canonicalize path {}", path.display()))?;
     let path_str = path.to_string_lossy();
 
-    let sanitized = path_str.strip_prefix(r"\\?\").unwrap_or(&path_str);
+    let sanitized = path_str.trim_prefix(r"\\?\");
     Ok(sanitized.replace('\\', "/"))
 }
 
@@ -737,7 +737,7 @@ impl WslConnectionOptions {
     ) -> impl Future<Output = Result<String>> + use<> {
         let path_str = source.to_string_lossy();
 
-        let source = path_str.strip_prefix(r"\\?\").unwrap_or(&*path_str);
+        let source = path_str.trim_prefix(r"\\?\");
         let source = source.replace('\\', "/");
         run_wsl_command_with_output_impl(self, "wslpath", &["-u", &source])
     }

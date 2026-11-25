@@ -125,6 +125,7 @@ use std::{
     collections::BTreeMap,
     ffi::OsString,
     future::Future,
+    mem,
     ops::{Not as _, Range},
     path::{Path, PathBuf},
     pin::pin,
@@ -138,7 +139,7 @@ use terminals::Terminals;
 use text::{Anchor, BufferId, Point, Rope};
 use toolchain_store::EmptyToolchainStore;
 use util::{
-    ResultExt as _, maybe,
+    ResultExt as _, canonical_float_bits, maybe,
     path_list::PathList,
     paths::{PathStyle, SanitizedPath},
     rel_path::RelPath,
@@ -319,6 +320,7 @@ enum ProjectClientState {
     /// Multi-player mode but working on a remote project.
     Collab {
         sharing_has_stopped: bool,
+        host_reconnected: bool,
         capability: Capability,
         remote_id: u64,
         replica_id: ReplicaId,
@@ -1038,10 +1040,10 @@ impl Eq for DocumentColor {}
 impl std::hash::Hash for DocumentColor {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.lsp_range.hash(state);
-        self.color.red.to_bits().hash(state);
-        self.color.green.to_bits().hash(state);
-        self.color.blue.to_bits().hash(state);
-        self.color.alpha.to_bits().hash(state);
+        canonical_float_bits(self.color.red).hash(state);
+        canonical_float_bits(self.color.green).hash(state);
+        canonical_float_bits(self.color.blue).hash(state);
+        canonical_float_bits(self.color.alpha).hash(state);
         self.resolved.hash(state);
         self.color_presentations.hash(state);
     }
@@ -1996,6 +1998,7 @@ impl Project {
                 collab_client: client.clone(),
                 client_state: ProjectClientState::Collab {
                     sharing_has_stopped: false,
+                    host_reconnected: false,
                     capability: Capability::ReadWrite,
                     remote_id,
                     replica_id,
@@ -2236,6 +2239,7 @@ impl Project {
     pub fn mark_as_collab_for_testing(&mut self) {
         self.client_state = ProjectClientState::Collab {
             sharing_has_stopped: false,
+            host_reconnected: false,
             capability: Capability::ReadWrite,
             remote_id: 0,
             replica_id: clock::ReplicaId::new(1),
@@ -2967,6 +2971,9 @@ impl Project {
         if let Some(remote_id) = self.remote_id() {
             self.git_store.update(cx, |git_store, cx| {
                 git_store.shared(remote_id, self.collab_client.clone().into(), cx)
+            });
+            self.settings_observer.update(cx, |settings_observer, cx| {
+                settings_observer.shared(remote_id, self.collab_client.clone().into(), cx)
             });
         }
         cx.emit(Event::Reshared);
@@ -4801,14 +4808,14 @@ impl Project {
         })
     }
 
-    pub fn completions<T: ToOffset + ToPointUtf16>(
+    pub fn completions<T: ToOffset>(
         &self,
         buffer: &Entity<Buffer>,
         position: T,
         context: CompletionContext,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<CompletionResponse>>> {
-        let position = position.to_point_utf16(buffer.read(cx));
+        let position = buffer.read(cx).anchor_after(position);
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.completions(buffer, position, context, cx)
         })
@@ -5754,6 +5761,12 @@ impl Project {
             });
 
             if is_host {
+                if let ProjectClientState::Collab {
+                    host_reconnected, ..
+                } = &mut this.client_state
+                {
+                    *host_reconnected = true;
+                }
                 this.buffer_store
                     .update(cx, |buffer_store, _| buffer_store.discard_incomplete());
                 this.enqueue_buffer_ordered_message(BufferOrderedMessage::Resync)
@@ -5804,11 +5817,18 @@ impl Project {
         this.update(&mut cx, |this, cx| {
             // Don't handle messages that were sent before the response to us joining the project
             if envelope.message_id > this.join_project_response_message_id {
+                let host_reconnected = match &mut this.client_state {
+                    ProjectClientState::Collab {
+                        host_reconnected, ..
+                    } => mem::take(host_reconnected),
+                    ProjectClientState::Local | ProjectClientState::Shared { .. } => false,
+                };
                 cx.update_global::<SettingsStore, _>(|store, cx| {
                     for worktree_metadata in &envelope.payload.worktrees {
-                        store
-                            .clear_local_settings(WorktreeId::from_proto(worktree_metadata.id), cx)
-                            .log_err();
+                        let worktree_id = WorktreeId::from_proto(worktree_metadata.id);
+                        if host_reconnected || this.worktree_for_id(worktree_id, cx).is_none() {
+                            store.clear_local_settings(worktree_id, cx).log_err();
+                        }
                     }
                 });
 
@@ -7459,4 +7479,46 @@ fn provide_inline_values(
     }
 
     variables
+}
+
+#[cfg(test)]
+mod tests {
+    use std::hash::{BuildHasher, RandomState};
+
+    use super::*;
+
+    #[test]
+    fn document_color_hash_agrees_with_equality_on_signed_zero() {
+        let color = DocumentColor {
+            lsp_range: lsp::Range::default(),
+            color: lsp::Color {
+                red: 0.0,
+                green: 0.0,
+                blue: 0.0,
+                alpha: 0.0,
+            },
+            resolved: false,
+            color_presentations: Vec::new(),
+        };
+        let hasher = RandomState::new();
+        for [red, green, blue, alpha] in [
+            [-0.0, 0.0, 0.0, 0.0],
+            [0.0, -0.0, 0.0, 0.0],
+            [0.0, 0.0, -0.0, 0.0],
+            [0.0, 0.0, 0.0, -0.0],
+            [-0.0; 4],
+        ] {
+            let negated = DocumentColor {
+                color: lsp::Color {
+                    red,
+                    green,
+                    blue,
+                    alpha,
+                },
+                ..color.clone()
+            };
+            assert_eq!(color, negated);
+            assert_eq!(hasher.hash_one(&color), hasher.hash_one(&negated));
+        }
+    }
 }

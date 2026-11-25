@@ -215,7 +215,7 @@ mod tests {
             acp_v1::SessionConfigOptionValue::boolean(false)
         );
         let value =
-            acp_v2::SessionConfigOptionValue::Other(acp_v2::OtherSessionConfigOptionValue::new(
+            acp_v2::SessionConfigOptionValue::from(acp_v2::OtherSessionConfigOptionValue::new(
                 "_custom",
                 json!("private-value"),
                 Default::default(),

@@ -123,7 +123,9 @@ pub fn into_open_ai(
                         }
                     }
                 }
-                MessageContent::RedactedThinking(_) | MessageContent::Compaction(_) => {}
+                MessageContent::RedactedThinking(_)
+                | MessageContent::Compaction(_)
+                | MessageContent::ReasoningEffort { .. } => {}
                 MessageContent::Image(image) => {
                     add_message_content_part(
                         MessagePart::Image {
@@ -492,7 +494,8 @@ fn append_message_to_response_items(
                     provider_items.extend(items);
                 }
             }
-            MessageContent::Compaction(CompactedContext::Summary { .. }) => {}
+            MessageContent::Compaction(CompactedContext::Summary { .. })
+            | MessageContent::ReasoningEffort { .. } => {}
             MessageContent::Image(image) => {
                 push_response_image_part(&role, image, &mut content_parts);
             }

@@ -1143,16 +1143,13 @@ impl VimCommand {
             .filter_map(|e| e.left())
             .collect::<String>();
         let has_bang = rest.starts_with('!');
-        let has_space = rest.starts_with("! ") || rest.starts_with(' ');
-        let args = if has_bang {
-            rest.strip_prefix('!')?.trim_start().to_string()
-        } else if rest.is_empty() {
-            "".into()
-        } else {
-            rest.strip_prefix(' ')?.trim_start().to_string()
-        };
+        let rest = rest.trim_prefix('!');
+        let has_space = rest.starts_with(' ');
+        if !has_bang && !has_space && !rest.is_empty() {
+            return None;
+        }
         Some(ParsedQuery {
-            args,
+            args: rest.trim_start().to_string(),
             has_bang,
             has_space,
         })
