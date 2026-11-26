@@ -6227,7 +6227,13 @@ impl Window {
         let old_modality = self.last_input_modality;
         self.last_input_modality = match &event {
             PlatformInput::KeyDown(_) => InputModality::Keyboard,
-            PlatformInput::MouseMove(_) | PlatformInput::MouseDown(_) => InputModality::Mouse,
+            PlatformInput::MouseMove(_)
+            | PlatformInput::MouseDown(_)
+            | PlatformInput::FileDrop(
+                FileDropEvent::Entered { .. }
+                | FileDropEvent::Pending { .. }
+                | FileDropEvent::Submit { .. },
+            ) => InputModality::Mouse,
             PlatformInput::Touch(_) => InputModality::Touch,
             _ => self.last_input_modality,
         };
@@ -9744,6 +9750,70 @@ mod tests {
         .unwrap();
 
         assert_eq!(child_bounds.get().size, size(px(300.), px(200.)));
+    }
+
+    #[gpui::test]
+    fn external_file_drop_after_keyboard_input(cx: &mut TestAppContext) {
+        struct DropTarget(Rc<Cell<usize>>);
+
+        impl Render for DropTarget {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let drops = self.0.clone();
+                div()
+                    .id("external-file-drop-target")
+                    .size_full()
+                    .on_drop(move |_: &ExternalPaths, _, _| drops.set(drops.get() + 1))
+            }
+        }
+
+        for keyboard_before_event in [None, Some(0), Some(1), Some(2)] {
+            let drops = Rc::new(Cell::new(0));
+            let window: AnyWindowHandle = cx
+                .add_window({
+                    let drops = drops.clone();
+                    move |_, _| DropTarget(drops)
+                })
+                .into();
+            cx.update_window(window, |_, window, cx| {
+                let position = point(px(30.), px(30.));
+                window.draw(cx).clear(cx);
+                let events = [
+                    FileDropEvent::Entered {
+                        position,
+                        paths: ExternalPaths(
+                            [PathBuf::from("/tmp/finder-drop.txt")]
+                                .into_iter()
+                                .collect(),
+                        ),
+                    },
+                    FileDropEvent::Pending { position },
+                    FileDropEvent::Submit { position },
+                ];
+                for (index, event) in events.into_iter().enumerate() {
+                    if keyboard_before_event == Some(index) {
+                        window.dispatch_event(
+                            PlatformInput::KeyDown(KeyDownEvent {
+                                keystroke: Keystroke::parse("down").expect("有效的方向键"),
+                                is_held: false,
+                                prefer_character_input: false,
+                            }),
+                            cx,
+                        );
+                        assert!(window.last_input_was_keyboard());
+                    }
+                    window.dispatch_event(event.to_platform_input(), cx);
+                    assert!(!window.last_input_was_keyboard());
+                    window.draw(cx).clear(cx);
+                }
+                assert_eq!(
+                    drops.get(),
+                    1,
+                    "按键发生在事件 {keyboard_before_event:?} 前"
+                );
+                assert!(cx.active_drag.is_none());
+            })
+            .expect("测试窗口更新成功");
+        }
     }
 
     struct FileDragView {
