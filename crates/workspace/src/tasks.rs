@@ -1,4 +1,4 @@
-use std::process::ExitStatus;
+use std::{process::ExitStatus, sync::Arc};
 
 use anyhow::Result;
 use collections::HashSet;
@@ -11,7 +11,7 @@ use task::{
     TaskHook, TaskTemplate, TaskVariables, VariableName,
 };
 use ui::Window;
-use util::TryFutureExt;
+use util::{TryFutureExt, rel_path::RelPath};
 
 use crate::{SaveIntent, Toast, Workspace, notifications::NotificationId};
 
@@ -213,12 +213,34 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.start_debug_session_with_directory(
+            scenario,
+            task_context,
+            active_buffer,
+            worktree_id,
+            None,
+            window,
+            cx,
+        );
+    }
+
+    pub fn start_debug_session_with_directory(
+        &mut self,
+        scenario: DebugScenario,
+        task_context: SharedTaskContext,
+        active_buffer: Option<Entity<Buffer>>,
+        worktree_id: Option<WorktreeId>,
+        directory: Option<Arc<RelPath>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(provider) = self.debugger_provider.as_mut() {
-            provider.start_session(
+            provider.start_session_with_directory(
                 scenario,
                 task_context,
                 active_buffer,
                 worktree_id,
+                directory,
                 window,
                 cx,
             )

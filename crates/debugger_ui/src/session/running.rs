@@ -50,13 +50,12 @@ use task::{
     BuildTaskDefinition, DebugScenario, SharedTaskContext, Shell, ShellBuilder, SpawnInTerminal,
     TaskContext, ZedDebugConfig, substitute_variables_in_str,
 };
-use terminal::Terminal;
 use terminal_view::TerminalView;
 use ui::{
     FluentBuilder, IntoElement, Render, StatefulInteractiveElement, Tab, Tooltip, VisibleOnHover,
     VisualContext, prelude::*,
 };
-use util::ResultExt;
+use util::{ResultExt, rel_path::RelPath};
 use variable_list::VariableList;
 use workspace::{
     ActivePaneDecorator, DraggedTab, Item, ItemHandle, Member, Pane, PaneGroup, SplitDirection,
@@ -720,7 +719,6 @@ pub(crate) fn new_debugger_pane(
 
 pub struct DebugTerminal {
     pub terminal: Option<Entity<TerminalView>>,
-    background_build_terminal: Option<Entity<Terminal>>,
     focus_handle: FocusHandle,
     _subscriptions: [Subscription; 1],
 }
@@ -736,7 +734,6 @@ impl DebugTerminal {
 
         Self {
             terminal: None,
-            background_build_terminal: None,
             focus_handle,
             _subscriptions: [focus_subscription],
         }
@@ -1095,6 +1092,7 @@ impl RunningState {
         task_context: SharedTaskContext,
         buffer: Option<Entity<Buffer>>,
         worktree_id: Option<WorktreeId>,
+        directory: Option<Arc<RelPath>>,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<DebugTaskDefinition>> {
@@ -1113,7 +1111,10 @@ impl RunningState {
             .remote_client()
             .as_ref()
             .and_then(|remote| remote.read(cx).shell());
-
+        let is_vscode_scenario = directory
+            .as_ref()
+            .and_then(|directory| directory.file_name())
+            == Some(".vscode");
         cx.spawn_in(window, async move |this, cx| {
             let DebugScenario {
                 adapter,
@@ -1172,27 +1173,33 @@ impl RunningState {
                                 inventory.read(cx).task_template_by_label(
                                     buffer,
                                     worktree_id,
+                                    directory,
                                     label,
                                     cx,
                                 )
                             })
                         })?;
-                        let task = match task {
+                        let found = match task {
                             Some(task) => task.await,
                             None => None,
                         };
-                        match task {
+                        match found {
                             Some((task_template, is_background)) => {
                                 Some((task_template, None, is_background))
                             }
-                            None => {
+                            None if is_vscode_scenario => {
                                 let message = format!(
-                                    "Couldn't find task template for {build:?}. Starting the debug session without it."
+                                    "Couldn't find build task '{label}'. Starting the debug session without it."
                                 );
-                                weak_workspace.update_in(cx, |workspace, _window, cx| {
-                                    workspace.show_error(DebugTaskWarning(message.into()), cx);
-                                }).ok();
+                                weak_workspace
+                                    .update_in(cx, |workspace, _window, cx| {
+                                        workspace.show_error(DebugTaskWarning(message.into()), cx);
+                                    })
+                                    .ok();
                                 None
+                            }
+                            None => {
+                                return Err(anyhow!("Couldn't find task template for {build:?}"));
                             }
                         }
                     }
@@ -1201,101 +1208,99 @@ impl RunningState {
                 None
             };
             let build_output = if let Some((task_template, locator_name, is_background)) = build_task {
-                let Some(mut task) = task_template.resolve_task("debug-build-task", &task_context) else {
-                    anyhow::bail!("Could not resolve task variables within a debug scenario");
-                };
-
-                let locator_name = if let Some(locator_name) = locator_name {
-                    extra_config = config.clone();
-                    debug_assert!(!config_is_valid);
-                    Some(locator_name)
-                } else if !config_is_valid {
-                    let task = dap_store
-                        .update(cx, |this, cx| {
-                            this.debug_scenario_for_build_task(
-                                task.original_task().clone(),
-                                adapter.clone().into(),
-                                task.display_label().to_owned().into(),
-                                cx,
-                            )
-
-                        });
-                    if let Ok(t) = task {
-                        t.await.and_then(|scenario| {
-                            extra_config = scenario.config;
-                            match scenario.build {
-                                Some(BuildTaskDefinition::Template {
-                                    locator_name, ..
-                                }) => locator_name,
-                                _ => None,
-                            }
-                        })
-                    } else {
-                        None
-                    }
-
-                } else {
-                    None
-                };
-
-                if let Some(remote_shell) = remote_shell && task.resolved.shell == Shell::System {
-                    task.resolved.shell = Shell::Program(remote_shell);
-                }
-
-                let builder = ShellBuilder::new(&task.resolved.shell, is_windows);
-                let command_label = builder.command_label(task.resolved.command.as_deref().unwrap_or(""));
-                let (command, args) =
-                    builder.build(task.resolved.command.clone(), &task.resolved.args);
-
-                let task_with_shell = SpawnInTerminal {
-                    command_label,
-                    command: Some(command),
-                    args,
-                    ..task.resolved.clone()
-                };
-
-                Workspace::save_for_task(&weak_workspace, task_with_shell.save, cx).await;
-
-                let terminal = project
-                    .update(cx, |project, cx| {
-                        project.create_terminal_task(
-                            task_with_shell.clone(),
-                            cx,
-                        )
-                    }).await?;
-
-                let workspace_for_terminal = weak_workspace.clone();
-                let terminal_view = cx.new_window_entity(|window, cx| {
-                    TerminalView::new(
-                        terminal.clone(),
-                        workspace_for_terminal,
-                        None,
-                        weak_project,
-                        window,
-                        cx,
-                    )
-                })?;
-                let background_terminal = is_background.then(|| terminal.clone());
-
-                this.update_in(cx, |this, window, cx| {
-                    this.ensure_pane_item(DebuggerPaneItem::Terminal, window, cx);
-                    this.debug_terminal.update(cx, |debug_terminal, cx| {
-                        debug_terminal.background_build_terminal = background_terminal;
-                        debug_terminal.terminal = Some(terminal_view);
-                        cx.notify();
-                    });
-                    this.refresh_terminal_toolbars(window, cx);
-                })?;
-
                 if is_background {
                     let message = format!(
-                        "Build task '{}' is a background task; Zed will start debugging without waiting for it to finish.",
-                        task.resolved_label
+                        "Skipping background build task '{}'; Zed cannot wait for it to finish. Starting the debug session without it.",
+                        task_template.label
                     );
                     weak_workspace.update_in(cx, |workspace, _window, cx| {
                         workspace.show_error(DebugTaskWarning(message.into()), cx);
                     }).ok();
+                    None
                 } else {
+                    let Some(mut task) = task_template.resolve_task("debug-build-task", &task_context) else {
+                        anyhow::bail!("Could not resolve task variables within a debug scenario");
+                    };
+
+                    let locator_name = if let Some(locator_name) = locator_name {
+                        extra_config = config.clone();
+                        debug_assert!(!config_is_valid);
+                        Some(locator_name)
+                    } else if !config_is_valid {
+                        let task = dap_store
+                            .update(cx, |this, cx| {
+                                this.debug_scenario_for_build_task(
+                                    task.original_task().clone(),
+                                    adapter.clone().into(),
+                                    task.display_label().to_owned().into(),
+                                    cx,
+                                )
+
+                            });
+                        if let Ok(t) = task {
+                            t.await.and_then(|scenario| {
+                                extra_config = scenario.config;
+                                match scenario.build {
+                                    Some(BuildTaskDefinition::Template {
+                                        locator_name, ..
+                                    }) => locator_name,
+                                    _ => None,
+                                }
+                            })
+                        } else {
+                            None
+                        }
+
+                    } else {
+                        None
+                    };
+
+                    if let Some(remote_shell) = remote_shell && task.resolved.shell == Shell::System {
+                        task.resolved.shell = Shell::Program(remote_shell);
+                    }
+
+                    let builder = ShellBuilder::new(&task.resolved.shell, is_windows);
+                    let command_label = builder.command_label(task.resolved.command.as_deref().unwrap_or(""));
+                    let (command, args) =
+                        builder.build(task.resolved.command.clone(), &task.resolved.args);
+
+                    let task_with_shell = SpawnInTerminal {
+                        command_label,
+                        command: Some(command),
+                        args,
+                        ..task.resolved.clone()
+                    };
+
+                    Workspace::save_for_task(&weak_workspace, task_with_shell.save, cx).await;
+
+                    let terminal = project
+                        .update(cx, |project, cx| {
+                            project.create_terminal_task(
+                                task_with_shell.clone(),
+                                cx,
+                            )
+                        }).await?;
+
+                    let terminal_view = cx.new_window_entity(|window, cx| {
+                        TerminalView::new(
+                            terminal.clone(),
+                            weak_workspace.clone(),
+                            None,
+                            weak_project,
+                            window,
+                            cx,
+                        )
+                    })?;
+
+                    this.update_in(cx, |this, window, cx| {
+                        this.ensure_pane_item(DebuggerPaneItem::Terminal, window, cx);
+                        this.debug_terminal.update(cx, |debug_terminal, cx| {
+                            debug_terminal.terminal = Some(terminal_view);
+                            cx.notify();
+                        });
+                        this.refresh_terminal_toolbars(window, cx);
+                    })?;
+
                     let exit_status = terminal
                         .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))
                         .await
@@ -1304,8 +1309,8 @@ impl RunningState {
                     if !exit_status.success() {
                         anyhow::bail!("Build failed");
                     }
+                    Some((task.resolved.clone(), locator_name, extra_config))
                 }
-                Some((task.resolved.clone(), locator_name, extra_config))
             } else {
                 None
             };
@@ -1911,16 +1916,18 @@ impl RunningState {
                 task_context,
                 active_buffer,
                 worktree_id,
+                directory,
             } = context;
             let active_buffer = active_buffer.and_then(|buffer| buffer.upgrade());
 
             self.workspace
                 .update(cx, |workspace, cx| {
-                    workspace.start_debug_session(
+                    workspace.start_debug_session_with_directory(
                         scenario,
                         task_context,
                         active_buffer,
                         worktree_id,
+                        directory,
                         window,
                         cx,
                     )

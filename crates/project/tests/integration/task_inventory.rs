@@ -334,7 +334,7 @@ async fn test_reloading_debug_scenarios(cx: &mut TestAppContext) {
         .clone();
 
     inventory.update(cx, |this, _| {
-        this.scenario_scheduled(scenario.clone(), Default::default(), None, None);
+        this.scenario_scheduled(scenario.clone(), Default::default(), None, None, None);
     });
 
     assert_eq!(
@@ -794,23 +794,93 @@ async fn test_worktree_tasks_file_update_keeps_history_of_unchanged_tasks(cx: &m
 async fn test_vscode_background_flag_survives_inventory(cx: &mut TestAppContext) {
     init_test(cx);
     let inventory = cx.update(|cx| Inventory::new(cx));
+    let worktree_id = WorktreeId::from_usize(0);
+    let vscode_tasks: task::VsCodeTaskFile = serde_json::from_str(
+        r#"{
+            "version": "2.0.0",
+            "tasks": [
+                {"label": "watch", "type": "shell", "command": "sleep", "isBackground": true},
+                {"label": "build", "type": "shell", "command": "cargo"}
+            ]
+        }"#,
+    )
+    .unwrap();
+    let serialized =
+        serde_json::to_string(&task::ImportedTaskTemplates::try_from(vscode_tasks).unwrap())
+            .unwrap();
     inventory.update(cx, |inventory, _| {
         inventory
             .update_file_based_tasks(
-                TaskSettingsLocation::Global(tasks_file()),
-                Some(
-                    r#"[
-                        {"label": "watch", "command": "sleep", "isBackground": true},
-                        {"label": "build", "command": "cargo"}
-                    ]"#,
-                ),
+                TaskSettingsLocation::Worktree(SettingsLocation {
+                    worktree_id,
+                    path: rel_path(".vscode"),
+                }),
+                Some(&serialized),
             )
             .unwrap();
     });
 
     let watch = inventory
         .update(cx, |inventory, cx| {
-            inventory.task_template_by_label(None, None, "watch", cx)
+            inventory.task_template_by_label(
+                None,
+                Some(worktree_id),
+                Some(Arc::from(rel_path(".vscode"))),
+                "watch",
+                cx,
+            )
+        })
+        .await;
+    assert_eq!(
+        watch,
+        Some((
+            TaskTemplate {
+                label: "watch".into(),
+                command: "sleep".into(),
+                ..Default::default()
+            },
+            true,
+        ))
+    );
+
+    let build = inventory
+        .update(cx, |inventory, cx| {
+            inventory.task_template_by_label(None, Some(worktree_id), None, "build", cx)
+        })
+        .await;
+    assert_eq!(
+        build,
+        Some((
+            TaskTemplate {
+                label: "build".into(),
+                command: "cargo".into(),
+                ..Default::default()
+            },
+            false,
+        ))
+    );
+}
+
+#[gpui::test]
+async fn test_native_task_file_ignores_is_background(cx: &mut TestAppContext) {
+    init_test(cx);
+    let inventory = cx.update(|cx| Inventory::new(cx));
+    let worktree_id = WorktreeId::from_usize(0);
+    inventory.update(cx, |inventory, _| {
+        inventory
+            .update_file_based_tasks(
+                TaskSettingsLocation::Worktree(SettingsLocation {
+                    worktree_id,
+                    path: rel_path(".zed"),
+                }),
+                Some(r#"[{"label": "watch", "command": "sleep", "isBackground": true}]"#),
+            )
+            .unwrap();
+    });
+
+    let watch = inventory
+        .update(cx, |inventory, cx| {
+            inventory.task_template_by_label(None, Some(worktree_id), None, "watch", cx)
         })
         .await;
     assert_eq!(
@@ -823,27 +893,215 @@ async fn test_vscode_background_flag_survives_inventory(cx: &mut TestAppContext)
                 show_command: true,
                 ..Default::default()
             },
-            true,
+            false,
         ))
     );
+}
 
-    let build = inventory
+#[gpui::test]
+async fn test_task_template_lookup_prefers_same_directory(cx: &mut TestAppContext) {
+    init_test(cx);
+    let inventory = cx.update(|cx| Inventory::new(cx));
+    let worktree_id = WorktreeId::from_usize(0);
+    for (directory, command) in [("a/.vscode", "from-a"), ("b/.vscode", "from-b")] {
+        let tasks = json!([{"label": "build", "command": command}]).to_string();
+        inventory.update(cx, |inventory, _| {
+            inventory
+                .update_file_based_tasks(
+                    TaskSettingsLocation::Worktree(SettingsLocation {
+                        worktree_id,
+                        path: rel_path(directory),
+                    }),
+                    Some(&tasks),
+                )
+                .unwrap();
+        });
+    }
+
+    let found = inventory
         .update(cx, |inventory, cx| {
-            inventory.task_template_by_label(None, None, "build", cx)
+            inventory.task_template_by_label(
+                None,
+                Some(worktree_id),
+                Some(Arc::from(rel_path("a/.vscode"))),
+                "build",
+                cx,
+            )
+        })
+        .await;
+    assert_eq!(found.map(|(task, _)| task.command), Some("from-a".into()));
+
+    let fallback = inventory
+        .update(cx, |inventory, cx| {
+            inventory.task_template_by_label(
+                None,
+                Some(worktree_id),
+                Some(Arc::from(rel_path("c/.vscode"))),
+                "build",
+                cx,
+            )
+        })
+        .await;
+    assert!(fallback.is_some());
+}
+
+#[gpui::test]
+async fn test_vscode_build_task_available_with_zed_tasks(cx: &mut TestAppContext) {
+    init_test(cx);
+    let inventory = cx.update(|cx| Inventory::new(cx));
+    let worktree_id = WorktreeId::from_usize(0);
+    for (directory, command) in [(".zed", "from-zed"), (".vscode", "from-vscode")] {
+        let tasks = json!([{"label": "build", "command": command}]).to_string();
+        inventory.update(cx, |inventory, _| {
+            inventory
+                .update_file_based_tasks(
+                    TaskSettingsLocation::Worktree(SettingsLocation {
+                        worktree_id,
+                        path: rel_path(directory),
+                    }),
+                    Some(&tasks),
+                )
+                .unwrap();
+        });
+    }
+
+    for (directory, expected) in [(".vscode", "from-vscode"), (".zed", "from-zed")] {
+        let found = inventory
+            .update(cx, |inventory, cx| {
+                inventory.task_template_by_label(
+                    None,
+                    Some(worktree_id),
+                    Some(Arc::from(rel_path(directory))),
+                    "build",
+                    cx,
+                )
+            })
+            .await;
+        assert_eq!(found.map(|(task, _)| task.command), Some(expected.into()));
+    }
+
+    let found = inventory
+        .update(cx, |inventory, cx| {
+            inventory.task_template_by_label(None, Some(worktree_id), None, "build", cx)
+        })
+        .await;
+    assert!(found.is_some());
+}
+
+#[gpui::test]
+async fn test_native_build_lookup_ignores_vscode_tasks_when_zed_dir_exists(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let inventory = cx.update(|cx| Inventory::new(cx));
+    let worktree_id = WorktreeId::from_usize(0);
+    for (directory, tasks) in [
+        (".zed", json!([{"label": "other", "command": "noop"}])),
+        (
+            ".vscode",
+            json!([{"label": "build", "command": "from-vscode"}]),
+        ),
+    ] {
+        let tasks = tasks.to_string();
+        inventory.update(cx, |inventory, _| {
+            inventory
+                .update_file_based_tasks(
+                    TaskSettingsLocation::Worktree(SettingsLocation {
+                        worktree_id,
+                        path: rel_path(directory),
+                    }),
+                    Some(&tasks),
+                )
+                .unwrap();
+        });
+    }
+
+    let native_lookup = inventory
+        .update(cx, |inventory, cx| {
+            inventory.task_template_by_label(
+                None,
+                Some(worktree_id),
+                Some(Arc::from(rel_path(".zed"))),
+                "build",
+                cx,
+            )
+        })
+        .await;
+    assert_eq!(native_lookup, None);
+
+    let vscode_lookup = inventory
+        .update(cx, |inventory, cx| {
+            inventory.task_template_by_label(
+                None,
+                Some(worktree_id),
+                Some(Arc::from(rel_path(".vscode"))),
+                "build",
+                cx,
+            )
         })
         .await;
     assert_eq!(
-        build,
-        Some((
-            TaskTemplate {
-                label: "build".into(),
-                command: "cargo".into(),
-                show_summary: true,
-                show_command: true,
-                ..Default::default()
-            },
-            false,
-        ))
+        vscode_lookup.map(|(task, _)| task.command),
+        Some("from-vscode".into())
+    );
+}
+
+#[gpui::test]
+async fn test_native_build_lookup_rejects_background_vscode_task(cx: &mut TestAppContext) {
+    init_test(cx);
+    let inventory = cx.update(|cx| Inventory::new(cx));
+    let worktree_id = WorktreeId::from_usize(0);
+    let vscode_tasks: task::VsCodeTaskFile = serde_json::from_str(
+        r#"{
+            "version": "2.0.0",
+            "tasks": [
+                {"label": "build", "type": "shell", "command": "watch", "isBackground": true}
+            ]
+        }"#,
+    )
+    .unwrap();
+    let serialized =
+        serde_json::to_string(&task::ImportedTaskTemplates::try_from(vscode_tasks).unwrap())
+            .unwrap();
+    inventory.update(cx, |inventory, _| {
+        inventory
+            .update_file_based_tasks(
+                TaskSettingsLocation::Worktree(SettingsLocation {
+                    worktree_id,
+                    path: rel_path(".vscode"),
+                }),
+                Some(&serialized),
+            )
+            .unwrap();
+    });
+
+    let native_lookup = inventory
+        .update(cx, |inventory, cx| {
+            inventory.task_template_by_label(
+                None,
+                Some(worktree_id),
+                Some(Arc::from(rel_path(".zed"))),
+                "build",
+                cx,
+            )
+        })
+        .await;
+    assert_eq!(native_lookup, None);
+
+    let vscode_lookup = inventory
+        .update(cx, |inventory, cx| {
+            inventory.task_template_by_label(
+                None,
+                Some(worktree_id),
+                Some(Arc::from(rel_path(".vscode"))),
+                "build",
+                cx,
+            )
+        })
+        .await;
+    assert_eq!(
+        vscode_lookup.map(|(_, is_background)| is_background),
+        Some(true)
     );
 }
 

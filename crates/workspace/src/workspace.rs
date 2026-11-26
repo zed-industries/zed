@@ -345,6 +345,26 @@ pub trait DebuggerProvider {
         cx: &mut App,
     );
 
+    fn start_session_with_directory(
+        &self,
+        definition: DebugScenario,
+        task_context: SharedTaskContext,
+        active_buffer: Option<Entity<Buffer>>,
+        worktree_id: Option<WorktreeId>,
+        _directory: Option<Arc<RelPath>>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.start_session(
+            definition,
+            task_context,
+            active_buffer,
+            worktree_id,
+            window,
+            cx,
+        );
+    }
+
     fn spawn_task_or_modal(
         &self,
         workspace: &mut Workspace,

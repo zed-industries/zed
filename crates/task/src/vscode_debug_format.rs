@@ -34,10 +34,13 @@ impl VsCodeDebugTaskDefinition {
             }
         }
         let build = match &self.pre_launch_task {
-            serde_json::Value::String(task_name)
-                if !task_name.is_empty() && task_name != "${defaultBuildTask}" =>
-            {
-                Some(BuildTaskDefinition::ByName(task_name.as_str().into()))
+            serde_json::Value::String(task_name) => {
+                let task_name = replacer.replace(task_name);
+                if task_name.is_empty() || task_name.contains("${") {
+                    None
+                } else {
+                    Some(BuildTaskDefinition::ByName(task_name.into()))
+                }
             }
             _ => None,
         };
@@ -241,6 +244,20 @@ mod tests {
                         "preLaunchTask": "${defaultBuildTask}"
                     },
                     {
+                        "name": "Input variable",
+                        "request": "launch",
+                        "type": "node",
+                        "program": "${workspaceFolder}/app.js",
+                        "preLaunchTask": "${input:buildTask}"
+                    },
+                    {
+                        "name": "Config variable",
+                        "request": "launch",
+                        "type": "node",
+                        "program": "${workspaceFolder}/app.js",
+                        "preLaunchTask": "${config:buildTask}"
+                    },
+                    {
                         "name": "No pre launch task",
                         "request": "launch",
                         "type": "node",
@@ -270,6 +287,20 @@ mod tests {
                 },
                 DebugScenario {
                     label: "Default build task sentinel".into(),
+                    adapter: "JavaScript".into(),
+                    config: expected_config.clone(),
+                    tcp_connection: None,
+                    build: None,
+                },
+                DebugScenario {
+                    label: "Input variable".into(),
+                    adapter: "JavaScript".into(),
+                    config: expected_config.clone(),
+                    tcp_connection: None,
+                    build: None,
+                },
+                DebugScenario {
+                    label: "Config variable".into(),
                     adapter: "JavaScript".into(),
                     config: expected_config.clone(),
                     tcp_connection: None,

@@ -7,11 +7,11 @@ use serde_json::json;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use task::{
-    DebugRequest, DebugScenario, LaunchRequest, SharedTaskContext, TaskContext, VariableName,
-    ZedDebugConfig,
+    BuildTaskDefinition, DebugRequest, DebugScenario, LaunchRequest, SharedTaskContext,
+    TaskContext, VariableName, ZedDebugConfig,
 };
 use text::Point;
-use util::path;
+use util::{path, rel_path::RelPath};
 
 use crate::NewProcessMode;
 use crate::new_process_modal::NewProcessModal;
@@ -164,6 +164,77 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
 
         assert!(called_launch.load(Ordering::SeqCst));
         called_launch.store(false, Ordering::SeqCst);
+    }
+}
+
+#[gpui::test]
+async fn test_missing_build_task_behavior_depends_on_scenario_source(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "main.rs": "fn main() {}"
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    for (directory, expected_launch) in [(".vscode", true), (".zed", false)] {
+        let called_launch = Arc::new(AtomicBool::new(false));
+        let _subscription = project::debugger::test::intercept_debug_sessions(cx, {
+            let called_launch = called_launch.clone();
+            move |client| {
+                client.on_request::<dap::requests::Launch, _>({
+                    let called_launch = called_launch.clone();
+                    move |_, _| {
+                        called_launch.store(true, Ordering::SeqCst);
+                        Ok(())
+                    }
+                });
+            }
+        });
+
+        let scenario = DebugScenario {
+            adapter: "fake-adapter".into(),
+            label: "missing build".into(),
+            build: Some(BuildTaskDefinition::ByName("missing-build".into())),
+            config: json!({
+                "request": "launch",
+                "program": "/project/main.rs",
+            }),
+            tcp_connection: None,
+        };
+
+        workspace
+            .update(cx, |multi, window, cx| {
+                multi.workspace().update(cx, |workspace, cx| {
+                    workspace.start_debug_session_with_directory(
+                        scenario,
+                        Default::default(),
+                        None,
+                        None,
+                        Some(Arc::from(RelPath::from_unix_str(directory).unwrap())),
+                        window,
+                        cx,
+                    );
+                })
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+        assert_eq!(
+            called_launch.load(Ordering::SeqCst),
+            expected_launch,
+            "unexpected launch result for {directory}"
+        );
     }
 }
 

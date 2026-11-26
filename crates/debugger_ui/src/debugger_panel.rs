@@ -190,6 +190,27 @@ impl DebugPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.start_session_with_directory(
+            scenario,
+            task_context,
+            active_buffer,
+            worktree_id,
+            None,
+            window,
+            cx,
+        );
+    }
+
+    pub(crate) fn start_session_with_directory(
+        &mut self,
+        scenario: DebugScenario,
+        task_context: SharedTaskContext,
+        active_buffer: Option<Entity<Buffer>>,
+        worktree_id: Option<WorktreeId>,
+        directory: Option<Arc<RelPath>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let dap_store = self.project.read(cx).dap_store();
         let Some(adapter) = DapRegistry::global(cx).adapter(&scenario.adapter) else {
             return;
@@ -238,6 +259,7 @@ impl DebugPanel {
                     task_context.clone(),
                     worktree_id,
                     active_buffer.as_ref().map(|buffer| buffer.downgrade()),
+                    directory.clone(),
                 );
             })
         }
@@ -257,6 +279,7 @@ impl DebugPanel {
                                         .map(|entity| entity.downgrade()),
                                     task_context: task_context.clone(),
                                     worktree_id,
+                                    directory: directory.clone(),
                                 });
                             };
                             running.resolve_scenario(
@@ -264,6 +287,7 @@ impl DebugPanel {
                                 task_context,
                                 active_buffer,
                                 worktree_id,
+                                directory,
                                 window,
                                 cx,
                             )
@@ -336,15 +360,17 @@ impl DebugPanel {
             task_context,
             worktree_id,
             active_buffer,
+            directory,
         } = context;
 
         let active_buffer = active_buffer.and_then(|buffer| buffer.upgrade());
 
-        self.start_session(
+        self.start_session_with_directory(
             scenario,
             task_context,
             active_buffer,
             worktree_id,
+            directory,
             window,
             cx,
         );
@@ -1947,9 +1973,38 @@ impl workspace::DebuggerProvider for DebuggerProvider {
         window: &mut Window,
         cx: &mut App,
     ) {
+        self.start_session_with_directory(
+            definition,
+            context,
+            buffer,
+            worktree_id,
+            None,
+            window,
+            cx,
+        );
+    }
+
+    fn start_session_with_directory(
+        &self,
+        definition: DebugScenario,
+        context: SharedTaskContext,
+        buffer: Option<Entity<Buffer>>,
+        worktree_id: Option<WorktreeId>,
+        directory: Option<Arc<RelPath>>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         self.0.update(cx, |_, cx| {
             cx.defer_in(window, move |this, window, cx| {
-                this.start_session(definition, context, buffer, worktree_id, window, cx);
+                this.start_session_with_directory(
+                    definition,
+                    context,
+                    buffer,
+                    worktree_id,
+                    directory,
+                    window,
+                    cx,
+                );
             })
         })
     }
