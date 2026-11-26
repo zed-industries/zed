@@ -214,9 +214,8 @@ impl ReplStore {
         })
     }
 
-    fn get_remote_kernel_specifications(
-        &self,
-        cx: &mut Context<Self>,
+    pub(crate) fn get_remote_kernel_specifications(
+        cx: &App,
     ) -> Option<Task<Result<Vec<KernelSpecification>>>> {
         match (
             std::env::var("JUPYTER_SERVER"),
@@ -228,7 +227,7 @@ impl ReplStore {
                     token,
                 };
                 let http_client = cx.http_client();
-                Some(cx.spawn(async move |_, _| {
+                Some(cx.background_spawn(async move {
                     list_remote_kernelspecs(remote_server, http_client)
                         .await
                         .map(|specs| {
@@ -254,7 +253,7 @@ impl ReplStore {
     pub fn refresh_kernelspecs(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let local_kernel_specifications = local_kernel_specifications(self.fs.clone());
         let wsl_kernel_specifications = wsl_kernel_specifications(cx.background_executor().clone());
-        let remote_kernel_specifications = self.get_remote_kernel_specifications(cx);
+        let remote_kernel_specifications = Self::get_remote_kernel_specifications(cx);
 
         let all_specs = cx.background_spawn(async move {
             let mut all_specs = local_kernel_specifications

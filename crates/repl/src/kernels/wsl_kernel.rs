@@ -41,7 +41,7 @@ async fn peek_ports(ip: IpAddr) -> Result<[u16; 5]> {
 
 pub struct WslRunningKernel {
     pub process: util::command::Child,
-    connection_path: PathBuf,
+    _connection_file: tempfile::TempPath,
     _process_status_task: Option<Task<()>>,
     pub working_directory: PathBuf,
     pub request_tx: mpsc::Sender<JupyterMessage>,
@@ -107,9 +107,9 @@ impl WslRunningKernel {
             fs.create_dir(&runtime_dir)
                 .await
                 .with_context(|| format!("Failed to create jupyter runtime dir {runtime_dir:?}"))?;
-            let connection_path = runtime_dir.join(format!("kernel-zed-wsl-{entity_id}.json"));
+            let connection_path = tempfile::TempPath::try_from_path(runtime_dir.join(format!("kernel-zed-wsl-{entity_id}-{}.json", uuid::Uuid::new_v4())))?;
             let content = serde_json::to_string(&connection_info)?;
-            fs.atomic_write(connection_path.clone(), content).await?;
+            fs.atomic_write(connection_path.to_path_buf(), content).await?;
 
             // Convert connection_path to WSL path
             // yeah we can't assume this is available on WSL.
@@ -271,6 +271,7 @@ impl WslRunningKernel {
                 .arg("-c")
                 .arg(&shell_command);
 
+            session.update(cx, |session, cx| session.check_launch(cx))?;
             let mut process = cmd
                 .stdout(util::command::Stdio::piped())
                 .stderr(util::command::Stdio::piped())
@@ -409,7 +410,7 @@ impl WslRunningKernel {
                 stdin_tx,
                 working_directory,
                 _process_status_task: Some(process_status_task),
-                connection_path,
+                _connection_file: connection_path,
                 execution_state: ExecutionState::Idle,
                 kernel_info: None,
             }) as Box<dyn RunningKernel>)
@@ -462,7 +463,6 @@ impl RunningKernel for WslRunningKernel {
 
 impl Drop for WslRunningKernel {
     fn drop(&mut self) {
-        std::fs::remove_file(&self.connection_path).ok();
         self.request_tx.close_channel();
         self.process.kill().ok();
     }

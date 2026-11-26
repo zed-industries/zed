@@ -944,8 +944,10 @@ pub mod notebook {
     actions!(
         notebook,
         [
-            /// Opens a Jupyter notebook file.
+            /// Opens the current Jupyter notebook as editable cells.
             OpenNotebook,
+            /// Returns to the notebook's JSON source.
+            EditSource,
             /// Runs all cells in the notebook.
             RunAll,
             /// Runs the current cell and stays on it.
@@ -958,9 +960,9 @@ pub mod notebook {
             MoveCellUp,
             /// Moves the current cell down.
             MoveCellDown,
-            /// Adds a new markdown cell.
+            /// Inserts a Markdown cell below the selected cell.
             AddMarkdownBlock,
-            /// Adds a new code cell.
+            /// Inserts a code cell below the selected cell.
             AddCodeBlock,
             /// Deletes the current cell.
             DeleteCell,

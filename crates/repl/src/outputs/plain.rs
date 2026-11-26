@@ -19,7 +19,7 @@ use gpui::{Bounds, ClipboardItem, Entity, FontStyle, Pixels, TextStyle, WhiteSpa
 use language::Buffer;
 use settings::Settings as _;
 use terminal::{Terminal, TerminalBuilder, terminal_settings::TerminalSettings};
-use terminal_view::terminal_element::TerminalElement;
+use terminal_view::terminal_element::{TerminalElement, is_blank};
 use theme_settings::ThemeSettings;
 use ui::{IntoElement, prelude::*};
 use util::paths::PathStyle;
@@ -312,6 +312,28 @@ mod tests {
     }
 
     #[gpui::test]
+    fn terminal_output_lays_out_through_its_last_visible_column(cx: &mut TestAppContext) {
+        let cx = init_test(cx);
+        for column in [1, 96] {
+            cx.draw(
+                Default::default(),
+                size(px(100.), px(100.)),
+                |window, cx| {
+                    let text = format!("\x1b[{column}Gx");
+                    let output = cx.new(|cx| TerminalOutput::from(&text, window, cx));
+                    let width = max_width_for_columns(column, window, cx).unwrap();
+                    div()
+                        .flex()
+                        .child(div().flex_none().child(output))
+                        .on_children_prepainted(move |bounds, _, _| {
+                            assert!((bounds[0].size.width - width).abs() <= px(1.));
+                        })
+                },
+            );
+        }
+    }
+
+    #[gpui::test]
     fn test_initial_text_uses_repl_terminal_size(cx: &mut TestAppContext) {
         let cx = init_test(cx);
         let (text, expected) = cx.update(|window, cx| {
@@ -362,8 +384,14 @@ impl Render for TerminalOutput {
 
         let text_style = text_style(window, cx);
         let minimum_contrast = TerminalSettings::get_global(cx).minimum_contrast;
+        let mut columns = 0;
         let (rects, batched_text_runs, block_element_rects) =
             terminal.read(cx).with_renderable_cells(|cells| {
+                let cells = cells.inspect(|cell| {
+                    if !is_blank(cell) || cell.is_wide_char_spacer() {
+                        columns = columns.max(cell.point.column + 1);
+                    }
+                });
                 TerminalElement::layout_grid(cells, 0, &text_style, None, minimum_contrast, cx)
             });
 
@@ -431,6 +459,7 @@ impl Render for TerminalOutput {
             },
         )
         // We must set the height explicitly for the editor block to size itself correctly
+        .w(cell_width * columns as f32)
         .h(height)
         .into_any_element()
     }

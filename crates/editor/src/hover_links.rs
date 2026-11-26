@@ -894,24 +894,17 @@ impl ResolvedFileTarget {
         cx: &mut AsyncWindowContext,
     ) {
         if let Some(row) = self.row {
-            let col = self.column.unwrap_or(0);
-            if let Some(active_editor) = item.downcast::<crate::Editor>() {
-                active_editor
-                    .downgrade()
-                    .update_in(cx, |editor, window, cx| {
-                        let row = row.saturating_sub(1);
-                        let col = col.saturating_sub(1);
-                        let Some(buffer) = editor.buffer().read(cx).as_singleton() else {
-                            return;
-                        };
-                        let point = buffer
-                            .read(cx)
-                            .snapshot()
-                            .point_from_external_input(row, col);
-                        editor.go_to_singleton_buffer_point_silently(point, window, cx);
-                    })
-                    .log_err();
-            }
+            cx.update(|window, cx| {
+                crate::items::navigate_to_file_position(
+                    item.as_ref(),
+                    row,
+                    self.column,
+                    false,
+                    window,
+                    cx,
+                )
+            })
+            .log_err();
         }
     }
 }

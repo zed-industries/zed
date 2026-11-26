@@ -2022,11 +2022,12 @@ impl Pane {
                     let Some(pane_handle) = pane.upgrade() else {
                         return Ok(());
                     };
-                    match Self::save_item(
+                    match Self::save_item_internal(
                         project.clone(),
                         pane_handle,
                         &*item_to_close,
                         save_intent,
+                        true,
                         cx,
                     )
                     .await
@@ -2239,19 +2240,34 @@ impl Pane {
         save_intent: SaveIntent,
         cx: &mut AsyncWindowContext,
     ) -> Result<bool> {
+        Self::save_item_internal(project, pane, item, save_intent, false, cx).await
+    }
+
+    async fn save_item_internal(
+        project: Entity<Project>,
+        pane: Entity<Pane>,
+        item: &dyn ItemHandle,
+        save_intent: SaveIntent,
+        close_on_discard: bool,
+        cx: &mut AsyncWindowContext,
+    ) -> Result<bool> {
         const CONFLICT_MESSAGE: &str = "This file has changed on disk since you started editing it. Do you want to overwrite it?";
 
         const DELETED_MESSAGE: &str = "This file has been deleted on disk since you started editing it. Do you want to recreate it?";
 
+        let discard = |_: &mut Pane, window: &mut Window, cx: &mut Context<Pane>| {
+            if close_on_discard {
+                item.discard_before_close(cx);
+            }
+            item.reload(project.clone(), window, cx)
+        };
         let path_style = project.read_with(cx, |project, cx| project.path_style(cx));
         if save_intent == SaveIntent::Skip {
             let is_saveable_singleton = cx.update(|_window, cx| {
                 item.can_save(cx) && item.buffer_kind(cx) == ItemBufferKind::Singleton
             })?;
             if is_saveable_singleton {
-                pane.update_in(cx, |_, window, cx| item.reload(project, window, cx))?
-                    .await
-                    .log_err();
+                pane.update_in(cx, discard)?.await.log_err();
             }
             return Ok(true);
         };
@@ -2419,11 +2435,7 @@ impl Pane {
                                 })
                                 .log_err();
                                 if can_save && is_singleton {
-                                    pane.update_in(cx, |_, window, cx| {
-                                        item.reload(project.clone(), window, cx)
-                                    })?
-                                    .await
-                                    .log_err();
+                                    pane.update_in(cx, discard)?.await.log_err();
                                 }
                                 return Ok(true);
                             }

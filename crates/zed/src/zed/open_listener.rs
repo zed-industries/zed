@@ -572,9 +572,8 @@ pub async fn open_paths_with_positions(
     }
 
     let items_for_navigation = items
-        .iter()
-        .map(|item| item.as_ref().and_then(|r| r.as_ref().ok()).cloned())
-        .collect::<Vec<_>>();
+        .iter_mut()
+        .map(|item| item.as_mut().and_then(|r| r.as_mut().ok()));
     navigate_to_positions(&multi_workspace, items_for_navigation, path_positions, cx);
 
     Ok((multi_workspace, items))

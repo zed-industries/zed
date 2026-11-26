@@ -5082,6 +5082,51 @@ mod tests {
             .unwrap();
     }
 
+    #[cfg(debug_assertions)]
+    #[gpui::test]
+    async fn test_back_to_notebook_from_source_toolbar(cx: &mut TestAppContext) {
+        use repl::notebook::NotebookPreview;
+        use zed_actions::notebook::EditSource;
+
+        let app_state = init_test(cx);
+        let path = PathBuf::from(path!("/root/notes.ipynb"));
+        let source = r#"{"nbformat":4,"nbformat_minor":5,"metadata":{},"cells":[]}"#;
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/root"), json!({ "notes.ipynb": source }))
+            .await;
+        let result = open_test_workspace_paths(vec![path], app_state, cx).await;
+        let workspace = result.workspace;
+        let cx = &mut VisualTestContext::from_window(result.window.into(), cx);
+        cx.dispatch_action(EditSource);
+        let editor = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_item_as::<Editor>(cx)
+                .expect("source editor")
+        });
+        let edited = format!("{source}\n");
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text(edited.clone(), window, cx)
+        });
+        cx.run_until_parked();
+        let button = cx.debug_bounds("back-to-notebook").expect("return button");
+        cx.simulate_click(button.center(), Modifiers::default());
+        workspace.read_with(cx, |workspace, cx| {
+            let preview = workspace
+                .active_item_as::<NotebookPreview>(cx)
+                .expect("notebook");
+            assert!(preview.is_dirty(cx));
+        });
+        cx.dispatch_action(EditSource);
+        workspace.read_with(cx, |workspace, cx| {
+            let editor = workspace
+                .active_item_as::<Editor>(cx)
+                .expect("source editor");
+            assert_eq!(editor.read(cx).text(cx), edited);
+        });
+    }
+
     #[gpui::test]
     async fn test_pane_actions(cx: &mut TestAppContext) {
         let app_state = init_test(cx);

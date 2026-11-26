@@ -1,3 +1,4 @@
+use super::remote_kernels::RemoteKernelShutdown;
 use super::{KernelSession, RunningKernel, SshRemoteKernelSpecification, start_kernel_tasks};
 use anyhow::{Context as _, Result};
 use client::proto;
@@ -21,10 +22,7 @@ pub struct SshRunningKernel {
     kernel_info: Option<KernelInfoReply>,
     working_directory: PathBuf,
     _ssh_tunnel_process: util::command::Child,
-    _local_connection_file: PathBuf,
-    kernel_id: String,
-    project: Entity<Project>,
-    project_id: u64,
+    shutdown: RemoteKernelShutdown,
 }
 
 impl SshRunningKernel {
@@ -36,7 +34,6 @@ impl SshRunningKernel {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Box<dyn RunningKernel>>> {
-        let client = project.read(cx).client();
         let remote_client = project.read(cx).remote_client();
         let project_id = project
             .read(cx)
@@ -65,16 +62,20 @@ impl SshRunningKernel {
                 command,
                 args,
             };
-            let response = if let Some(remote_client) = remote_client.as_ref() {
-                remote_client
-                    .read_with(cx, |client, _| client.proto_client())
-                    .request(request)
-                    .await?
-            } else {
-                client.request(request).await?
-            };
-
-            let kernel_id = response.kernel_id.clone();
+            let remote_client = remote_client.context("No SSH client for this project")?;
+            let client = remote_client.read_with(cx, |client, _| client.proto_client());
+            session.update(cx, |session, cx| session.check_launch(cx))?;
+            let executor = cx.background_executor().clone();
+            let (response, shutdown) = RemoteKernelShutdown::finish_launch(cx.background_executor(), async move {
+                let response = client.request(request).await?;
+                let kernel_id = response.kernel_id.clone();
+                let shutdown = RemoteKernelShutdown::new(executor, async move {
+                    client.request(proto::KillKernel { kernel_id, project_id }).await?;
+                    Ok(())
+                });
+                Ok((response, shutdown))
+            }).await?;
+            let kernel_id = response.kernel_id;
             let connection_info: serde_json::Value =
                 serde_json::from_str(&response.connection_file)?;
 
@@ -111,7 +112,6 @@ impl SshRunningKernel {
                 (local_ports[4], "127.0.0.1".to_string(), remote_hb_port),
             ];
 
-            let remote_client = remote_client.ok_or_else(|| anyhow::anyhow!("no remote client"))?;
             let command_template = cx.update(|_window, cx| {
                 remote_client.read(cx).build_forward_ports_command(forwards)
             })??;
@@ -120,7 +120,8 @@ impl SshRunningKernel {
             command.args(&command_template.args);
             command.envs(&command_template.env);
 
-            let mut ssh_tunnel_process = command.spawn().context("failed to spawn ssh tunnel")?;
+            session.update(cx, |session, cx| session.check_launch(cx))?;
+            let mut ssh_tunnel_process = command.kill_on_drop(true).spawn().context("failed to spawn ssh tunnel")?;
 
             let stderr = ssh_tunnel_process.stderr.take();
             cx.spawn(async move |_cx| {
@@ -198,13 +199,6 @@ impl SshRunningKernel {
             local_connection_info["hb_port"] = serde_json::json!(local_ports[4]);
             local_connection_info["ip"] = serde_json::json!("127.0.0.1");
 
-            let local_connection_file =
-                std::env::temp_dir().join(format!("zed_ssh_kernel_{}.json", kernel_id));
-            std::fs::write(
-                &local_connection_file,
-                serde_json::to_string_pretty(&local_connection_info)?,
-            )?;
-
             // Parse connection info and create ZMQ connections
             let connection_info_struct: jupyter_protocol::ConnectionInfo =
                 serde_json::from_value(local_connection_info)?;
@@ -279,10 +273,7 @@ impl SshRunningKernel {
                 kernel_info: None,
                 working_directory,
                 _ssh_tunnel_process: ssh_tunnel_process,
-                _local_connection_file: local_connection_file,
-                kernel_id,
-                project,
-                project_id,
+                shutdown,
             }) as Box<dyn RunningKernel>)
         })
     }
@@ -317,19 +308,8 @@ impl RunningKernel for SshRunningKernel {
         self.kernel_info = Some(info);
     }
 
-    fn force_shutdown(&mut self, _window: &mut Window, cx: &mut App) -> Task<Result<()>> {
-        let kernel_id = self.kernel_id.clone();
-        let project_id = self.project_id;
-        let client = self.project.read(cx).client();
-
-        cx.background_executor().spawn(async move {
-            let request = proto::KillKernel {
-                kernel_id,
-                project_id,
-            };
-            client.request::<proto::KillKernel>(request).await?;
-            Ok(())
-        })
+    fn force_shutdown(&mut self, _window: &mut Window, _cx: &mut App) -> Task<Result<()>> {
+        self.shutdown.shutdown()
     }
 
     fn kill(&mut self) {

@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::{Context as _, Result};
 use askpass::EncryptedPassword;
-use editor::Editor;
+use editor::items::navigate_to_file_position;
 use futures::{FutureExt as _, channel::oneshot, select};
 use gpui::{AppContext, AsyncApp, Entity, PromptLevel, WindowHandle};
 
@@ -171,7 +171,7 @@ pub async fn open_remote_project(
             let (resolved_paths, paths_with_positions) =
                 determine_paths_with_positions(&remote_connection, paths).await;
 
-            let open_results = existing_window
+            let mut open_results = existing_window
                 .update(cx, |multi_workspace, window, cx| {
                     window.activate_window();
                     multi_workspace.activate(existing_workspace.clone(), None, window, cx);
@@ -202,9 +202,8 @@ pub async fn open_remote_project(
             });
 
             let items = open_results
-                .into_iter()
-                .map(|r| r.and_then(|r| r.ok()))
-                .collect::<Vec<_>>();
+                .iter_mut()
+                .map(|r| r.as_mut().and_then(|r| r.as_mut().ok()));
             navigate_to_positions(&existing_window, items, &paths_with_positions, cx);
 
             return Ok(existing_window);
@@ -426,8 +425,13 @@ pub async fn open_remote_project(
                 });
             }
 
-            Ok((_, items)) => {
-                navigate_to_positions(&window, items, &paths_with_positions, cx);
+            Ok((_, mut items)) => {
+                navigate_to_positions(
+                    &window,
+                    items.iter_mut().map(Option::as_mut),
+                    &paths_with_positions,
+                    cx,
+                );
             }
         }
 
@@ -437,9 +441,9 @@ pub async fn open_remote_project(
     Ok(window)
 }
 
-pub fn navigate_to_positions(
+pub fn navigate_to_positions<'a>(
     window: &WindowHandle<MultiWorkspace>,
-    items: impl IntoIterator<Item = Option<Box<dyn workspace::item::ItemHandle>>>,
+    items: impl IntoIterator<Item = Option<&'a mut Box<dyn workspace::item::ItemHandle>>>,
     positions: &[PathWithPosition],
     cx: &mut AsyncApp,
 ) {
@@ -450,21 +454,10 @@ pub fn navigate_to_positions(
         let Some(row) = path.row else {
             continue;
         };
-        if let Some(active_editor) = item.downcast::<Editor>() {
-            window
-                .update(cx, |_, window, cx| {
-                    active_editor.update(cx, |editor, cx| {
-                        let row = row.saturating_sub(1);
-                        let col = path.column.unwrap_or(0).saturating_sub(1);
-                        let Some(buffer) = editor.buffer().read(cx).as_singleton() else {
-                            return;
-                        };
-                        let buffer_snapshot = buffer.read(cx).snapshot();
-                        let point = buffer_snapshot.point_from_external_input(row, col);
-                        editor.go_to_singleton_buffer_point(point, window, cx);
-                    });
-                })
-                .ok();
+        if let Ok(source) = window.update(cx, |_, window, cx| {
+            navigate_to_file_position(item.as_ref(), row, path.column, true, window, cx)
+        }) {
+            *item = source;
         }
     }
 }

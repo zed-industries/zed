@@ -1,9 +1,17 @@
 use futures::{SinkExt as _, channel::mpsc};
-use gpui::{App, AppContext as _, Entity, Task, Window};
+use gpui::{App, AppContext as _, BackgroundExecutor, Entity, Task, Window};
 use http_client::{AsyncBody, HttpClient, Request};
-use jupyter_protocol::{ExecutionState, JupyterKernelspec, JupyterMessage, KernelInfoReply};
+use jupyter_protocol::{
+    Channel, ExecutionState, JupyterKernelspec, JupyterMessage, JupyterMessageContent,
+    KernelInfoReply,
+};
+use util::ResultExt as _;
 
-use async_tungstenite::tokio::connect_async;
+use async_tungstenite::tokio::connect_async_with_tls_connector;
+use async_tungstenite::tungstenite::{
+    Error as SocketError,
+    error::{ProtocolError, SubProtocolError},
+};
 use async_tungstenite::tungstenite::{client::IntoClientRequest, http::HeaderValue};
 
 use futures::StreamExt;
@@ -11,6 +19,7 @@ use smol::io::AsyncReadExt as _;
 
 use super::{KernelSession, RunningKernel};
 use anyhow::Result;
+use jupyter_websocket_client::binary_protocol::KERNEL_WEBSOCKET_PROTOCOL;
 use jupyter_websocket_client::{
     JupyterWebSocket, JupyterWebSocketReader, JupyterWebSocketWriter, KernelLaunchRequest,
     KernelSpecsResponse, ProtocolMode, RemoteServer,
@@ -25,11 +34,10 @@ pub struct RemoteKernelSpecification {
     pub kernelspec: JupyterKernelspec,
 }
 
-pub async fn launch_remote_kernel(
+async fn launch_remote_kernel(
     remote_server: &RemoteServer,
     http_client: Arc<dyn HttpClient>,
     kernel_name: &str,
-    _path: &str,
 ) -> Result<String> {
     //
     let kernel_launch_request = KernelLaunchRequest {
@@ -49,11 +57,11 @@ pub async fn launch_remote_kernel(
 
     let response = http_client.send(request).await?;
 
-    if !response.status().is_success() {
-        let mut body = String::new();
-        response.into_body().read_to_string(&mut body).await?;
-        anyhow::bail!("Failed to launch kernel: {body}");
-    }
+    anyhow::ensure!(
+        response.status().is_success(),
+        "Failed to launch kernel: {}",
+        response.status()
+    );
 
     let mut body = String::new();
     response.into_body().read_to_string(&mut body).await?;
@@ -112,17 +120,71 @@ impl PartialEq for RemoteKernelSpecification {
 
 impl Eq for RemoteKernelSpecification {}
 
+pub(super) struct RemoteKernelShutdown {
+    executor: BackgroundExecutor,
+    request: Option<futures::future::BoxFuture<'static, Result<()>>>,
+}
+
+impl Debug for RemoteKernelShutdown {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RemoteKernelShutdown")
+    }
+}
+
+impl RemoteKernelShutdown {
+    pub(super) async fn finish_launch<T: Send + 'static>(
+        executor: &BackgroundExecutor,
+        launch: impl Future<Output = Result<T>> + Send + 'static,
+    ) -> Result<T> {
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        executor
+            .spawn(async move {
+                if !sender.is_canceled() {
+                    drop(sender.send(launch.await));
+                }
+            })
+            .detach();
+        receiver.await?
+    }
+
+    pub(super) fn new(
+        executor: BackgroundExecutor,
+        request: impl Future<Output = Result<()>> + Send + 'static,
+    ) -> Self {
+        Self {
+            executor,
+            request: Some(Box::pin(request)),
+        }
+    }
+
+    pub(super) fn shutdown(&mut self) -> Task<Result<()>> {
+        match self.request.take() {
+            Some(request) => self.executor.spawn(request),
+            None => Task::ready(Ok(())),
+        }
+    }
+}
+
+impl Drop for RemoteKernelShutdown {
+    fn drop(&mut self) {
+        if let Some(request) = self.request.take() {
+            self.executor
+                .spawn(async move {
+                    request.await.log_err();
+                })
+                .detach();
+        }
+    }
+}
+
 pub struct RemoteRunningKernel {
-    remote_server: RemoteServer,
-    _receiving_task: Task<Result<()>>,
-    _routing_task: Task<Result<()>>,
-    http_client: Arc<dyn HttpClient>,
+    shutdown: RemoteKernelShutdown,
+    _connection: Task<()>,
     pub working_directory: std::path::PathBuf,
     pub request_tx: mpsc::Sender<JupyterMessage>,
     pub stdin_tx: mpsc::Sender<JupyterMessage>,
     pub execution_state: ExecutionState,
     pub kernel_info: Option<KernelInfoReply>,
-    pub kernel_id: String,
 }
 
 impl RemoteRunningKernel {
@@ -141,23 +203,48 @@ impl RemoteRunningKernel {
         let http_client = cx.http_client();
 
         window.spawn(cx, async move |cx| {
-            let kernel_id = launch_remote_kernel(
-                &remote_server,
-                http_client.clone(),
-                &kernelspec.name,
-                working_directory.to_str().unwrap_or_default(),
-            )
-            .await?;
+            session.update(cx, |session, cx| session.check_launch(cx))?;
+            let authorization = HeaderValue::from_str(&format!("token {}", remote_server.token))?;
+            let executor = cx.background_executor().clone();
+            let (ws_url, shutdown) =
+                RemoteKernelShutdown::finish_launch(cx.background_executor(), {
+                    let authorization = authorization.clone();
+                    async move {
+                        let kernel_id = launch_remote_kernel(
+                            &remote_server,
+                            http_client.clone(),
+                            &kernelspec.name,
+                        )
+                        .await?;
 
-            let ws_url = format!(
-                "{}/api/kernels/{}/channels?token={}",
-                remote_server.base_url.replace("http", "ws"),
-                kernel_id,
-                remote_server.token
-            );
+                        let url = remote_server.api_url(&format!("/kernels/{kernel_id}"));
+                        let ws_url = format!("{}/channels", url.replacen("http", "ws", 1));
+                        let shutdown = RemoteKernelShutdown::new(executor, {
+                            async move {
+                                let request = Request::builder()
+                                    .method("DELETE")
+                                    .uri(url)
+                                    .header("Authorization", authorization)
+                                    .body(AsyncBody::default())?;
+                                let response = http_client.send(request).await?;
+                                anyhow::ensure!(
+                                    response.status().is_success()
+                                        || response.status().as_u16() == 404,
+                                    "Failed to shut down kernel: {}",
+                                    response.status()
+                                );
+                                Ok(())
+                            }
+                        });
 
+                        Ok((ws_url, shutdown))
+                    }
+                })
+                .await?;
+            session.update(cx, |session, cx| session.check_launch(cx))?;
             let mut req: Request<()> = ws_url.into_client_request()?;
             let headers = req.headers_mut();
+            headers.insert("Authorization", authorization);
 
             headers.insert(
                 "User-Agent",
@@ -169,13 +256,30 @@ impl RemoteRunningKernel {
                 ))?,
             );
 
-            let response = connect_async(req).await;
-
-            let (ws_stream, _response) = response?;
+            headers.insert(
+                "Sec-WebSocket-Protocol",
+                HeaderValue::from_static(KERNEL_WEBSOCKET_PROTOCOL),
+            );
+            let connect = |request| {
+                async_compat::Compat::new(connect_async_with_tls_connector(
+                    request,
+                    Some(Arc::new(http_client_tls::tls_config()).into()),
+                ))
+            };
+            let (ws_stream, protocol_mode) = match connect(req.clone()).await {
+                Ok((stream, _)) => (stream, ProtocolMode::BinaryV1),
+                Err(SocketError::Protocol(ProtocolError::SecWebSocketSubProtocolError(
+                    SubProtocolError::NoSubProtocol,
+                ))) => {
+                    req.headers_mut().remove("Sec-WebSocket-Protocol");
+                    (connect(req).await?.0, ProtocolMode::Json)
+                }
+                Err(error) => return Err(error.into()),
+            };
 
             let kernel_socket = JupyterWebSocket {
                 inner: ws_stream,
-                protocol_mode: ProtocolMode::Json,
+                protocol_mode,
             };
             let (mut w, mut r): (JupyterWebSocketWriter, JupyterWebSocketReader) =
                 kernel_socket.split();
@@ -183,51 +287,66 @@ impl RemoteRunningKernel {
             let (request_tx, mut request_rx) =
                 futures::channel::mpsc::channel::<JupyterMessage>(100);
 
-            let routing_task = cx.background_spawn({
+            let routing = cx.background_spawn({
                 async move {
-                    while let Some(message) = request_rx.next().await {
-                        w.send(message).await.ok();
+                    while let Some(mut message) = request_rx.next().await {
+                        message.channel = Some(match message.content {
+                            JupyterMessageContent::InterruptRequest(_)
+                            | JupyterMessageContent::ShutdownRequest(_) => Channel::Control,
+                            JupyterMessageContent::InputReply(_) => Channel::Stdin,
+                            _ => Channel::Shell,
+                        });
+                        w.send(message).await?;
                     }
                     Ok(())
                 }
             });
 
-            let receiving_task = cx.spawn({
-                let session = session.clone();
+            let connection = cx.spawn({
+                let session = session.downgrade();
 
                 async move |cx| {
-                    while let Some(message) = r.next().await {
-                        match message {
-                            Ok(message) => {
-                                session
-                                    .update_in(cx, |session, window, cx| {
-                                        session.route(&message, window, cx);
-                                    })
-                                    .ok();
-                            }
-                            Err(e) => {
-                                log::error!("Error receiving message: {:?}", e);
-                            }
+                    let receiving = async {
+                        while let Some(message) = r.next().await {
+                            let message = match message {
+                                Ok(message) => message,
+                                Err(error) if error.is::<SocketError>() => return Err(error),
+                                Err(error) => {
+                                    log::warn!("Ignoring unsupported Jupyter message: {error}");
+                                    continue;
+                                }
+                            };
+                            session.update_in(cx, |session, window, cx| {
+                                session.route(&message, window, cx);
+                            })?;
                         }
-                    }
-                    Ok(())
+                        anyhow::Ok(())
+                    };
+                    let result = futures::future::select(routing, Box::pin(receiving))
+                        .await
+                        .factor_first()
+                        .0;
+                    let reason = match result {
+                        Ok(()) => "Remote kernel disconnected.".to_owned(),
+                        Err(error) => format!("Remote kernel connection failed: {error}"),
+                    };
+                    session
+                        .update(cx, |session, cx| session.kernel_errored(reason, cx))
+                        .ok();
                 }
             });
 
             let stdin_tx = request_tx.clone();
 
             anyhow::Ok(Box::new(Self {
-                _routing_task: routing_task,
-                _receiving_task: receiving_task,
-                remote_server,
+                _connection: connection,
+                shutdown,
                 working_directory,
                 request_tx,
                 stdin_tx,
                 // todo(kyle): pull this from the kernel API to start with
                 execution_state: ExecutionState::Idle,
                 kernel_info: None,
-                kernel_id,
-                http_client: http_client.clone(),
             }) as Box<dyn RunningKernel>)
         })
     }
@@ -237,7 +356,6 @@ impl Debug for RemoteRunningKernel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RemoteRunningKernel")
             // custom debug that keeps tokens out of logs
-            .field("remote_server url", &self.remote_server.base_url)
             .field("working_directory", &self.working_directory)
             .field("request_tx", &self.request_tx)
             .field("execution_state", &self.execution_state)
@@ -275,33 +393,48 @@ impl RunningKernel for RemoteRunningKernel {
         self.kernel_info = Some(info);
     }
 
-    fn force_shutdown(&mut self, window: &mut Window, cx: &mut App) -> Task<anyhow::Result<()>> {
-        let url = self
-            .remote_server
-            .api_url(&format!("/kernels/{}", self.kernel_id));
-        let token = self.remote_server.token.clone();
-        let http_client = self.http_client.clone();
-
-        window.spawn(cx, async move |_| {
-            let request = Request::builder()
-                .method("DELETE")
-                .uri(&url)
-                .header("Authorization", format!("token {}", token))
-                .body(AsyncBody::default())?;
-
-            let response = http_client.send(request).await?;
-
-            anyhow::ensure!(
-                response.status().is_success(),
-                "Failed to shutdown kernel: {}",
-                response.status()
-            );
-            Ok(())
-        })
+    fn force_shutdown(&mut self, _window: &mut Window, _cx: &mut App) -> Task<anyhow::Result<()>> {
+        self.shutdown.shutdown()
     }
 
     fn kill(&mut self) {
         self.request_tx.close_channel();
         self.stdin_tx.close_channel();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::channel::oneshot;
+
+    #[gpui::test]
+    async fn cancel_while_server_is_creating_kernel_still_releases_it(
+        executor: BackgroundExecutor,
+    ) {
+        let (accepted, wait_accepted) = oneshot::channel();
+        let (respond, response) = oneshot::channel();
+        let (shutdown, wait_shutdown) = oneshot::channel();
+        let launch = executor.spawn({
+            let executor = executor.clone();
+            async move {
+                RemoteKernelShutdown::finish_launch(&executor, {
+                    let executor = executor.clone();
+                    async move {
+                        accepted.send(()).unwrap();
+                        let kernel_id = response.await?;
+                        Ok(RemoteKernelShutdown::new(executor, async move {
+                            shutdown.send(kernel_id).unwrap();
+                            Ok(())
+                        }))
+                    }
+                })
+                .await
+            }
+        });
+        wait_accepted.await.unwrap();
+        drop(launch);
+        respond.send("temporary-kernel").unwrap();
+        assert_eq!(wait_shutdown.await.unwrap(), "temporary-kernel");
     }
 }

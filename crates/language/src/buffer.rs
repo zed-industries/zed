@@ -3408,6 +3408,20 @@ impl Buffer {
         }
     }
 
+    /// Redoes one previously undone transaction without redoing unrelated transactions.
+    pub fn redo_transaction(&mut self, transaction: Transaction, cx: &mut Context<Self>) -> bool {
+        let was_dirty = self.is_dirty();
+        let old_version = self.version.clone();
+        let transaction_id = transaction.id;
+        let Some(operation) = self.text.redo_transaction(transaction) else {
+            return false;
+        };
+        self.send_operation(Operation::Buffer(operation), true, cx);
+        self.did_edit(&old_version, was_dirty, BufferEditSource::User, cx);
+        self.restore_encoding_for_transaction(transaction_id, was_dirty);
+        true
+    }
+
     /// Manually undoes all changes until a given transaction in the buffer's redo history.
     pub fn redo_to_transaction(
         &mut self,

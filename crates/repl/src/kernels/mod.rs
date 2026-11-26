@@ -105,6 +105,7 @@ pub fn start_kernel_tasks<S: KernelSession + 'static>(
 
     let (request_tx, mut request_rx) = futures::channel::mpsc::channel::<JupyterMessage>(100);
     let (stdin_tx, mut stdin_rx) = futures::channel::mpsc::channel::<JupyterMessage>(100);
+    let session = session.downgrade();
 
     let recv_task = cx.spawn({
         let session = session.clone();
@@ -190,10 +191,19 @@ pub fn start_kernel_tasks<S: KernelSession + 'static>(
 
             while let Some((name, result)) = tasks.next().await {
                 if let Err(err) = result {
-                    session.update(cx, |session, cx| {
-                        session.kernel_errored(format!("handling failed for {name}: {err}"), cx);
-                        cx.notify();
-                    });
+                    session
+                        .update(cx, |session, cx| {
+                            session
+                                .kernel_errored(format!("handling failed for {name}: {err}"), cx);
+                            cx.notify();
+                        })
+                        .ok();
+                    break;
+                }
+                // Only the writers finish successfully. Once both close, the
+                // reader can wait forever even after the kernel is gone.
+                if S::IS_NOTEBOOK || tasks.len() == 1 {
+                    break;
                 }
             }
         }
@@ -204,6 +214,12 @@ pub fn start_kernel_tasks<S: KernelSession + 'static>(
 }
 
 pub trait KernelSession: Sized {
+    const IS_NOTEBOOK: bool = false;
+
+    fn check_launch(&self, _cx: &mut Context<Self>) -> Result<()> {
+        Ok(())
+    }
+
     fn route(&mut self, message: &JupyterMessage, window: &mut Window, cx: &mut Context<Self>);
     fn kernel_errored(&mut self, error_message: String, cx: &mut Context<Self>);
 }

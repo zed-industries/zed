@@ -140,6 +140,8 @@ impl Render for QuickActionBar {
         let has_available_code_actions = editor_value.has_available_code_actions_for_selection();
         let code_action_enabled = editor_value.code_actions_enabled_for_toolbar(cx);
         let focus_handle = editor_value.focus_handle(cx);
+        let back_to_notebook =
+            repl::notebook::NotebookPreview::back_to_notebook_button(editor_value, cx);
 
         let search_button = (editor.buffer_kind(cx) == ItemBufferKind::Singleton).then(|| {
             QuickActionBarButton::new(
@@ -716,6 +718,7 @@ impl Render for QuickActionBar {
             .children(code_actions_dropdown)
             .children(editor_selections_dropdown)
             .child(editor_settings_dropdown)
+            .children(back_to_notebook)
     }
 }
 

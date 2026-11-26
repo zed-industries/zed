@@ -217,6 +217,13 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     fn discarded(&self, _project: Entity<Project>, _window: &mut Window, _cx: &mut Context<Self>) {}
     fn on_removed(&self, _cx: &mut Context<Self>) {}
     fn workspace_deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
+    fn reveal_source(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Box<dyn ItemHandle> {
+        Box::new(cx.entity())
+    }
     fn pane_changed(&mut self, _new_pane_id: EntityId, _cx: &mut Context<Self>) {}
     fn navigate(
         &mut self,
@@ -326,6 +333,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     ) -> Task<Result<()>> {
         unimplemented!("reload() must be implemented if can_save() returns true")
     }
+    fn discard_before_close(&mut self, _: &mut Context<Self>) {}
 
     fn act_as_type<'a>(
         &'a self,
@@ -524,6 +532,7 @@ pub trait ItemHandle: 'static + Send {
     fn deactivated(&self, window: &mut Window, cx: &mut App);
     fn on_removed(&self, cx: &mut App);
     fn workspace_deactivated(&self, window: &mut Window, cx: &mut App);
+    fn reveal_source(&self, window: &mut Window, cx: &mut App) -> Box<dyn ItemHandle>;
     fn navigate(&self, data: Arc<dyn Any + Send>, window: &mut Window, cx: &mut App) -> bool;
     fn item_id(&self) -> EntityId;
     fn to_any_view(&self) -> AnyView;
@@ -555,6 +564,7 @@ pub trait ItemHandle: 'static + Send {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>>;
+    fn discard_before_close(&self, cx: &mut App);
     fn act_as_type(&self, type_id: TypeId, cx: &App) -> Option<AnyEntity>;
     fn to_followable_item_handle(&self, cx: &App) -> Option<Box<dyn FollowableItemHandle>>;
     fn to_serializable_item_handle(&self, cx: &App) -> Option<Box<dyn SerializableItemHandle>>;
@@ -1041,6 +1051,10 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.update(cx, |this, cx| this.navigate(data, window, cx))
     }
 
+    fn reveal_source(&self, window: &mut Window, cx: &mut App) -> Box<dyn ItemHandle> {
+        self.update(cx, |this, cx| this.reveal_source(window, cx))
+    }
+
     fn item_id(&self) -> EntityId {
         self.entity_id()
     }
@@ -1121,6 +1135,10 @@ impl<T: Item> ItemHandle for Entity<T> {
         cx: &mut App,
     ) -> Task<Result<()>> {
         self.update(cx, |item, cx| item.reload(project, window, cx))
+    }
+
+    fn discard_before_close(&self, cx: &mut App) {
+        self.update(cx, |item, cx| item.discard_before_close(cx));
     }
 
     fn act_as_type<'a>(&'a self, type_id: TypeId, cx: &'a App) -> Option<AnyEntity> {

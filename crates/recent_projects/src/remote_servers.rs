@@ -513,34 +513,13 @@ impl ProjectPicker {
                     .log_err()
                     .map(|(_workspace, items)| items);
 
-                    if let Some(items) = items {
-                        for (item, path) in items.into_iter().zip(paths_with_positions) {
-                            let Some(item) = item else {
-                                continue;
-                            };
-                            let Some(row) = path.row else {
-                                continue;
-                            };
-                            if let Some(active_editor) = item.downcast::<Editor>() {
-                                window
-                                    .update(cx, |_, window, cx| {
-                                        active_editor.update(cx, |editor, cx| {
-                                            let row = row.saturating_sub(1);
-                                            let col = path.column.unwrap_or(0).saturating_sub(1);
-                                            let Some(buffer) =
-                                                editor.buffer().read(cx).as_singleton()
-                                            else {
-                                                return;
-                                            };
-                                            let buffer_snapshot = buffer.read(cx).snapshot();
-                                            let point =
-                                                buffer_snapshot.point_from_external_input(row, col);
-                                            editor.go_to_singleton_buffer_point(point, window, cx);
-                                        });
-                                    })
-                                    .ok();
-                            }
-                        }
+                    if let Some(mut items) = items {
+                        crate::remote_connections::navigate_to_positions(
+                            &window,
+                            items.iter_mut().map(Option::as_mut),
+                            &paths_with_positions,
+                            cx,
+                        );
                     }
 
                     this.update(cx, |_, cx| {

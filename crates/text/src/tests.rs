@@ -768,6 +768,27 @@ fn test_history() {
 }
 
 #[test]
+fn test_redo_retained_transaction_after_an_unrelated_edit() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "sample = 17");
+    buffer.edit([(11..11, "8")]);
+    let transaction = buffer.finalize_last_transaction().unwrap().clone();
+    assert!(buffer.undo_transaction(transaction.id).is_some());
+    buffer.edit([(0..0, "other = 2\n")]);
+    assert!(buffer.redo().is_none());
+    assert!(buffer.redo_transaction(transaction.clone()).is_some());
+    assert!(buffer.redo_transaction(transaction).is_none());
+    assert_eq!(buffer.text(), "other = 2\nsample = 178");
+    buffer.undo();
+    assert_eq!(buffer.text(), "other = 2\nsample = 17");
+    buffer.undo();
+    assert_eq!(buffer.text(), "sample = 17");
+    buffer.redo();
+    assert_eq!(buffer.text(), "other = 2\nsample = 17");
+    buffer.redo();
+    assert_eq!(buffer.text(), "other = 2\nsample = 178");
+}
+
+#[test]
 fn test_finalize_last_transaction() {
     let now = Instant::now();
     let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "123456");

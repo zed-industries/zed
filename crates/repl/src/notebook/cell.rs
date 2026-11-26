@@ -1,18 +1,20 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use editor::{Editor, EditorMode, MultiBuffer, SizingBehavior};
+use editor::{
+    Editor, EditorMode, EditorSettings, EditorSettingsScrollbarProxy, MultiBuffer, SizingBehavior,
+};
 use futures::{StreamExt as _, future::Shared};
 use gpui::{
-    App, Entity, EventEmitter, Focusable, Hsla, InteractiveElement, RetainAllImageCache,
-    StatefulInteractiveElement, Task, prelude::*,
+    App, Entity, EventEmitter, Focusable, Hsla, InteractiveElement, StatefulInteractiveElement,
+    Task, prelude::*,
 };
 use jupyter_protocol::{JupyterMessage, JupyterMessageContent};
 use language::{Buffer, Language, LanguageRegistry};
 use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
 use nbformat::v4::{CellId, CellMetadata, CellType};
 use settings::Settings as _;
-use ui::{CommonAnimationExt, IconButtonShape, prelude::*};
+use ui::{CommonAnimationExt, IconButtonShape, ScrollAxes, Scrollbars, WithScrollbar, prelude::*};
 use util::ResultExt;
 use zed_actions::notebook::InterruptKernel;
 
@@ -21,6 +23,13 @@ use crate::{
     outputs::{Output, plain, plain::TerminalOutput, user_error::ErrorView},
     repl_settings::ReplSettings,
 };
+
+fn preserve_middle_click(div: gpui::Div, cx: &App) -> gpui::Div {
+    div.when(
+        cx.platform_info().os == gpui::OperatingSystem::Windows,
+        |div| div.on_mouse_down(gpui::MouseButton::Middle, |_, _, cx| cx.stop_propagation()),
+    )
+}
 
 #[derive(Copy, Clone, PartialEq, PartialOrd)]
 pub enum CellPosition {
@@ -117,7 +126,7 @@ pub(crate) enum MovementDirection {
 }
 
 fn convert_outputs(
-    outputs: &Vec<nbformat::v4::Output>,
+    outputs: &[nbformat::v4::Output],
     window: &mut Window,
     cx: &mut App,
 ) -> Vec<Output> {
@@ -128,10 +137,10 @@ fn convert_outputs(
                 content: cx.new(|cx| TerminalOutput::from(&text.0, window, cx)),
             },
             nbformat::v4::Output::DisplayData(display_data) => {
-                Output::new(&display_data.data, None, window, cx)
+                Output::for_notebook(&display_data.data, window, cx)
             }
             nbformat::v4::Output::ExecuteResult(execute_result) => {
-                Output::new(&execute_result.data, None, window, cx)
+                Output::for_notebook(&execute_result.data, window, cx)
             }
             nbformat::v4::Output::Error(error) => Output::ErrorOutput(ErrorView {
                 ename: error.ename.clone(),
@@ -157,14 +166,6 @@ impl Cell {
             Cell::Code(code_cell) => code_cell.read(cx).current_source(cx),
             Cell::Markdown(markdown_cell) => markdown_cell.read(cx).current_source(cx),
             Cell::Raw(raw_cell) => raw_cell.read(cx).source.clone(),
-        }
-    }
-
-    pub fn to_nbformat_cell(&self, cx: &App) -> nbformat::v4::Cell {
-        match self {
-            Cell::Code(code_cell) => code_cell.read(cx).to_nbformat_cell(cx),
-            Cell::Markdown(markdown_cell) => markdown_cell.read(cx).to_nbformat_cell(cx),
-            Cell::Raw(raw_cell) => raw_cell.read(cx).to_nbformat_cell(),
         }
     }
 
@@ -217,10 +218,8 @@ impl Cell {
 
                 Cell::Code(cx.new(|cx| {
                     CodeCell::new(
-                        CellSource::Existing {
-                            execution_count: *execution_count,
-                            outputs,
-                        },
+                        *execution_count,
+                        outputs,
                         id.clone(),
                         metadata.clone(),
                         text,
@@ -394,7 +393,13 @@ fn new_cell_buffer(
     cx: &mut App,
 ) -> (Entity<Buffer>, Task<()>) {
     let buffer = cx.new(|cx| {
-        let buffer = Buffer::local(source, cx);
+        let line_ending = match source.split_once('\n') {
+            Some((first_line, _)) if first_line.ends_with('\r') => language::LineEnding::Windows,
+            _ => language::LineEnding::Unix,
+        };
+        let mut source = source.to_owned();
+        language::LineEnding::normalize(&mut source);
+        let buffer = Buffer::local_normalized(source.as_str().into(), line_ending, cx);
         buffer.set_language_registry(languages.clone());
         buffer
     });
@@ -420,7 +425,6 @@ fn new_cell_buffer(
 pub struct MarkdownCell {
     id: CellId,
     metadata: CellMetadata,
-    image_cache: Entity<RetainAllImageCache>,
     source: String,
     editor: Entity<Editor>,
     markdown: Entity<Markdown>,
@@ -493,7 +497,6 @@ impl MarkdownCell {
         Self {
             id,
             metadata,
-            image_cache: RetainAllImageCache::new(cx),
             source,
             editor,
             markdown,
@@ -520,18 +523,6 @@ impl MarkdownCell {
 
     pub fn is_dirty(&self, cx: &App) -> bool {
         self.editor.read(cx).buffer().read(cx).is_dirty(cx)
-    }
-
-    pub fn to_nbformat_cell(&self, cx: &App) -> nbformat::v4::Cell {
-        let source = self.current_source(cx);
-        let source_lines: Vec<String> = source.lines().map(|l| format!("{}\n", l)).collect();
-
-        nbformat::v4::Cell::Markdown {
-            id: self.id.clone(),
-            metadata: self.metadata.clone(),
-            source: source_lines,
-            attachments: None,
-        }
     }
 
     pub fn is_editing(&self) -> bool {
@@ -627,7 +618,7 @@ impl Render for MarkdownCell {
                         .bg(self.selected_bg_color(window, cx))
                         .child(self.gutter(window, cx))
                         .child(
-                            div()
+                            preserve_middle_click(div(), cx)
                                 .flex_1()
                                 .p_3()
                                 .bg(cx.theme().colors().editor_background)
@@ -646,7 +637,11 @@ impl Render for MarkdownCell {
 
         // Preview mode - show rendered markdown
 
-        let style = MarkdownStyle::themed(MarkdownFont::Preview, window, cx);
+        let style = MarkdownStyle {
+            links_as_text: true,
+            prevent_mouse_interaction: true,
+            ..MarkdownStyle::themed(MarkdownFont::Preview, window, cx)
+        };
 
         v_flex()
             .size_full()
@@ -662,7 +657,6 @@ impl Render for MarkdownCell {
                     .child(self.gutter(window, cx))
                     .child(
                         v_flex()
-                            .image_cache(self.image_cache.clone())
                             .id("markdown-content")
                             .size_full()
                             .flex_1()
@@ -686,11 +680,13 @@ pub struct CodeCell {
     id: CellId,
     metadata: CellMetadata,
     execution_count: Option<i32>,
-    source: String,
+    pub(super) output_source: String,
     editor: Entity<editor::Editor>,
     outputs: Vec<Output>,
+    output_scroll: gpui::ScrollHandle,
     selected: bool,
     cell_position: Option<CellPosition>,
+    _editor_subscription: gpui::Subscription,
     _language_task: Task<()>,
     _reparse_task: Task<()>,
     execution_start_time: Option<Instant>,
@@ -700,40 +696,27 @@ pub struct CodeCell {
 
 impl EventEmitter<CellEvent> for CodeCell {}
 
-pub(super) enum CellSource {
-    /// Crate a new empty cell
-    None,
-    /// Backed by an existing notebook cell
-    Existing {
-        execution_count: Option<i32>,
-        outputs: Vec<Output>,
-    },
-}
-
-impl CellSource {
-    fn into_outputs(self) -> (Option<i32>, Vec<Output>) {
-        match self {
-            CellSource::Existing {
-                execution_count,
-                outputs,
-            } => (execution_count, outputs),
-            CellSource::None => Default::default(),
-        }
-    }
+pub(super) struct PreviousExecution {
+    source: String,
+    outputs: Vec<Output>,
+    count: Option<i32>,
+    duration: Option<Duration>,
 }
 
 impl CodeCell {
     pub(super) fn new(
-        cell_source: CellSource,
+        execution_count: Option<i32>,
+        outputs: Vec<Output>,
         id: CellId,
         metadata: CellMetadata,
-        source: String,
+        mut source: String,
         languages: Arc<LanguageRegistry>,
         notebook_language: Shared<Task<Option<Arc<Language>>>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let (buffer, reparse_task) = new_cell_buffer(&source, languages, cx);
+        language::LineEnding::normalize(&mut source);
         let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
         let editor = cx.new(|cx| {
@@ -751,7 +734,6 @@ impl CodeCell {
 
             editor.disable_mouse_wheel_zoom();
             editor.disable_scrollbars_and_minimap(window, cx);
-            editor.set_text(source.clone(), window, cx);
             editor.set_show_gutter(false, cx);
             editor.set_use_modal_editing(true);
             editor
@@ -764,15 +746,20 @@ impl CodeCell {
             });
         });
 
-        let (execution_count, outputs) = cell_source.into_outputs();
+        let editor_subscription = cx.subscribe(&editor, |_, _, event, cx| {
+            if matches!(event, editor::EditorEvent::BufferEdited) {
+                cx.notify();
+            }
+        });
 
         Self {
             id,
             metadata,
             execution_count,
-            source,
+            output_source: source,
             editor,
             outputs,
+            output_scroll: Default::default(),
             selected: false,
             cell_position: None,
             execution_start_time: None,
@@ -780,6 +767,7 @@ impl CodeCell {
             is_executing: false,
             _language_task: language_task,
             _reparse_task: reparse_task,
+            _editor_subscription: editor_subscription,
         }
     }
 
@@ -812,30 +800,21 @@ impl CodeCell {
         self.editor.read(cx).buffer().read(cx).is_dirty(cx)
     }
 
-    pub fn to_nbformat_cell(&self, cx: &App) -> nbformat::v4::Cell {
-        let source = self.current_source(cx);
-        let source_lines: Vec<String> = source.lines().map(|l| format!("{}\n", l)).collect();
-
-        let outputs = self.outputs_to_nbformat(cx);
-
-        nbformat::v4::Cell::Code {
-            id: self.id.clone(),
-            metadata: self.metadata.clone(),
-            execution_count: self.execution_count,
-            source: source_lines,
-            outputs,
-        }
-    }
-
-    fn outputs_to_nbformat(&self, cx: &App) -> Vec<nbformat::v4::Output> {
-        self.outputs
-            .iter()
-            .filter_map(|output| output.to_nbformat(cx))
-            .collect()
+    #[cfg(test)]
+    pub(super) fn output_views(&self) -> &[Output] {
+        &self.outputs
     }
 
     pub fn has_outputs(&self) -> bool {
         !self.outputs.is_empty()
+    }
+
+    pub(super) fn has_results(&self) -> bool {
+        self.has_outputs() || self.execution_count.is_some()
+    }
+
+    pub(super) fn has_stale_outputs(&self, cx: &App) -> bool {
+        self.has_results() && self.current_source(cx) != self.output_source
     }
 
     pub fn clear_outputs(&mut self) {
@@ -843,10 +822,35 @@ impl CodeCell {
         self.execution_duration = None;
     }
 
-    pub fn start_execution(&mut self) {
-        self.execution_start_time = Some(Instant::now());
-        self.execution_duration = None;
+    pub(super) fn clear_results(&mut self) {
+        self.clear_outputs();
+        self.execution_count = None;
+    }
+
+    pub(super) fn queue_execution(&mut self) {
         self.is_executing = true;
+    }
+
+    pub(super) fn start_execution(&mut self, source: String) -> PreviousExecution {
+        self.execution_start_time = Some(Instant::now());
+        self.is_executing = true;
+        PreviousExecution {
+            source: std::mem::replace(&mut self.output_source, source),
+            outputs: std::mem::take(&mut self.outputs),
+            count: self.execution_count.take(),
+            duration: self.execution_duration.take(),
+        }
+    }
+
+    pub(super) fn cancel_execution(&mut self, previous: Option<PreviousExecution>) {
+        if let Some(previous) = previous {
+            self.output_source = previous.source;
+            self.outputs = previous.outputs;
+            self.execution_count = previous.count;
+            self.execution_duration = previous.duration;
+        }
+        self.execution_start_time = None;
+        self.is_executing = false;
     }
 
     pub fn finish_execution(&mut self) {
@@ -858,6 +862,21 @@ impl CodeCell {
 
     pub fn is_executing(&self) -> bool {
         self.is_executing
+    }
+
+    pub(super) fn update_display(
+        &mut self,
+        indices: &[usize],
+        data: &jupyter_protocol::Media,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for index in indices {
+            if let Some(output) = self.outputs.get_mut(*index) {
+                *output = Output::for_notebook(data, window, cx);
+            }
+        }
+        cx.notify();
     }
 
     /// Displays a kernel-level failure (e.g. the kernel failed to launch because
@@ -910,20 +929,14 @@ impl CodeCell {
             }
             JupyterMessageContent::DisplayData(display_data) => {
                 self.outputs
-                    .push(Output::new(&display_data.data, None, window, cx));
+                    .push(Output::for_notebook(&display_data.data, window, cx));
             }
             JupyterMessageContent::ExecuteResult(execute_result) => {
                 self.outputs
-                    .push(Output::new(&execute_result.data, None, window, cx));
+                    .push(Output::for_notebook(&execute_result.data, window, cx));
             }
             JupyterMessageContent::ExecuteInput(input) => {
-                self.execution_count = serde_json::to_value(&input.execution_count)
-                    .ok()
-                    .and_then(|v| v.as_i64())
-                    .map(|v| v as i32);
-            }
-            JupyterMessageContent::ExecuteReply(_) => {
-                self.finish_execution();
+                self.execution_count = i32::try_from(input.execution_count.value()).ok();
             }
             JupyterMessageContent::ErrorOutput(error) => {
                 self.outputs.push(Output::ErrorOutput(ErrorView {
@@ -996,7 +1009,7 @@ impl RenderableCell for CodeCell {
     }
 
     fn source(&self) -> &String {
-        &self.source
+        &self.output_source
     }
 
     fn control(&self, _window: &mut Window, cx: &mut Context<Self>) -> Option<CellControl> {
@@ -1105,8 +1118,12 @@ impl RunnableCell for CodeCell {
     }
 }
 
-impl Render for CodeCell {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+impl CodeCell {
+    fn render_output_viewport(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let output_max_height = ReplSettings::get_global(cx).output_max_height_lines;
         let output_max_height = if output_max_height > 0 {
             Some(window.line_height() * output_max_height as f32)
@@ -1115,6 +1132,57 @@ impl Render for CodeCell {
         };
         let output_max_width =
             plain::max_width_for_columns(ReplSettings::get_global(cx).max_columns, window, cx);
+        let content = v_flex().flex_none().min_w_full().children(
+            self.outputs
+                .iter()
+                .filter_map(|output| output.content(window, cx)),
+        );
+        let horizontal = div()
+            .id("output-scroll")
+            .flex()
+            .items_start()
+            .w_full()
+            .overflow_x_scroll()
+            .restrict_scroll_to_axis()
+            .track_scroll(&self.output_scroll)
+            .child(content);
+        div()
+            .id("output-viewport")
+            .relative()
+            .w_full()
+            .when_some(output_max_width, |div, width| div.max_w(width))
+            .child(
+                div()
+                    .id("output-height")
+                    .when_some(output_max_height, |div, height| {
+                        div.max_h(height)
+                            .overflow_y_scroll()
+                            .restrict_scroll_to_axis()
+                    })
+                    .child(horizontal),
+            )
+            .when(
+                EditorSettings::get_global(cx).scrollbar.axes.horizontal,
+                |div| {
+                    div.custom_scrollbars(
+                        Scrollbars::for_settings::<EditorSettingsScrollbarProxy>()
+                            .tracked_scroll_handle(&self.output_scroll)
+                            .with_track_along(
+                                ScrollAxes::Horizontal,
+                                cx.theme().colors().editor_background,
+                            )
+                            .notify_content(),
+                        window,
+                        cx,
+                    )
+                },
+            )
+    }
+}
+
+impl Render for CodeCell {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let stale = self.has_stale_outputs(cx);
         // get the language from the editor's buffer
         let language_name = self
             .editor
@@ -1142,8 +1210,9 @@ impl Render for CodeCell {
                     .child(
                         div().py_1p5().w_full().child(
                             div()
-                                .relative()
                                 .flex()
+                                .items_start()
+                                .gap_2()
                                 .size_full()
                                 .flex_1()
                                 .py_3()
@@ -1152,14 +1221,17 @@ impl Render for CodeCell {
                                 .border_1()
                                 .border_color(cx.theme().colors().border)
                                 .bg(cx.theme().colors().editor_background)
-                                .child(div().w_full().child(self.editor.clone()))
+                                .child(
+                                    preserve_middle_click(div(), cx)
+                                        .flex_1()
+                                        .min_w_0()
+                                        .child(self.editor.clone()),
+                                )
                                 // lang badge in top-right corner
                                 .when_some(language_name, |this, name| {
                                     this.child(
                                         div()
-                                            .absolute()
-                                            .top_1()
-                                            .right_2()
+                                            .flex_none()
                                             .px_2()
                                             .py_0p5()
                                             .rounded_md()
@@ -1173,7 +1245,10 @@ impl Render for CodeCell {
                     ),
             )
             .when(
-                self.has_outputs() || self.execution_duration.is_some() || self.is_executing,
+                self.has_outputs()
+                    || self.execution_duration.is_some()
+                    || self.is_executing
+                    || stale,
                 |this| {
                     let execution_time_label = self.execution_duration.map(Self::format_duration);
                     let is_executing = self.is_executing;
@@ -1216,19 +1291,36 @@ impl Render for CodeCell {
                                                                 .text_color(
                                                                     cx.theme().colors().text_muted,
                                                                 )
-                                                                .child("Running..."),
+                                                                .child(
+                                                                    if self
+                                                                        .execution_start_time
+                                                                        .is_some()
+                                                                    {
+                                                                        "Running..."
+                                                                    } else {
+                                                                        "Queued..."
+                                                                    },
+                                                                ),
                                                         )
                                                         .into_any_element()
                                                 } else if let Some(duration_text) =
                                                     execution_time_label.clone()
                                                 {
+                                                    let (icon, color) =
+                                                        if self.outputs.iter().any(|output| {
+                                                            matches!(output, Output::ErrorOutput(_))
+                                                        }) {
+                                                            (IconName::XCircle, Color::Error)
+                                                        } else {
+                                                            (IconName::Check, Color::Success)
+                                                        };
                                                     h_flex()
                                                         .gap_1()
                                                         .items_center()
                                                         .child(
-                                                            Icon::new(IconName::Check)
+                                                            Icon::new(icon)
                                                                 .size(IconSize::XSmall)
-                                                                .color(Color::Success),
+                                                                .color(color),
                                                         )
                                                         .child(
                                                             div()
@@ -1245,24 +1337,14 @@ impl Render for CodeCell {
                                                 this.child(div().mb_2().child(time_element))
                                             },
                                         )
-                                        // output at bottom
-                                        .child(
-                                            div()
-                                                .id((
-                                                    ElementId::from(self.id.to_string()),
-                                                    "output-scroll",
-                                                ))
-                                                .w_full()
-                                                .when_some(output_max_width, |div, max_width| {
-                                                    div.max_w(max_width).overflow_x_scroll()
-                                                })
-                                                .when_some(output_max_height, |div, max_height| {
-                                                    div.max_h(max_height).overflow_y_scroll()
-                                                })
-                                                .children(self.outputs.iter().map(|output| {
-                                                    div().children(output.content(window, cx))
-                                                })),
-                                        ),
+                                        .when(stale, |this| {
+                                            this.child(
+                                                Label::new("Cell changed since last execution")
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Warning),
+                                            )
+                                        })
+                                        .child(self.render_output_viewport(window, cx)),
                                 ),
                             ),
                     )
@@ -1279,18 +1361,6 @@ pub struct RawCell {
     source: String,
     selected: bool,
     cell_position: Option<CellPosition>,
-}
-
-impl RawCell {
-    pub fn to_nbformat_cell(&self) -> nbformat::v4::Cell {
-        let source_lines: Vec<String> = self.source.lines().map(|l| format!("{}\n", l)).collect();
-
-        nbformat::v4::Cell::Raw {
-            id: self.id.clone(),
-            metadata: self.metadata.clone(),
-            source: source_lines,
-        }
-    }
 }
 
 impl RenderableCell for RawCell {
@@ -1379,6 +1449,185 @@ mod tests {
             cx.set_global(settings_store);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn drag_wide_notebook_output(cx: &mut TestAppContext) {
+        use crate::notebook::{
+            NotebookPreview,
+            preview::preview_tests::{notebook_workspace, open_file},
+        };
+        use gpui::{Modifiers, MouseButton, point, size};
+        use serde_json::json;
+        let file = json!({"nbformat":4, "nbformat_minor":5, "metadata":{}, "cells":[{
+            "cell_type":"code", "id":"wide", "metadata":{}, "source":"x", "execution_count":1,
+            "outputs":[{"output_type":"stream", "name":"stdout", "text":"x".repeat(90)}]
+        }]})
+        .to_string();
+        let (_, workspace, cx) = notebook_workspace(json!({"wide.ipynb": file}), cx).await;
+        cx.update(|_, cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.scrollbar.get_or_insert_default().show =
+                        Some(settings::ShowScrollbar::Always);
+                });
+            })
+        });
+        cx.simulate_resize(size(px(500.), px(640.)));
+        open_file("wide.ipynb", &workspace, cx).await;
+        let scroll = workspace.read_with(cx, |workspace, cx| {
+            let tab = workspace.active_item_as::<NotebookPreview>(cx).unwrap();
+            let notebook = tab.read(cx).notebook.as_ref().unwrap().read(cx);
+            let Some(Cell::Code(cell)) = notebook.cell(0) else {
+                panic!("expected code cell")
+            };
+            cell.read(cx).output_scroll.clone()
+        });
+        assert!(scroll.max_offset().x > px(0.));
+        let viewport = scroll.bounds();
+        let thumb = point(viewport.left() + px(10.), viewport.bottom() + px(7.));
+        let right = point(viewport.right(), thumb.y);
+        let modifiers = Modifiers::none();
+        cx.simulate_mouse_down(thumb, MouseButton::Left, modifiers);
+        cx.simulate_mouse_move(right, MouseButton::Left, modifiers);
+        cx.simulate_mouse_up(right, MouseButton::Left, modifiers);
+        assert!(
+            (scroll.offset().x + scroll.max_offset().x).abs() <= px(1.),
+            "dragging the thumb exposes the last output column"
+        );
+        cx.simulate_resize(size(px(1800.), px(640.)));
+        cx.run_until_parked();
+        assert_eq!(
+            scroll.max_offset().x,
+            px(0.),
+            "fitting output has no scroll range"
+        );
+    }
+
+    #[gpui::test]
+    fn test_notebook_static_outputs(cx: &mut TestAppContext) {
+        init_test(cx);
+        let languages = Arc::new(LanguageRegistry::test(cx.executor()));
+        let cell = serde_json::from_value(serde_json::json!({
+            "cell_type": "code", "id": "static", "metadata": {}, "source": "x",
+            "execution_count": 1,
+            "outputs": [
+                {"output_type":"display_data", "metadata":{}, "data":{
+                    "image/png":["iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptV\n",
+                                 "AAAACklEQVR4nGP4DwABAQEAsTj2FAAAAABJRU5ErkJggg=="],
+                    "text/plain":"figure", "text/html":"<div>rich output</div>"}},
+                {"output_type":"execute_result", "execution_count":1, "metadata":{}, "data":{
+                    "text/plain":"42", "text/markdown":"![remote](https://example.com/image)"}},
+                {"output_type":"display_data", "metadata":{}, "data":{
+                    "text/html":"<img src='https://example.com/image'>",
+                    "application/javascript":"ignored", "image/svg+xml":"<svg/>"}},
+                {"output_type":"display_data", "metadata":{}, "data":{
+                    "image/png":"R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="}},
+                {"output_type":"stream", "name":"stderr", "text":["one\n", "two\n"]},
+                {"output_type":"error", "ename":"ValueError", "evalue":"bad value",
+                 "traceback":["traceback"]}
+            ]
+        }))
+        .expect("valid code cell");
+        let cx = cx.add_empty_window();
+        let Cell::Code(cell) = cx.update(|window, cx| {
+            Cell::load(&cell, &languages, Task::ready(None).shared(), window, cx)
+        }) else {
+            panic!("expected code cell")
+        };
+        cell.read_with(cx, |cell, cx| {
+            assert!(!cell.has_stale_outputs(cx));
+            let [
+                Output::Image { .. },
+                Output::Plain { content, .. },
+                Output::Message(_),
+                Output::Message(image_error),
+                Output::Stream { content: stream },
+                Output::ErrorOutput(error),
+            ] = cell.outputs.as_slice()
+            else {
+                panic!("expected PNG, text, unsupported notice, invalid PNG, stream, and error")
+            };
+            assert_eq!(content.read(cx).full_text(cx), "42\n");
+            assert!(image_error.contains("Failed to load PNG"));
+            assert_eq!(stream.read(cx).full_text(cx), "one\ntwo\n");
+            assert_eq!(error.evalue, "bad value");
+            assert_eq!(error.traceback.read(cx).full_text(cx), "traceback\n");
+        });
+
+        let data = serde_json::from_value(serde_json::json!({
+            "text/plain": "live result", "text/html": "<div>rich output</div>"
+        }))
+        .expect("valid MIME bundle");
+        cell.update_in(cx, |cell, window, cx| {
+            cell.editor
+                .update(cx, |editor, cx| editor.set_text("y", window, cx));
+            assert!(cell.has_stale_outputs(cx));
+            assert_eq!(cell.output_views().len(), 6);
+            cell.start_execution("y".into());
+            assert!(!cell.has_outputs());
+            assert_eq!(cell.execution_count(), None);
+            let message = jupyter_protocol::DisplayData::new(data).into();
+            cell.handle_message(&message, window, cx);
+            let Some(Output::Plain { content, .. }) = cell.outputs.last() else {
+                panic!("live output should use the same passive renderer");
+            };
+            assert_eq!(content.read(cx).full_text(cx), "live result\n");
+            assert!(!cell.has_stale_outputs(cx));
+        });
+    }
+
+    #[gpui::test]
+    fn test_typing_in_notebook_cells(cx: &mut TestAppContext) {
+        init_test(cx);
+        let languages = Arc::new(LanguageRegistry::test(cx.executor()));
+        languages.add(languages::markdown_lang());
+        cx.update(|cx| {
+            cx.set_http_client(http_client::FakeHttpClient::create(|request| async move {
+                panic!("opening a notebook must not fetch {}", request.uri())
+            }));
+        });
+        let source = "![remote](https://example.com/image)";
+        let (markdown, markdown_cx) = cx.add_window_view(|window, cx| {
+            MarkdownCell::new(
+                uuid::Uuid::new_v4().into(),
+                CellMetadata::default(),
+                source.into(),
+                languages.clone(),
+                window,
+                cx,
+            )
+        });
+        markdown_cx.update(|window, cx| {
+            Cell::Markdown(markdown.clone()).move_to(MovementDirection::End, window, cx);
+        });
+        markdown_cx.run_until_parked();
+        markdown_cx.simulate_input(" caption");
+        markdown.read_with(markdown_cx, |cell, cx| {
+            assert_eq!(cell.current_source(cx), format!("{source} caption"));
+        });
+
+        let (code, code_cx) = cx.add_window_view(|window, cx| {
+            CodeCell::new(
+                None,
+                Vec::new(),
+                uuid::Uuid::new_v4().into(),
+                CellMetadata::default(),
+                "x = 1".into(),
+                languages,
+                Task::ready(None).shared(),
+                window,
+                cx,
+            )
+        });
+        code_cx.update(|window, cx| {
+            Cell::Code(code.clone()).move_to(MovementDirection::End, window, cx);
+        });
+        code_cx.run_until_parked();
+        code_cx.simulate_input("0");
+        code.read_with(code_cx, |cell, cx| {
+            assert_eq!(cell.current_source(cx), "x = 10")
         });
     }
 
@@ -1534,7 +1783,8 @@ mod tests {
         let cell = cx.update(|window, cx| {
             cx.new(|cx| {
                 CodeCell::new(
-                    CellSource::None,
+                    None,
+                    Vec::new(),
                     uuid::Uuid::new_v4().into(),
                     metadata,
                     "Some *emphasized* text".to_string(),

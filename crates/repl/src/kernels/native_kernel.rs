@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result};
 use futures::{
-    AsyncBufReadExt as _, StreamExt as _,
+    AsyncBufReadExt as _, FutureExt as _, StreamExt as _,
     channel::mpsc::{self},
     io::BufReader,
 };
@@ -20,6 +20,7 @@ use std::{
     sync::Arc,
 };
 
+use util::ResultExt as _;
 use uuid::Uuid;
 
 use super::{KernelSession, RunningKernel, start_kernel_tasks};
@@ -40,6 +41,49 @@ impl PartialEq for LocalKernelSpecification {
 impl Eq for LocalKernelSpecification {}
 
 impl LocalKernelSpecification {
+    pub(crate) fn for_notebook_python(path: PathBuf, name: String) -> Result<Self> {
+        anyhow::ensure!(
+            path.is_absolute(),
+            "Expected an absolute Python interpreter path"
+        );
+        let directory = path.parent().context("Missing interpreter directory")?;
+        let inherited = env::var_os("PATH").unwrap_or_default();
+        let path_variable = env::join_paths(
+            std::iter::once(directory.to_owned()).chain(env::split_paths(&inherited)),
+        )?;
+        Ok(Self {
+            kernelspec: JupyterKernelspec {
+                argv: vec![
+                    path.to_str()
+                        .context("Invalid Python interpreter path")?
+                        .to_owned(),
+                    "-I".into(),
+                    "-c".into(),
+                    include_str!("notebook_launcher.py").into(),
+                    "--InteractiveShellApp.ignore_cwd=True".into(),
+                    "-f".into(),
+                    "{connection_file}".into(),
+                ],
+                display_name: name.clone(),
+                language: "python".into(),
+                interrupt_mode: None,
+                metadata: None,
+                env: Some(
+                    [(
+                        "PATH".into(),
+                        path_variable
+                            .into_string()
+                            .map_err(|_| anyhow::anyhow!("Invalid interpreter PATH"))?,
+                    )]
+                    .into_iter()
+                    .collect(),
+                ),
+            },
+            name,
+            path,
+        })
+    }
+
     #[must_use]
     fn command(&self, connection_path: &PathBuf) -> Result<std::process::Command> {
         let argv = &self.kernelspec.argv;
@@ -141,23 +185,37 @@ impl NativeRunningKernel {
             fs.create_dir(&runtime_dir)
                 .await
                 .with_context(|| format!("Failed to create jupyter runtime dir {runtime_dir:?}"))?;
-            let connection_path = runtime_dir.join(format!("kernel-zed-{entity_id}.json"));
+            let connection_path = runtime_dir.join(format!("kernel-zed-{entity_id}-{}.json", Uuid::new_v4()));
             let content = serde_json::to_string(&connection_info)?;
             fs.atomic_write(connection_path.clone(), content).await?;
+            let remove_connection = util::defer(|| {
+                if let Err(error) = std::fs::remove_file(&connection_path)
+                    && error.kind() != std::io::ErrorKind::NotFound
+                {
+                    log::warn!("Failed to remove kernel connection file: {error}");
+                }
+            });
 
             let mut cmd = kernel_specification.command(&connection_path)?;
             cmd.current_dir(&working_directory);
 
+            session.update(cx, |session, cx| session.check_launch(cx))?;
             let mut process = util::process::Child::spawn(
                 cmd,
                 std::process::Stdio::piped(),
                 std::process::Stdio::piped(),
                 std::process::Stdio::piped(),
             )?;
+            let process_status = process.status();
+            let kill_on_cancel = util::defer(|| {
+                process.kill().log_err();
+            });
 
             let session_id = Uuid::new_v4().to_string();
 
-            let iopub_socket = jupyter_zmq_client::create_client_iopub_connection(
+            let executor = cx.background_executor().clone();
+            let connect = async {
+            let mut iopub_socket = jupyter_zmq_client::create_client_iopub_connection(
                 &connection_info,
                 "",
                 &session_id,
@@ -168,7 +226,7 @@ impl NativeRunningKernel {
                     .await?;
 
             let peer_identity = jupyter_zmq_client::peer_identity_for_session(&session_id)?;
-            let shell_socket = jupyter_zmq_client::create_client_shell_connection_with_identity(
+            let mut shell_socket = jupyter_zmq_client::create_client_shell_connection_with_identity(
                 &connection_info,
                 &session_id,
                 peer_identity.clone(),
@@ -181,6 +239,23 @@ impl NativeRunningKernel {
             )
             .await?;
 
+            if S::IS_NOTEBOOK {
+                wait_for_notebook_iopub(&mut iopub_socket, &mut shell_socket, &executor).await?;
+            }
+            anyhow::Ok((iopub_socket, shell_socket, control_socket, stdin_socket))
+            };
+            let readiness_timeout = if S::IS_NOTEBOOK {
+                executor.timer(std::time::Duration::from_secs(30)).left_future()
+            } else {
+                futures::future::pending().right_future()
+            };
+            let (iopub_socket, shell_socket, control_socket, stdin_socket) = futures::select! {
+                sockets = connect.fuse() => sockets?,
+                status = process_status.fuse() => anyhow::bail!("Kernel exited during startup: {}", status?),
+                _ = readiness_timeout.fuse() => anyhow::bail!("The kernel did not become ready within 30 seconds"),
+            };
+            kill_on_cancel.abort();
+            remove_connection.abort();
             let (request_tx, stdin_tx) = start_kernel_tasks(
                 session.clone(),
                 iopub_socket,
@@ -220,20 +295,12 @@ impl NativeRunningKernel {
             .detach();
 
             let status = process.status();
+            let session = session.downgrade();
 
             let process_status_task = cx.spawn(async move |cx| {
-                let error_message = match status.await {
-                    Ok(status) => {
-                        if status.success() {
-                            log::info!("kernel process exited successfully");
-                            return;
-                        }
-
-                        format!("kernel process exited with status: {:?}", status)
-                    }
-                    Err(err) => {
-                        format!("kernel process exited with error: {:?}", err)
-                    }
+                let Some(error_message) = kernel_exit_error::<S>(status.await) else {
+                    log::info!("kernel process exited successfully");
+                    return;
                 };
 
                 log::error!("{}", error_message);
@@ -242,7 +309,7 @@ impl NativeRunningKernel {
                     session.kernel_errored(error_message, cx);
 
                     cx.notify();
-                });
+                }).ok();
             });
 
             anyhow::Ok(Box::new(Self {
@@ -256,6 +323,42 @@ impl NativeRunningKernel {
                 kernel_info: None,
             }) as Box<dyn RunningKernel>)
         })
+    }
+}
+
+async fn wait_for_notebook_iopub(
+    iopub: &mut jupyter_zmq_client::ClientIoPubConnection,
+    shell: &mut jupyter_zmq_client::ClientShellConnection,
+    executor: &gpui::BackgroundExecutor,
+) -> Result<()> {
+    // A connected SUB socket may still miss the first cell's output until
+    // its subscription reaches the publisher.
+    loop {
+        shell
+            .send(jupyter_protocol::KernelInfoRequest {}.into())
+            .await?;
+        let retry = executor.timer(std::time::Duration::from_millis(500)).fuse();
+        futures::pin_mut!(retry);
+        loop {
+            futures::select! {
+                message = iopub.read().fuse() => {
+                    if message?.parent_header.is_some_and(|header| header.msg_type == "kernel_info_request") {
+                        return Ok(());
+                    }
+                }
+                _ = retry => break,
+            }
+        }
+    }
+}
+
+fn kernel_exit_error<S: KernelSession>(
+    status: std::io::Result<std::process::ExitStatus>,
+) -> Option<String> {
+    match status {
+        Ok(status) if status.success() && !S::IS_NOTEBOOK => None,
+        Ok(status) => Some(format!("kernel process exited with status: {status:?}")),
+        Err(error) => Some(format!("kernel process exited with error: {error:?}")),
     }
 }
 
@@ -401,6 +504,102 @@ pub async fn local_kernel_specifications(fs: Arc<dyn Fs>) -> Result<Vec<LocalKer
     Ok(kernel_dirs)
 }
 
+pub(crate) async fn notebook_python_kernels(
+    fs: Arc<dyn Fs>,
+    project_python: Option<PathBuf>,
+) -> Result<Vec<LocalKernelSpecification>> {
+    let mut candidates = Vec::new();
+    if let Some(path) = project_python.filter(|path| path.is_absolute()) {
+        candidates.push((path, "Project Python".to_string()));
+    }
+    if let Some(path) = crate::notebook::kernel_setup::installed_python() {
+        candidates.push((path, "Zed Python".to_string()));
+    }
+    for dir in dirs::data_dirs()
+        .into_iter()
+        .filter(|dir| dir.is_absolute())
+    {
+        let kernels = dir.join("kernels");
+        if fs.metadata(&kernels).await?.is_none() {
+            continue;
+        }
+        for spec in read_kernels_dir(kernels, fs.as_ref()).await? {
+            if spec.kernelspec.language.eq_ignore_ascii_case("python")
+                && let Some(path) = spec.kernelspec.argv.first().map(PathBuf::from)
+                && path.is_absolute()
+            {
+                candidates.push((path, spec.kernelspec.display_name));
+            }
+        }
+    }
+    let names: &[&str] = if cfg!(windows) {
+        &["python.exe"]
+    } else {
+        &["python3", "python"]
+    };
+    if let Some(path) = env::var_os("PATH") {
+        for name in names {
+            if let Some(path) = env::split_paths(&path)
+                .filter(|dir| dir.is_absolute())
+                .map(|dir| dir.join(name))
+                .find(|python| python.is_file())
+            {
+                candidates.push((path, "Python".to_string()));
+            }
+        }
+    }
+    let mut seen = collections::HashSet::default();
+    let mut specs = Vec::new();
+    for (path, name) in candidates {
+        if !seen.insert(path.clone()) || !path.is_file() {
+            continue;
+        }
+        specs.push(LocalKernelSpecification::for_notebook_python(path, name)?);
+    }
+    Ok(specs)
+}
+
+pub(crate) async fn suitable_notebook_python_kernels(
+    candidates: Vec<LocalKernelSpecification>,
+    preferred: Option<&std::path::Path>,
+) -> (Vec<LocalKernelSpecification>, Option<String>) {
+    let mut specs = Vec::new();
+    let mut failures = Vec::new();
+    for candidate in candidates {
+        match has_ipykernel(&candidate.path).await {
+            Ok(true) if preferred == Some(candidate.path.as_path()) => {
+                return (vec![candidate], None);
+            }
+            Ok(true) => specs.push(candidate),
+            Ok(false) => {}
+            Err(error) => {
+                log::warn!("{error:#}");
+                failures.push(format!("{error:#}"));
+            }
+        }
+    }
+    (specs, (!failures.is_empty()).then(|| failures.join("\n")))
+}
+
+async fn has_ipykernel(path: &std::path::Path) -> Result<bool> {
+    let output = util::command::new_command(path)
+        .current_dir(env::temp_dir())
+        .args(["-I", "-c", "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('ipykernel') else 77)"])
+        .kill_on_drop(true)
+        .output().await.with_context(|| format!("Could not check Python at {}", path.display()))?;
+    if output.status.code() == Some(77) {
+        return Ok(false);
+    }
+    anyhow::ensure!(
+        output.status.success(),
+        "Could not check Python at {}: {} ({})",
+        path.display(),
+        String::from_utf8_lossy(&output.stderr).trim(),
+        output.status
+    );
+    Ok(true)
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -409,6 +608,117 @@ mod test {
     use gpui::TestAppContext;
     use project::FakeFs;
     use serde_json::json;
+
+    #[test]
+    fn a_clean_native_exit_is_not_an_ordinary_repl_error() {
+        assert_eq!(
+            kernel_exit_error::<crate::Session>(Ok(std::process::ExitStatus::default())),
+            None
+        );
+    }
+
+    #[test]
+    #[ignore = "requires ZED_NOTEBOOK_TEST_PYTHON pointing to a local interpreter with ipykernel"]
+    fn notebook_kernel_imports_siblings_after_startup() -> Result<()> {
+        let python =
+            env::var_os("ZED_NOTEBOOK_TEST_PYTHON").context("Set ZED_NOTEBOOK_TEST_PYTHON")?;
+        let spec =
+            LocalKernelSpecification::for_notebook_python(python.into(), "Test Python".into())?;
+        let root = tempfile::tempdir()?;
+        let kernel_dir = root.path().join("kernels/zed-test");
+        std::fs::create_dir_all(&kernel_dir)?;
+        std::fs::write(
+            kernel_dir.join("kernel.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "argv": spec.kernelspec.argv,
+                "env": spec.kernelspec.env,
+                "display_name": spec.kernelspec.display_name,
+                "language": spec.kernelspec.language,
+            }))?,
+        )?;
+        std::fs::write(root.path().join("sibling_module.py"), "RESULT = 42\n")?;
+        let output = smol::block_on(util::command::new_command(&spec.path)
+            .current_dir(root.path())
+            .env("JUPYTER_PATH", root.path())
+            .env("IPYTHONDIR", root.path().join("ipython"))
+            .args(["-I", "-c", r#"
+from jupyter_client.manager import run_kernel
+
+with run_kernel(kernel_name="zed-test") as client:
+    def execute(code, count, silent=False):
+        reply = client.execute_interactive(code, silent=silent, store_history=not silent, timeout=15)
+        assert reply["content"]["status"] == "ok", reply["content"]
+        assert reply["content"]["execution_count"] == count, reply["content"]
+
+    execute("import sys, importlib.util; assert importlib.util.find_spec('sibling_module') is None", 0, silent=True)
+    execute("%pwd\nfrom sibling_module import RESULT\nassert RESULT == 42", 1)
+    execute("sys.path.remove('')", 2)
+    execute("assert '' not in sys.path and RESULT == 42", 3)
+"#])
+            .output())?;
+        anyhow::ensure!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn notebook_prefers_the_project_interpreter_without_resolving_its_symlink(
+        cx: &mut TestAppContext,
+    ) {
+        use std::os::unix::fs::{PermissionsExt as _, symlink};
+        let root = tempfile::tempdir().unwrap();
+        let bin = root.path().join(".venv/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let program = root.path().join("interpreter");
+        let marker = root.path().join("probed");
+        std::fs::write(
+            &program,
+            format!(
+                "#!/bin/sh\ntouch '{}'\n[ \"$1\" = '-I' ] && [ \"$2\" = '-c' ]\n",
+                marker.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let python = bin.join("python");
+        symlink(&program, &python).unwrap();
+        cx.executor().allow_parking();
+        let mut candidates =
+            notebook_python_kernels(FakeFs::new(cx.executor()), Some(python.clone()))
+                .await
+                .unwrap();
+        assert!(
+            !marker.exists(),
+            "opening the selector must not probe an interpreter"
+        );
+        candidates.insert(
+            0,
+            LocalKernelSpecification::for_notebook_python(
+                root.path().join("missing"),
+                "Missing".into(),
+            )
+            .unwrap(),
+        );
+        let (kernels, _) = suitable_notebook_python_kernels(candidates, Some(&python)).await;
+        assert!(
+            marker.is_file(),
+            "Run checks whether the project interpreter has ipykernel"
+        );
+        let [kernel] = kernels.as_slice() else {
+            panic!("expected the project kernel")
+        };
+        assert_eq!(kernel.path, python);
+        assert_eq!(
+            kernel.kernelspec.argv.first().unwrap(),
+            python.to_str().unwrap()
+        );
+        let kernel_path = &kernel.kernelspec.env.as_ref().unwrap()["PATH"];
+        assert_eq!(env::split_paths(kernel_path).next().unwrap(), bin);
+    }
 
     #[gpui::test]
     async fn test_get_kernelspecs(cx: &mut TestAppContext) {

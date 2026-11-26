@@ -20,6 +20,19 @@ pub trait Prompt: EventEmitter<PromptResponse> + Focusable {}
 
 impl<V: EventEmitter<PromptResponse> + Focusable> Prompt for V {}
 
+impl Window {
+    /// Present a custom in-window prompt and receive the index of the chosen action.
+    pub fn prompt_with_view<V: Prompt + Render>(
+        &mut self,
+        view: Entity<V>,
+        cx: &mut App,
+    ) -> oneshot::Receiver<usize> {
+        let (sender, receiver) = oneshot::channel();
+        self.prompt = Some(PromptHandle::new(sender).with_view(view, self, cx));
+        receiver
+    }
+}
+
 /// A handle to a prompt that can be used to interact with it.
 pub struct PromptHandle {
     sender: oneshot::Sender<usize>,

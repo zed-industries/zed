@@ -2017,25 +2017,27 @@ impl FileFinderDelegate {
             let item = open_task
                 .await
                 .notify_workspace_async_err(workspace, &mut cx)?;
-            if let Some(active_editor) = item.downcast::<Editor>() {
-                active_editor
-                    .downgrade()
-                    .update_in(cx, |editor, window, cx| {
+            if let Some(selection_query) =
+                selection_query.filter(|query| query.path_position.row.is_some())
+            {
+                cx.update(|window, cx| {
+                    let Some(editor) = item.reveal_source(window, cx).downcast::<Editor>() else {
+                        return;
+                    };
+                    editor.update(cx, |editor, cx| {
                         let Some(buffer) = editor.buffer().read(cx).as_singleton() else {
                             return;
                         };
                         let buffer_snapshot = buffer.read(cx).snapshot();
-                        let Some(selection_query) = selection_query.as_ref() else {
-                            return;
-                        };
                         let Some(selection_range) =
                             selection_query.selection_range(&buffer_snapshot)
                         else {
                             return;
                         };
                         editor.go_to_singleton_buffer_range(selection_range, window, cx);
-                    })
-                    .log_err();
+                    });
+                })
+                .log_err();
             }
             if dismiss_after_open {
                 finder.update(cx, |_, cx| cx.emit(DismissEvent)).ok()?;

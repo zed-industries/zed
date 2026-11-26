@@ -1420,6 +1420,22 @@ impl Buffer {
             .collect()
     }
 
+    /// Redoes a retained transaction even if an unrelated edit cleared the redo stack.
+    pub fn redo_transaction(&mut self, transaction: Transaction) -> Option<Operation> {
+        if transaction.edit_ids.is_empty()
+            || !transaction
+                .edit_ids
+                .iter()
+                .all(|id| self.undo_map.is_undone(*id))
+        {
+            return None;
+        }
+        self.history.forget(transaction.id);
+        self.history
+            .push_transaction(transaction.clone(), Instant::now());
+        Some(self.undo_or_redo(transaction))
+    }
+
     fn undo_or_redo(&mut self, transaction: Transaction) -> Operation {
         let mut counts = HashMap::default();
         for edit_id in transaction.edit_ids {

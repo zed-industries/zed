@@ -28,11 +28,22 @@ pub const STANDARD_INDIFFERENT: GeneralPurpose = GeneralPurpose::new(
 
 impl ImageView {
     pub fn from(base64_encoded_data: &str) -> Result<Self> {
+        Self::decode(base64_encoded_data, None)
+    }
+
+    pub fn from_png(base64_encoded_data: &str) -> Result<Self> {
+        Self::decode(base64_encoded_data, Some(image::ImageFormat::Png))
+    }
+
+    fn decode(base64_encoded_data: &str, format: Option<image::ImageFormat>) -> Result<Self> {
         let filtered =
             base64_encoded_data.replace(&[' ', '\n', '\t', '\r', '\x0b', '\x0c'][..], "");
         let bytes = STANDARD_INDIFFERENT.decode(filtered)?;
 
-        let format = image::guess_format(&bytes)?;
+        let format = match format {
+            Some(format) => format,
+            None => image::guess_format(&bytes)?,
+        };
 
         let mut data = image::load_from_memory_with_format(&bytes, format)?.into_rgba8();
 
