@@ -383,6 +383,7 @@ impl OpenCodeLanguageModelProvider {
                 key,
                 (
                     DiscoveredModel {
+                        api_url: None,
                         supports_images: true,
                         supports_thinking: model_supports_thinking(&custom_model),
                         model: custom_model,
@@ -413,20 +414,26 @@ impl OpenCodeLanguageModelProvider {
         subscription: OpenCodeSubscription,
         cx: &AsyncApp,
     ) -> SharedString {
-        if let Some(url) = config.model.custom_model_api_url() {
-            if !url.is_empty() {
-                return url.to_string().into();
-            }
+        if let Some(url) = config
+            .model
+            .custom_model_api_url()
+            .filter(|url| !url.is_empty())
+        {
+            return api_base_with_version(url).into();
+        }
+
+        let configured_api_url = self
+            .state
+            .read_with(cx, |_, cx| OpenCodeLanguageModelProvider::api_url(cx));
+        let uses_default_api_url = configured_api_url.trim_end_matches('/') == OPENCODE_API_URL;
+        if uses_default_api_url && let Some(api_url) = config.api_url.as_deref() {
+            return api_url.trim_end_matches('/').to_string().into();
         }
 
         // Combine base URL with subscription path suffix
-        let base = self
-            .state
-            .read_with(cx, |_, cx| OpenCodeLanguageModelProvider::api_url(cx));
-
         let suffix = subscription.api_path_suffix();
-        let base_str = base.as_ref().trim_end_matches('/');
-        format!("{}{}", base_str, suffix).into()
+        let base = format!("{}{}", configured_api_url.trim_end_matches('/'), suffix);
+        api_base_with_version(&base).into()
     }
 
     fn current_api_key(&self, cx: &AsyncApp) -> Option<Arc<str>> {
@@ -622,11 +629,23 @@ fn model_id(model: &opencode::Model, subscription: OpenCodeSubscription) -> Stri
     format!("{}/{}", subscription.id_prefix(), model.id())
 }
 
+/// Custom endpoints are configured without an API version, while catalog
+/// endpoints include one. Normalize both to a base that protocol paths extend.
+fn api_base_with_version(base: &str) -> String {
+    let base = base.trim_end_matches('/');
+    if base.ends_with("/v1") || base.ends_with("/v1beta") {
+        base.to_string()
+    } else {
+        format!("{base}/v1")
+    }
+}
+
 fn language_model(model: &DiscoveredModel, subscription: OpenCodeSubscription) -> LanguageModel {
     let DiscoveredModel {
         model,
         supports_images,
         supports_thinking,
+        ..
     } = model;
     let supported_effort_levels = model
         .supported_reasoning_effort_levels()
@@ -1153,6 +1172,7 @@ mod tests {
             state.discovered_models.insert(
                 OpenCodeSubscription::Zen,
                 vec![DiscoveredModel {
+                    api_url: None,
                     model: test_model("old-model", ApiProtocol::Anthropic),
                     supports_images: true,
                     supports_thinking: false,
@@ -1176,6 +1196,7 @@ mod tests {
         discovered_models.insert(
             OpenCodeSubscription::Zen,
             vec![DiscoveredModel {
+                api_url: None,
                 model: test_model("old-zen", ApiProtocol::Anthropic),
                 supports_images: true,
                 supports_thinking: false,
@@ -1184,6 +1205,7 @@ mod tests {
         discovered_models.insert(
             OpenCodeSubscription::Go,
             vec![DiscoveredModel {
+                api_url: None,
                 model: test_model("old-go", ApiProtocol::OpenAiChat),
                 supports_images: false,
                 supports_thinking: false,
@@ -1191,6 +1213,7 @@ mod tests {
         );
         let mut errors = HashMap::default();
         let new_go_model = DiscoveredModel {
+            api_url: None,
             model: test_model("new-go", ApiProtocol::OpenAiChat),
             supports_images: true,
             supports_thinking: true,
@@ -1245,6 +1268,7 @@ mod tests {
                         None,
                         false,
                     ),
+                    api_url: None,
                     supports_images: false,
                     supports_thinking: true,
                 },
@@ -1433,6 +1457,48 @@ mod tests {
         assert_eq!(models[0].model.max_token_count(), 12345);
         assert_eq!(models[0].model.max_output_tokens(), Some(678));
         assert_eq!(models[0].model.protocol(), ApiProtocol::OpenAiChat);
+        assert_eq!(models[0].api_url, None);
+    }
+
+    #[test]
+    fn test_discovery_prefers_model_api_url_over_provider_api_url() -> Result<()> {
+        for (model_provider, provider_api, expected_api_url) in [
+            (
+                serde_json::json!({"api": "https://opencode.ai/inference/go/google/v1beta"}),
+                serde_json::Value::Null,
+                Some("https://opencode.ai/inference/go/google/v1beta"),
+            ),
+            (
+                serde_json::Value::Null,
+                serde_json::json!("https://opencode.ai/inference/go/openai/v1"),
+                Some("https://opencode.ai/inference/go/openai/v1"),
+            ),
+            (serde_json::Value::Null, serde_json::Value::Null, None),
+        ] {
+            let mut provider = serde_json::json!({
+                "npm": "@ai-sdk/openai-compatible",
+                "models": {
+                    "model": {
+                        "id": "model",
+                        "name": "Model",
+                        "tool_call": true,
+                        "modalities": {"output": ["text"]},
+                        "limit": {"context": 1000},
+                        "provider": model_provider,
+                    },
+                },
+            });
+            if !provider_api.is_null() {
+                provider["api"] = provider_api;
+            }
+            let catalog = serde_json::json!({"opencode-go": provider}).to_string();
+
+            let models = parse_discovered_models(&catalog, OpenCodeSubscription::Go)?;
+
+            assert_eq!(models.len(), 1);
+            assert_eq!(models[0].api_url.as_deref(), expected_api_url);
+        }
+        Ok(())
     }
 
     #[test]
@@ -1522,6 +1588,7 @@ mod tests {
         let model = add_discovered_model(
             &provider,
             DiscoveredModel {
+                api_url: None,
                 model: test_model("test-model", ApiProtocol::Anthropic),
                 supports_images: true,
                 supports_thinking: false,
@@ -1552,6 +1619,71 @@ mod tests {
             .expect("request should reach the http client")
             .expect("request should carry the session header");
         assert_generated_session_id(&captured_header);
+    }
+
+    #[gpui::test]
+    async fn test_stream_completion_uses_catalog_google_api_url(cx: &mut gpui::TestAppContext) {
+        let captured_uri = Arc::new(Mutex::new(None));
+        let http_client = FakeHttpClient::create({
+            let captured_uri = captured_uri.clone();
+            move |request| {
+                let captured_uri = captured_uri.clone();
+                async move {
+                    *captured_uri.lock() = Some(request.uri().to_string());
+                    Ok(Response::builder().status(200).body(AsyncBody::from(
+                        "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Hello\"}]},\"finishReason\":\"STOP\"}]}\n\n",
+                    ))?)
+                }
+            }
+        });
+        let provider = cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            OpenCodeLanguageModelProvider::new_with_cache(
+                http_client,
+                Arc::new(TestCredentialsProvider),
+                FakeFs::new(cx.background_executor().clone()),
+                PathBuf::from("/cache/models.json"),
+                cx,
+            )
+        });
+        let store_key = provider.state.update(cx, |state, cx| {
+            state.set_api_key(Some("test-key".to_string()), cx)
+        });
+        store_key.await.unwrap();
+        let model = add_discovered_model(
+            &provider,
+            DiscoveredModel {
+                api_url: Some("https://opencode.ai/inference/go/google/v1beta".to_string()),
+                model: test_model("gemini-4-argon", ApiProtocol::Google),
+                supports_images: true,
+                supports_thinking: true,
+            },
+            OpenCodeSubscription::Go,
+            cx,
+        );
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let stream = provider
+            .stream_completion(&model, request, &cx.to_async())
+            .await
+            .unwrap();
+        drop(stream);
+
+        assert_eq!(
+            captured_uri.lock().as_deref(),
+            Some(
+                "https://opencode.ai/inference/go/google/v1beta/models/gemini-4-argon:streamGenerateContent?alt=sse"
+            )
+        );
     }
 
     fn assert_generated_session_id(value: &http::HeaderValue) {

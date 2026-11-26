@@ -25,6 +25,7 @@ use crate::{
 /// Transport and identity for a completion, independent of application settings.
 pub struct CompletionConfig<'a> {
     pub model: &'a DiscoveredModel,
+    /// Protocol-specific API base, including its version path.
     pub api_url: &'a str,
     pub api_key: &'a str,
     pub provider_id: LanguageModelProviderId,
@@ -67,7 +68,8 @@ pub async fn stream_completion(
             }
             let stream = anthropic::stream_completion(
                 client,
-                api_url,
+                // The Anthropic client appends `/v1/messages` itself.
+                api_url.strip_suffix("/v1").unwrap_or(api_url),
                 config.api_key,
                 request,
                 None,
@@ -104,7 +106,7 @@ pub async fn stream_completion(
             let stream = open_ai::stream_completion(
                 client,
                 config.provider_name.0.as_ref(),
-                &format!("{api_url}/v1"),
+                api_url,
                 config.api_key,
                 request,
                 config.custom_headers,
@@ -131,7 +133,7 @@ pub async fn stream_completion(
             let stream = open_ai::responses::stream_response(
                 client,
                 config.provider_name.0.as_ref(),
-                &format!("{api_url}/v1"),
+                api_url,
                 config.api_key,
                 request,
                 config.custom_headers,
@@ -200,35 +202,42 @@ mod tests {
 
     #[test]
     fn completion_dispatches_protocols_and_maps_streamed_text() -> Result<()> {
-        for (protocol, model_id, path, response) in [
+        for (protocol, model_id, api_url, path, response) in [
             (
                 ApiProtocol::Anthropic,
                 "claude-fable-5-1",
-                "/zen/go/v1/messages",
+                "https://opencode.ai/inference/go/anthropic/v1",
+                "/inference/go/anthropic/v1/messages",
                 "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n",
             ),
             (
                 ApiProtocol::OpenAiChat,
                 "model",
-                "/zen/go/v1/chat/completions",
+                "https://opencode.ai/inference/go/openai/v1",
+                "/inference/go/openai/v1/chat/completions",
                 "data: {\"id\":\"chat-1\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\ndata: [DONE]\n\n",
             ),
             (
                 ApiProtocol::OpenAiResponses,
                 "model",
-                "/zen/go/v1/responses",
+                "https://opencode.ai/inference/go/openai/v1",
+                "/inference/go/openai/v1/responses",
                 "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg-1\",\"output_index\":0,\"content_index\":0,\"delta\":\"Hello\"}\n\n",
             ),
             (
                 ApiProtocol::Google,
                 "model",
-                "/zen/go/v1/models/model:streamGenerateContent",
+                "https://opencode.ai/inference/go/google/v1beta",
+                "/inference/go/google/v1beta/models/model:streamGenerateContent",
                 "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Hello\"}]},\"finishReason\":\"STOP\"}]}\n\n",
             ),
         ] {
             futures::executor::block_on(async {
                 let client = FakeHttpClient::create(move |mut request| async move {
                     assert_eq!(request.uri().path(), path);
+                    if protocol == ApiProtocol::Google {
+                        assert_eq!(request.uri().query(), Some("alt=sse"));
+                    }
                     assert_eq!(
                         request.headers().get("x-custom"),
                         Some(&http::HeaderValue::from_static("value"))
@@ -248,6 +257,7 @@ mod tests {
                         .body(AsyncBody::from(response))?)
                 });
                 let model = DiscoveredModel {
+                    api_url: None,
                     model: crate::Model::new(
                         model_id.into(),
                         None,
@@ -279,7 +289,7 @@ mod tests {
                     client.as_ref(),
                     CompletionConfig {
                         model: &model,
-                        api_url: "https://opencode.ai/zen/go/",
+                        api_url,
                         api_key: "test-key",
                         provider_id: LanguageModelProviderId::new("opencode-go"),
                         provider_name: LanguageModelProviderName::new("OpenCode Go"),

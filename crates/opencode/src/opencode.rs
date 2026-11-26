@@ -134,6 +134,9 @@ impl Model {
 }
 
 /// Streams Google generate-content responses through OpenCode.
+///
+/// `api_url` is the Google API base including its version path, such as
+/// `https://opencode.ai/inference/go/google/v1beta`.
 pub async fn stream_generate_content(
     client: &dyn HttpClient,
     api_url: &str,
@@ -144,8 +147,9 @@ pub async fn stream_generate_content(
     BoxStream<'static, Result<google_ai::GenerateContentResponse, LanguageModelCompletionError>>,
 > {
     let api_key = api_key.trim();
+    let api_url = api_url.trim_end_matches('/');
     let model_id = &request.model.model_id;
-    let uri = format!("{api_url}/v1/models/{model_id}:streamGenerateContent?alt=sse");
+    let uri = format!("{api_url}/models/{model_id}:streamGenerateContent?alt=sse");
     let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)

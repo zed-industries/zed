@@ -15,6 +15,8 @@ pub const MODEL_CATALOG_URL: &str = "https://models.opencode.ai/api.json";
 #[derive(Clone)]
 pub struct DiscoveredModel {
     pub model: Model,
+    /// Protocol-specific API base advertised by the catalog, including its version path.
+    pub api_url: Option<String>,
     pub supports_images: bool,
     pub supports_thinking: bool,
 }
@@ -105,7 +107,16 @@ pub fn parse_model_catalog(
                         .collect::<Vec<_>>()
                 })
                 .filter(|levels| !levels.is_empty());
+            let api_url = metadata
+                .provider
+                .as_ref()
+                .and_then(|transport| transport.api.as_deref())
+                .or(provider.api.as_deref())
+                .map(str::trim)
+                .filter(|url| !url.is_empty())
+                .map(str::to_string);
             Some(DiscoveredModel {
+                api_url,
                 model: Model::new(
                     metadata.id,
                     Some(metadata.name),
@@ -148,6 +159,7 @@ pub fn normalize_reasoning_effort(effort: &str) -> Option<ReasoningEffort> {
 #[derive(Deserialize)]
 struct CatalogProvider {
     npm: Option<String>,
+    api: Option<String>,
     models: HashMap<String, serde_json::Value>,
 }
 
@@ -193,6 +205,7 @@ struct ModelLimits {
 #[derive(Deserialize)]
 struct ModelTransport {
     npm: Option<String>,
+    api: Option<String>,
 }
 
 #[derive(Deserialize)]
