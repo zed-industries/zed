@@ -6,16 +6,10 @@ use objc2::{
 };
 use objc2_foundation::{NSObject, NSObjectProtocol, NSRunLoop, NSRunLoopCommonModes};
 use objc2_quartz_core::CADisplayLink;
-use std::{
-    cell::{Cell, RefCell},
-    rc::Rc,
-    time::{Duration, Instant},
-};
-
-const DEFAULT_REFRESH_INTERVAL: Duration = Duration::from_millis(16);
+use std::cell::{Cell, RefCell};
 
 struct DisplayLinkTargetIvars {
-    callback: Box<dyn Fn(Option<Duration>)>,
+    callback: Box<dyn Fn()>,
 }
 
 define_class!(
@@ -29,23 +23,17 @@ define_class!(
 
     impl DisplayLinkTarget {
         #[unsafe(method(displayLinkFired:))]
-        fn display_link_fired(&self, link: &CADisplayLink) {
+        fn display_link_fired(&self, _link: &CADisplayLink) {
             // The callback may drop its `DisplayLink`, which calls `invalidate`
             // and releases the link's strong reference to `self`.
             let target = self.retain();
-            let duration = Duration::try_from_secs_f64(link.duration())
-                .ok()
-                .filter(|duration| !duration.is_zero());
-            (target.ivars().callback)(duration);
+            (target.ivars().callback)();
         }
     }
 );
 
 impl DisplayLinkTarget {
-    fn new(
-        main_thread: MainThreadMarker,
-        callback: impl Fn(Option<Duration>) + 'static,
-    ) -> Retained<Self> {
+    fn new(main_thread: MainThreadMarker, callback: impl Fn() + 'static) -> Retained<Self> {
         let this = Self::alloc(main_thread).set_ivars(DisplayLinkTargetIvars {
             callback: Box::new(callback),
         });
@@ -93,15 +81,6 @@ impl DisplayLink {
         main_thread: MainThreadMarker,
         callback: impl Fn() + 'static,
     ) -> Option<Self> {
-        // SAFETY: Caller guarantees `source` vends a `CADisplayLink *`.
-        unsafe { Self::for_source_with_duration(source, main_thread, move |_| callback()) }
-    }
-
-    unsafe fn for_source_with_duration(
-        source: &AnyObject,
-        main_thread: MainThreadMarker,
-        callback: impl Fn(Option<Duration>) + 'static,
-    ) -> Option<Self> {
         let responds: bool = unsafe {
             msg_send![
                 source,
@@ -133,7 +112,7 @@ impl DisplayLink {
     /// Starts delivering vsync ticks for the main display on iOS/iPadOS.
     #[cfg(target_os = "ios")]
     pub fn for_main_display(main_thread: MainThreadMarker, callback: impl Fn() + 'static) -> Self {
-        let target = DisplayLinkTarget::new(main_thread, move |_| callback());
+        let target = DisplayLinkTarget::new(main_thread, callback);
         // SAFETY: `DisplayLinkTarget` implements `displayLinkFired:`.
         let link = unsafe {
             CADisplayLink::displayLinkWithTarget_selector(&target, sel!(displayLinkFired:))
@@ -168,7 +147,6 @@ pub struct DisplayLinkDebugState {
     pub active: bool,
     pub paused: Option<bool>,
     pub woken: bool,
-    pub refresh_interval: Option<Duration>,
 }
 
 /// Demand-driven `CADisplayLink` frame state shared with GPUI's frame waker so
@@ -184,10 +162,8 @@ pub struct DisplayLinkFrames {
     active: Cell<bool>,
     /// Whether GPUI asked for a frame since the current tick began.
     woken: Cell<bool>,
-    /// Whether GPUI presented since the current tick began.
+    /// Whether GPUI has presented since the previous tick began.
     presented: Cell<bool>,
-    last_present: Cell<Option<Instant>>,
-    refresh_interval: Cell<Option<Duration>>,
 }
 
 impl DisplayLinkFrames {
@@ -198,7 +174,7 @@ impl DisplayLinkFrames {
     /// `source` must be a valid Objective-C object whose
     /// `-displayLinkWithTarget:selector:` returns a `CADisplayLink *`.
     pub unsafe fn start_for_source(
-        self: &Rc<Self>,
+        &self,
         source: &AnyObject,
         main_thread: MainThreadMarker,
         callback: impl Fn() + 'static,
@@ -209,22 +185,13 @@ impl DisplayLinkFrames {
             link.set_paused(false);
             return;
         }
-        let weak_frames = Rc::downgrade(self);
         // SAFETY: Caller guarantees `source` vends a `CADisplayLink *`.
-        *slot = unsafe {
-            DisplayLink::for_source_with_duration(source, main_thread, move |duration| {
-                if let Some(frames) = weak_frames.upgrade()
-                    && let Some(duration) = duration
-                {
-                    frames.refresh_interval.set(Some(duration));
-                }
-                callback();
-            })
-        };
+        *slot = unsafe { DisplayLink::for_source(source, main_thread, callback) };
     }
 
     pub fn stop(&self) {
         self.active.set(false);
+        self.presented.set(false);
         self.pause();
     }
 
@@ -238,16 +205,13 @@ impl DisplayLinkFrames {
 
     pub fn invalidate(&self) {
         self.active.set(false);
+        self.presented.set(false);
         drop(self.link.borrow_mut().take());
-    }
-
-    pub fn reset_refresh_interval(&self) {
-        self.refresh_interval.set(None);
     }
 
     pub fn wake(&self) {
         self.woken.set(true);
-        // The link is only borrowed mutably while being created in `start_with`,
+        // The link is only borrowed mutably while being created in `start_for_source`,
         // where a new link already begins unpaused.
         if self.active.get()
             && let Ok(link) = self.link.try_borrow()
@@ -267,18 +231,12 @@ impl DisplayLinkFrames {
 
     pub fn did_present(&self) {
         self.presented.set(true);
-        self.last_present.set(Some(Instant::now()));
     }
 
     /// Whether an input-triggered draw can present immediately without
-    /// exceeding roughly one present per display refresh.
+    /// presenting more than once in the current refresh interval.
     pub fn can_draw_early(&self) -> bool {
-        self.active.get()
-            && can_draw_early(
-                self.last_present.get(),
-                self.refresh_interval.get(),
-                Instant::now(),
-            )
+        self.active.get() && !self.presented.get()
     }
 
     pub fn begin_frame(&self) {
@@ -307,21 +265,6 @@ impl DisplayLinkFrames {
             active: self.active.get(),
             paused,
             woken: self.woken.get(),
-            refresh_interval: self.refresh_interval.get(),
-        }
-    }
-}
-
-fn can_draw_early(
-    last_present: Option<Instant>,
-    refresh_interval: Option<Duration>,
-    now: Instant,
-) -> bool {
-    match last_present {
-        None => true,
-        Some(last_present) => {
-            now.saturating_duration_since(last_present)
-                >= refresh_interval.unwrap_or(DEFAULT_REFRESH_INTERVAL)
         }
     }
 }
@@ -367,43 +310,38 @@ mod tests {
     }
 
     #[test]
-    fn drawing_early_keeps_presents_to_about_one_per_refresh() {
-        let now = Instant::now();
-        let refresh_interval = Some(Duration::from_millis(8));
-        let presented = |ago: u64| Some(now - Duration::from_millis(ago));
-
-        assert!(
-            can_draw_early(None, None, now),
-            "the first frame has no prior present in flight"
-        );
-        assert!(
-            can_draw_early(presented(8), refresh_interval, now),
-            "the last present was a full refresh ago"
-        );
-        assert!(
-            !can_draw_early(presented(3), refresh_interval, now),
-            "a second keystroke within the same refresh waits for the next tick"
-        );
-        assert!(
-            can_draw_early(presented(16), None, now),
-            "falls back to a 60 Hz floor before the link reports its refresh interval"
-        );
-        assert!(
-            !can_draw_early(presented(10), None, now),
-            "respects the 60 Hz floor when the display interval is not yet known"
-        );
-    }
-
-    #[test]
-    fn stopped_frames_ignore_early_draws() {
+    fn early_draws_cap_at_one_present_until_next_tick() {
         let frames = DisplayLinkFrames::default();
         assert!(
             !frames.can_draw_early(),
             "an inactive link does not draw early"
         );
+
         frames.active.set(true);
-        assert!(frames.can_draw_early());
+        assert!(
+            frames.can_draw_early(),
+            "idle active window draws the first keypress immediately"
+        );
+
+        frames.did_present();
+        assert!(
+            !frames.can_draw_early(),
+            "a second keypress before vsync waits for the display-link tick"
+        );
+
+        frames.begin_frame();
+        assert!(
+            frames.can_draw_early(),
+            "the next vsync tick re-allows an early draw once idle"
+        );
+
+        frames.did_present();
         frames.stop();
         assert!(!frames.can_draw_early());
+        frames.active.set(true);
+        assert!(
+            frames.can_draw_early(),
+            "stopping resets the presented flag"
+        );
     }
 }

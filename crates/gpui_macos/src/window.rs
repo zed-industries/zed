@@ -2279,9 +2279,6 @@ impl PlatformWindow for MacWindow {
                         "active": debug.active,
                         "paused": debug.paused,
                         "woken": debug.woken,
-                        "refresh_interval_ms": debug
-                            .refresh_interval
-                            .map(|interval| interval.as_secs_f64() * 1000.0),
                     })
                 }
                 FrameSource::DisplayLink(Some(frame_source)) => frame_source.debug_state(),
@@ -3391,9 +3388,8 @@ fn update_window_scale_factor(window_state: &Rc<Mutex<MacWindowState>>) {
 extern "C" fn window_did_change_screen(this: &AnyObject, _: Sel, _: *mut AnyObject) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
-    match &mut lock.frame_source {
-        FrameSource::View(frames) => frames.reset_refresh_interval(),
-        FrameSource::DisplayLink(_) => lock.start_display_link(&window_state),
+    if matches!(lock.frame_source, FrameSource::DisplayLink(_)) {
+        lock.start_display_link(&window_state);
     }
     drop(lock);
     update_window_scale_factor(&window_state);
