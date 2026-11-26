@@ -343,13 +343,15 @@ impl PatternSegment {
 pub(crate) const BUILT_IN_EXCLUSIONS: &[&[&str]] = &[
     &[SETTINGS_SYNC_KEY, SETTINGS_SYNC_ENABLED_KEY],
     &["proxy"],
+    &["edit_predictions", "copilot", "proxy"],
+    &["edit_predictions", "copilot", "proxy_no_verify"],
     &["server_url"],
     &["credentials_url"],
     &["ssh_connections"],
     &["wsl_connections"],
     &["dev_container_connections"],
-    &["audio", "input_audio_device"],
-    &["audio", "output_audio_device"],
+    &["audio", "experimental.input_audio_device"],
+    &["audio", "experimental.output_audio_device"],
     &["terminal", "env"],
     &["lsp", "*", "binary", "env"],
     &["dap", "*", "env"],
@@ -442,7 +444,14 @@ impl ExclusionSet {
     }
 
     pub fn is_excluded(&self, path: &SyncPath) -> bool {
-        !is_exclusion_carrier(path) && self.patterns.iter().any(|pattern| pattern.covers(path))
+        let covered = |path: &SyncPath| self.patterns.iter().any(|pattern| pattern.covers(path));
+        if is_exclusion_carrier(path) {
+            let scope = SyncPath::from_segments(
+                path.segments()[..path.segments().len() - 2].iter().cloned(),
+            );
+            return !scope.is_root() && covered(&scope);
+        }
+        covered(path)
     }
 
     pub fn pointers(&self) -> Vec<String> {
@@ -472,7 +481,16 @@ impl ExclusionSet {
     }
 
     pub fn restore(&self, local: &PathMap, merged: &PathMap) -> PathMap {
+        self.restore_reporting_drops(local, merged).0
+    }
+
+    pub fn restore_reporting_drops(
+        &self,
+        local: &PathMap,
+        merged: &PathMap,
+    ) -> (PathMap, Vec<SyncPath>) {
         let mut restored = merged.clone();
+        let mut dropped = Vec::new();
         for (path, local_value) in local {
             if self.is_excluded(path) {
                 restore_excluded_entry(&mut restored, path, local_value.clone());
@@ -481,34 +499,58 @@ impl ExclusionSet {
             if is_exclusion_carrier(path) {
                 continue;
             }
-            let Some(excluded) = self
+            let fragments = self
                 .patterns
                 .iter()
                 .flat_map(|pattern| pattern.remainders_below(path))
                 .filter_map(|remainder| extract_matching(local_value, remainder))
-                .reduce(|mut excluded, part| {
-                    merge_values(&mut excluded, part);
-                    excluded
-                })
-            else {
+                .collect::<Vec<_>>();
+            if fragments.is_empty() {
                 continue;
-            };
-            match restored.get_mut(path) {
-                Some(restored_value) if restored_value.is_object() => {
-                    merge_values(restored_value, excluded)
+            }
+            match (restored.get_mut(path), merged.get(path)) {
+                (Some(restored_value), Some(synced_value)) => {
+                    for fragment in fragments {
+                        let mut candidate = restored_value.clone();
+                        merge_values(&mut candidate, fragment);
+                        if self.keeps_synced_value(path, &candidate, synced_value) {
+                            *restored_value = candidate;
+                        } else if !dropped.contains(path) {
+                            log::warn!(
+                                "settings sync: dropping local excluded parts of {path}, the synced value has no room for them"
+                            );
+                            dropped.push(path.clone());
+                        }
+                    }
                 }
-                _ => restore_excluded_entry(&mut restored, path, excluded),
+                (None, _) if self.redact_entry(path, &mut local_value.clone()) => {
+                    let excluded = fragments
+                        .into_iter()
+                        .reduce(|mut excluded, part| {
+                            merge_values(&mut excluded, part);
+                            excluded
+                        })
+                        .unwrap_or_default();
+                    restore_excluded_entry(&mut restored, path, excluded)
+                }
+                _ => {}
             }
         }
-        restored
+        (restored, dropped)
+    }
+
+    fn keeps_synced_value(&self, path: &SyncPath, candidate: &Value, synced: &Value) -> bool {
+        let mut synced_view = candidate.clone();
+        let synced_view = (!self.redact_entry(path, &mut synced_view)).then_some(synced_view);
+        without_empty_objects(synced_view.as_ref()) == without_empty_objects(Some(synced))
     }
 
     fn redact_entry(&self, path: &SyncPath, value: &mut Value) -> bool {
-        if is_exclusion_carrier(path) {
-            return false;
-        }
         if self.is_excluded(path) {
             return true;
+        }
+        if is_exclusion_carrier(path) {
+            return false;
         }
         self.patterns.iter().any(|pattern| {
             pattern
@@ -656,7 +698,7 @@ fn merge_exclusion_lists(
     let (base_items, local_items, remote_items) =
         (as_list(base)?, as_list(local)?, as_list(remote)?);
     let mut items = Vec::new();
-    for item in local_items.iter().chain(remote_items) {
+    for item in remote_items.iter().chain(local_items) {
         let kept = !base_items.contains(item)
             || (local_items.contains(item) && remote_items.contains(item));
         if kept && !items.contains(item) {
@@ -703,6 +745,47 @@ fn object_edits(path: SyncPath, current: &Value, target: Value) -> Vec<SyncOp> {
     }
 }
 
+pub(crate) fn merged_exclusion_lists(
+    base: Option<&PathMap>,
+    local: &PathMap,
+    remote: &PathMap,
+) -> PathMap {
+    let carriers = base
+        .into_iter()
+        .flat_map(|base| base.keys())
+        .chain(local.keys())
+        .chain(remote.keys())
+        .filter(|path| is_exclusion_carrier(path))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    carriers
+        .into_iter()
+        .filter_map(|carrier| {
+            let (local_list, remote_list) = (local.get(&carrier), remote.get(&carrier));
+            let merged = merge_exclusion_lists(
+                base.and_then(|base| base.get(&carrier)),
+                local_list,
+                remote_list,
+            )
+            .unwrap_or_else(|| {
+                let items = remote_list
+                    .into_iter()
+                    .chain(local_list)
+                    .filter_map(Value::as_array)
+                    .flatten()
+                    .fold(Vec::new(), |mut items, item| {
+                        if !items.contains(item) {
+                            items.push(item.clone());
+                        }
+                        items
+                    });
+                Some(Value::Array(items))
+            })?;
+            Some((carrier, merged))
+        })
+        .collect()
+}
+
 pub(crate) fn union_exclusion_lists(merged: &mut PathMap, local: &PathMap, remote: &PathMap) {
     let carriers = local
         .keys()
@@ -724,6 +807,19 @@ pub(crate) fn union_exclusion_lists(merged: &mut PathMap, local: &PathMap, remot
 
 fn is_empty_object(value: Option<&Value>) -> bool {
     value.and_then(Value::as_object).is_some_and(Map::is_empty)
+}
+
+fn without_empty_objects(value: Option<&Value>) -> Option<Value> {
+    match value? {
+        Value::Object(object) => {
+            let object = object
+                .iter()
+                .filter_map(|(key, child)| Some((key.clone(), without_empty_objects(Some(child))?)))
+                .collect::<Map<_, _>>();
+            (!object.is_empty()).then_some(Value::Object(object))
+        }
+        other => Some(other.clone()),
+    }
 }
 
 fn has_strict_descendant(paths: &PathMap, path: &SyncPath) -> bool {
@@ -763,6 +859,9 @@ fn redact_matching(value: &mut Value, segments: &[PatternSegment]) -> bool {
         return true;
     };
     if *first == PatternSegment::AnyDepth {
+        if let Value::Array(items) = value {
+            return items.iter().any(|item| matches_within(item, segments));
+        }
         if !value.is_object() {
             return rest.is_empty();
         }
@@ -773,7 +872,9 @@ fn redact_matching(value: &mut Value, segments: &[PatternSegment]) -> bool {
             return false;
         };
         let was_empty = object.is_empty();
-        object.retain(|_, child| !(child.is_object() && redact_matching(child, segments)));
+        object.retain(|_, child| {
+            !((child.is_object() || child.is_array()) && redact_matching(child, segments))
+        });
         return !was_empty && object.is_empty();
     }
     match value {
@@ -792,13 +893,19 @@ fn extract_matching(value: &Value, segments: &[PatternSegment]) -> Option<Value>
         return Some(value.clone());
     };
     if *first == PatternSegment::AnyDepth {
+        if let Value::Array(items) = value {
+            return items
+                .iter()
+                .any(|item| matches_within(item, segments))
+                .then(|| value.clone());
+        }
         let Value::Object(object) = value else {
             return rest.is_empty().then(|| value.clone());
         };
         let mut extracted = extract_matching(value, rest);
         let nested = object
             .iter()
-            .filter(|(_, child)| child.is_object())
+            .filter(|(_, child)| child.is_object() || child.is_array())
             .filter_map(|(key, child)| Some((key.clone(), extract_matching(child, segments)?)))
             .collect::<Map<_, _>>();
         if !nested.is_empty() {
@@ -821,6 +928,11 @@ fn extract_matching(value: &Value, segments: &[PatternSegment]) -> Option<Value>
         }
         _ => None,
     }
+}
+
+fn matches_within(value: &Value, segments: &[PatternSegment]) -> bool {
+    let mut probe = value.clone();
+    redact_matching(&mut probe, segments) || probe != *value
 }
 
 fn merge_values(target: &mut Value, source: Value) {

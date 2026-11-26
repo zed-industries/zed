@@ -35,7 +35,8 @@ pub use server::{FAKE_ACCOUNT_ID, FakeSettingsSyncBackend, FakeSettingsSyncServe
 pub use strategy::{SettingsJsonStrategy, SyncStrategy};
 pub use sync_path::SyncPath;
 
-const NON_MIGRATION_SCHEMA_EPOCH_BUMPS: u64 = 5;
+const NON_MIGRATION_SCHEMA_EPOCH_BUMPS: u64 = 7;
+const MAX_HOST_LABEL_CHARS: usize = 128;
 
 pub fn settings_schema_epoch() -> u64 {
     migrator::settings_migrations_count() as u64 + NON_MIGRATION_SCHEMA_EPOCH_BUMPS
@@ -82,23 +83,6 @@ pub fn init(client: &Arc<Client>, fs: Arc<dyn Fs>, cx: &mut App) {
             | MessageToClient::SettingsUpdated => {}
         }
     });
-
-    let mut status = client.status();
-    cx.spawn({
-        let engine = engine.downgrade();
-        async move |cx| {
-            while let Some(status) = status.next().await {
-                if status.is_connected()
-                    && engine
-                        .update(cx, |engine, cx| engine.schedule_sync(cx))
-                        .is_err()
-                {
-                    break;
-                }
-            }
-        }
-    })
-    .detach();
 
     let mut cloud_connection_id = client.cloud_connection_id();
     cx.spawn({
@@ -148,7 +132,7 @@ pub fn engine(cx: &App) -> Option<Entity<SettingsSyncEngine>> {
 
 pub fn default_host_label() -> String {
     sysinfo::System::host_name()
-        .map(|name| name.trim().to_string())
+        .map(|name| name.trim().chars().take(MAX_HOST_LABEL_CHARS).collect::<String>())
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| "This device".to_string())
 }

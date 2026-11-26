@@ -586,6 +586,24 @@ async fn test_realfs_atomic_write_if_unchanged_dangling_symlink(executor: Backgr
 }
 
 #[gpui::test]
+async fn test_fake_fs_atomic_write_if_unchanged_compares_bytes(executor: BackgroundExecutor) {
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(path!("/root"), json!({})).await;
+    let path = PathBuf::from(path!("/root/settings.json"));
+    fs.insert_file(&path, vec![0xff, 0xfe]).await;
+
+    let replaced = fs
+        .atomic_write_if_unchanged(path.clone(), String::new(), "ours".to_owned())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        (replaced, fs.load_bytes(&path).await.unwrap()),
+        (false, vec![0xff, 0xfe])
+    );
+}
+
+#[gpui::test]
 #[cfg(target_os = "windows")]
 async fn test_realfs_canonicalize(executor: BackgroundExecutor) {
     use util::paths::SanitizedPath;

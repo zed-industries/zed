@@ -10,6 +10,7 @@ use cloud_api_client::{
     UpdateSyncedSettingsResult,
 };
 use http_client::StatusCode;
+use serde::Deserialize;
 
 #[derive(Debug)]
 pub struct SyncNotImplementedError;
@@ -108,7 +109,7 @@ impl SettingsSyncServer for CloudSettingsSyncServer {
             .cloud_client()
             .get_synced_settings(cloud_user_id(account_id)?, self.system_id(), kind)
             .await
-            .map_err(map_not_implemented)?;
+            .map_err(map_server_error)?;
         Ok(FetchResult {
             group_id: response.group_id,
             document: response.synced_settings,
@@ -139,7 +140,7 @@ impl SettingsSyncServer for CloudSettingsSyncServer {
             {
                 PushResult::NotRegistered
             }
-            Err(error) => return Err(map_not_implemented(error)),
+            Err(error) => return Err(map_server_error(error)),
         })
     }
 
@@ -149,7 +150,7 @@ impl SettingsSyncServer for CloudSettingsSyncServer {
             .cloud_client()
             .list_synced_settings_hosts(cloud_user_id(account_id)?, self.system_id())
             .await
-            .map_err(map_not_implemented)?;
+            .map_err(map_server_error)?;
         Ok(response.hosts)
     }
 
@@ -163,7 +164,7 @@ impl SettingsSyncServer for CloudSettingsSyncServer {
             .cloud_client()
             .join_synced_settings_group(cloud_user_id(account_id)?, self.system_id(), body)
             .await
-            .map_err(map_not_implemented)?)
+            .map_err(map_server_error)?)
     }
 
     async fn update_host(
@@ -182,7 +183,7 @@ impl SettingsSyncServer for CloudSettingsSyncServer {
                 body,
             )
             .await
-            .map_err(map_not_implemented)?)
+            .map_err(map_server_error)?)
     }
 
     async fn delete_host(&self, account_id: u64, host_system_id: &str) -> Result<()> {
@@ -195,7 +196,7 @@ impl SettingsSyncServer for CloudSettingsSyncServer {
                 host_system_id,
             )
             .await
-            .map_err(map_not_implemented)?)
+            .map_err(map_server_error)?)
     }
 
     async fn list_history(
@@ -209,7 +210,7 @@ impl SettingsSyncServer for CloudSettingsSyncServer {
             .cloud_client()
             .list_synced_settings_history(cloud_user_id(account_id)?, self.system_id(), kind, limit)
             .await
-            .map_err(map_not_implemented)?)
+            .map_err(map_server_error)?)
     }
 
     async fn erase(
@@ -235,7 +236,7 @@ impl SettingsSyncServer for CloudSettingsSyncServer {
                     "this device moved to another sync group, review the sync status and try again"
                 ))
             }
-            Err(error) => Err(map_not_implemented(error)),
+            Err(error) => Err(map_server_error(error)),
         }
     }
 }
@@ -244,12 +245,19 @@ fn cloud_user_id(account_id: u64) -> Result<u32> {
     Ok(u32::try_from(account_id)?)
 }
 
-fn map_not_implemented(error: ClientApiError) -> anyhow::Error {
-    match &error {
-        ClientApiError::ServerError { status, .. } if *status == StatusCode::NOT_FOUND => {
-            anyhow::Error::new(SyncNotImplementedError)
-        }
-        _ => anyhow::Error::from(error),
+#[derive(Deserialize)]
+struct ServerErrorResponse {
+    message: String,
+}
+
+pub(crate) fn map_server_error(error: ClientApiError) -> anyhow::Error {
+    let ClientApiError::ServerError { status, body, .. } = &error else {
+        return anyhow::Error::from(error);
+    };
+    match serde_json::from_str::<ServerErrorResponse>(body) {
+        Ok(response) => anyhow::Error::from(error).context(response.message),
+        Err(_) if *status == StatusCode::NOT_FOUND => anyhow::Error::new(SyncNotImplementedError),
+        Err(_) => anyhow::Error::from(error),
     }
 }
 

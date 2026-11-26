@@ -174,13 +174,7 @@ pub trait Fs: Send + Sync {
         path: PathBuf,
         expected_text: String,
         text: String,
-    ) -> Result<bool> {
-        if self.load(&path).await.unwrap_or_default() != expected_text {
-            return Ok(false);
-        }
-        self.atomic_write(path, text).await?;
-        Ok(true)
-    }
+    ) -> Result<bool>;
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()>;
     async fn write(&self, path: &Path, content: &[u8]) -> Result<()>;
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf>;
@@ -3648,12 +3642,8 @@ impl Fs for FakeFs {
         if let Some(path) = path.parent() {
             self.create_dir(path).await?;
         }
-        let current_text = self
-            .read_file_sync(&path)
-            .ok()
-            .and_then(|bytes| String::from_utf8(bytes).ok())
-            .unwrap_or_default();
-        if current_text != expected_text {
+        let current_bytes = self.read_file_sync(&path).unwrap_or_default();
+        if current_bytes != expected_text.as_bytes() {
             return Ok(false);
         }
         self.write_file_internal(path, data.into_bytes(), true)?;
@@ -4082,6 +4072,7 @@ fn compare_and_swap_file(path: &Path, expected: &[u8], data: &[u8]) -> Result<bo
     let mut temp_file =
         tempfile::NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))?;
     temp_file.write_all(data)?;
+    temp_file.as_file().sync_all()?;
     let mut temp_path = temp_file.into_temp_path();
     for _ in 0..MAX_CONTENT_SWAPS {
         if expected.is_empty() {
@@ -4091,10 +4082,7 @@ fn compare_and_swap_file(path: &Path, expected: &[u8], data: &[u8]) -> Result<bo
                     return Ok(true);
                 }
                 Err(error) if error == Errno::EXIST => {}
-                Err(error) if is_unsupported_rename_error(error) => {
-                    return compare_and_persist(temp_path, path, expected);
-                }
-                Err(error) => return Err(anyhow::Error::from(error)),
+                Err(_) => return compare_and_persist(temp_path, path, expected),
             }
         }
         match renameat_with(CWD, &*temp_path, CWD, path, RenameFlags::EXCHANGE) {
@@ -4117,10 +4105,7 @@ fn compare_and_swap_file(path: &Path, expected: &[u8], data: &[u8]) -> Result<bo
             }
             Err(error) if error == Errno::NOENT && expected.is_empty() => {}
             Err(error) if error == Errno::NOENT => return Ok(false),
-            Err(error) if is_unsupported_rename_error(error) => {
-                return compare_and_persist(temp_path, path, expected);
-            }
-            Err(error) => return Err(anyhow::Error::from(error)),
+            Err(_) => return compare_and_persist(temp_path, path, expected),
         }
     }
     anyhow::bail!("{path:?} kept appearing and disappearing during a conditional write")
@@ -4166,7 +4151,19 @@ fn compare_and_swap_file(path: &Path, expected: &[u8], data: &[u8]) -> Result<bo
                         } else {
                             &replacement
                         };
-                        replace_file_with_backup(target, holder.as_path(), next)?;
+                        if let Err(error) = replace_file_with_backup(target, holder.as_path(), next)
+                        {
+                            if error.code()
+                                == HRESULT::from_win32(ERROR_UNABLE_TO_MOVE_REPLACEMENT_2.0)
+                            {
+                                rename_without_replace(next, target).with_context(|| {
+                                    format!(
+                                        "{target:?} is missing, its content is kept at {next:?}"
+                                    )
+                                })?;
+                            }
+                            return Err(anyhow::Error::from(error));
+                        }
                         *holder = next.clone();
                         Ok(())
                     },
@@ -4188,10 +4185,18 @@ fn compare_and_swap_file(path: &Path, expected: &[u8], data: &[u8]) -> Result<bo
             Err(error)
                 if error.code() == HRESULT::from_win32(ERROR_UNABLE_TO_MOVE_REPLACEMENT_2.0) =>
             {
-                temp_dir.disable_cleanup(true);
-                return Err(anyhow::Error::from(error).context(format!(
-                    "failed to replace {path:?}, its original content is kept at {backup:?}"
-                )));
+                return match rename_without_replace(&backup, path) {
+                    Ok(()) => {
+                        Err(anyhow::Error::from(error)
+                            .context(format!("failed to replace {path:?}")))
+                    }
+                    Err(restore_error) => {
+                        temp_dir.disable_cleanup(true);
+                        Err(anyhow::Error::from(error).context(format!(
+                            "failed to replace {path:?}, its original content is kept at {backup:?}: {restore_error}"
+                        )))
+                    }
+                };
             }
             Err(error) => {
                 return Err(
@@ -4255,18 +4260,6 @@ fn remove_displaced_file(path: &Path) {
     if let Err(error) = std::fs::remove_file(path) {
         log::error!("failed to remove {path:?}: {error}");
     }
-}
-
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-fn is_unsupported_rename_error(error: Errno) -> bool {
-    [
-        Errno::INVAL,
-        Errno::NOTSUP,
-        Errno::OPNOTSUPP,
-        Errno::NOSYS,
-        Errno::XDEV,
-    ]
-    .contains(&error)
 }
 
 #[cfg(unix)]
@@ -4418,5 +4411,33 @@ mod tests {
         }
         drop(writers);
         assert!(!has_reader, "the timed out git process is still running");
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn test_displaced_content_of_another_writer_is_restored() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let target = temp_dir.path().join("settings.json");
+        let mut holder = temp_dir.path().join("displaced");
+        std::fs::write(&target, "ours").unwrap();
+        std::fs::write(&holder, "theirs").unwrap();
+
+        let written =
+            resolve_displaced_content(&target, &mut holder, b"base", b"ours", |target, holder| {
+                let target_content = std::fs::read(target)?;
+                std::fs::write(target, std::fs::read(&*holder)?)?;
+                std::fs::write(&*holder, target_content)?;
+                Ok(())
+            })
+            .unwrap();
+
+        assert_eq!(
+            (
+                written,
+                std::fs::read_to_string(&target).unwrap(),
+                holder.exists()
+            ),
+            (false, String::from("theirs"), false)
+        );
     }
 }

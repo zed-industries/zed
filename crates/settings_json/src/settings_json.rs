@@ -101,17 +101,11 @@ pub fn find_value_range_in_json_text<T: AsRef<str>>(
 }
 
 #[cfg(feature = "editing")]
-fn insertion_point_before_line_comments(text: &str, key_start: usize) -> usize {
-    let mut parser = tree_sitter::Parser::new();
-    if parser
-        .set_language(&tree_sitter_json::LANGUAGE.into())
-        .is_err()
-    {
-        return key_start;
-    }
-    let Some(syntax_tree) = parser.parse(text, None) else {
-        return key_start;
-    };
+fn insertion_point_before_line_comments(
+    syntax_tree: &tree_sitter::Tree,
+    text: &str,
+    key_start: usize,
+) -> usize {
     let mut point = key_start;
     loop {
         let before = &text[..point];
@@ -326,7 +320,11 @@ fn replace_value_in_json_text_inner<T: AsRef<str>>(
         }
     } else {
         if let Some(first_key_start) = first_key_start {
-            let first_key_start = insertion_point_before_line_comments(text, first_key_start);
+            let insertion_point =
+                insertion_point_before_line_comments(&syntax_tree, text, first_key_start);
+            let line_start = text[..insertion_point]
+                .rfind('\n')
+                .map_or(0, |newline| newline + 1);
             // We have key paths, construct the sub objects
             let new_key = serde_json::to_string(key_path[depth].as_ref()).unwrap();
             // We don't have the key, construct the nested objects
@@ -351,8 +349,13 @@ fn replace_value_in_json_text_inner<T: AsRef<str>>(
                 // depth is 0 based, but division needs to be 1 based.
                 let new_val = to_pretty_json(&new_value, column / (depth + 1), column);
                 let space = ' ';
-                let content = format!("{new_key}: {new_val},\n{space:width$}", width = column);
-                (first_key_start..first_key_start, content)
+                if text[line_start..insertion_point].trim().is_empty() {
+                    let content = format!("{space:width$}{new_key}: {new_val},\n", width = column);
+                    (line_start..line_start, content)
+                } else {
+                    let content = format!("{new_key}: {new_val},\n{space:width$}", width = column);
+                    (first_key_start..first_key_start, content)
+                }
             } else {
                 let new_val = serde_json::to_string(&new_value).unwrap();
                 let mut content = format!("{new_key}: {new_val},");
@@ -2940,6 +2943,12 @@ mod tests {
                 }
             }"#
             .unindent(),
+        );
+        check_insert(
+            "{\n  // Describes a.\n    \"a\": 1\n}".to_string(),
+            &["c"],
+            json!(3),
+            "{\n    \"c\": 3,\n  // Describes a.\n    \"a\": 1\n}".to_string(),
         );
         check_insert(
             r#"{

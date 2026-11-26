@@ -13,6 +13,7 @@ use gpui::{
     Subscription, Task, WeakEntity, WindowHandle, actions,
 };
 
+use settings::SettingsStore;
 use settings_sync::{
     ConflictBatch, FirstSyncChoice, PendingDecision, SettingsSyncEngine, SyncActivity, SyncOp,
     SyncedSettingsHistory,
@@ -172,6 +173,10 @@ fn render_ops(title: &'static str, ops: &[SyncOp], cx: &App) -> impl IntoElement
 }
 
 fn render_property(name: &'static str, value: impl Into<SharedString>) -> impl IntoElement {
+    render_property_element(name, Label::new(value).size(LabelSize::Small))
+}
+
+fn render_property_element(name: &'static str, value: impl IntoElement) -> impl IntoElement {
     h_flex()
         .gap_2()
         .items_start()
@@ -181,12 +186,23 @@ fn render_property(name: &'static str, value: impl Into<SharedString>) -> impl I
                 .flex_none()
                 .child(Label::new(name).size(LabelSize::Small).color(Color::Muted)),
         )
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .child(Label::new(value).size(LabelSize::Small)),
-        )
+        .child(div().flex_1().min_w_0().child(value))
+}
+
+fn render_exclusions(exclusions: &[String]) -> AnyElement {
+    let Some((last, others)) = exclusions.split_last() else {
+        return render_property("Excluded settings", "None").into_any_element();
+    };
+    let patterns = others
+        .iter()
+        .map(|pattern| format!("{pattern},"))
+        .chain([last.clone()])
+        .map(|pattern| Label::new(pattern).size(LabelSize::Small));
+    render_property_element(
+        "Excluded settings",
+        h_flex().flex_wrap().gap_x_1p5().children(patterns),
+    )
+    .into_any_element()
 }
 
 struct FirstSyncOption {
@@ -206,6 +222,7 @@ struct SettingsSyncDecisionModal {
     operation_in_flight: bool,
     operation_task: Task<()>,
     _engine_subscription: Subscription,
+    _settings_subscription: Subscription,
 }
 
 impl SettingsSyncDecisionModal {
@@ -217,6 +234,8 @@ impl SettingsSyncDecisionModal {
                 modal.refresh(cx);
             }
         });
+        let settings_subscription =
+            cx.observe_global::<SettingsStore>(|modal, cx| modal.refresh(cx));
         let mut modal = Self {
             engine,
             decision: None,
@@ -228,6 +247,7 @@ impl SettingsSyncDecisionModal {
             operation_in_flight: false,
             operation_task: Task::ready(()),
             _engine_subscription: engine_subscription,
+            _settings_subscription: settings_subscription,
         };
         modal.refresh(cx);
         modal
@@ -235,7 +255,12 @@ impl SettingsSyncDecisionModal {
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let engine = self.engine.read(cx);
+        let exclusions = engine.effective_exclusions(cx);
         let decision = engine.pending_decision().cloned();
+        if exclusions != self.exclusions {
+            self.exclusions = exclusions;
+            cx.notify();
+        }
         if decision == self.decision {
             return;
         }
@@ -251,7 +276,6 @@ impl SettingsSyncDecisionModal {
                 .collect(),
             _ => Vec::new(),
         };
-        self.exclusions = engine.effective_exclusions(cx);
         self.decision = decision;
         self.error = None;
         cx.notify();
@@ -319,23 +343,32 @@ impl SettingsSyncDecisionModal {
     }
 
     fn render_consent(&self, cx: &mut Context<Self>) -> (ModalHeader, Section, AnyElement) {
-        let exclusions = if self.exclusions.is_empty() {
-            SharedString::from("None")
-        } else {
-            SharedString::from(self.exclusions.join(", "))
-        };
         let header = ModalHeader::new()
             .headline("Enable Settings Sync")
             .show_dismiss_button(true);
+        let asked_again = self
+            .engine
+            .read(cx)
+            .state()
+            .is_some_and(|state| !state.consented && state.group_id.is_some());
         let section = Section::new()
+            .when(asked_again, |section| {
+                section.child(Label::new(
+                    "Settings sync asks again because the synced settings were erased from \
+                     Zed Cloud, or this device was moved to another sync group or removed \
+                     from its group.",
+                ))
+            })
             .child(Label::new(
                 "Settings sync uploads your settings.json, minus excluded settings, to Zed Cloud, \
-                 where it is stored under your Zed account and synced to your other devices.",
+                 where it is stored under your Zed account and synced to the other devices in \
+                 this device's sync group.",
             ))
             .child(Label::new(
                 "Your settings may contain values you consider sensitive, such as server \
-                 addresses, file paths, or tokens. Add them to settings_sync.exclude to keep \
-                 them on this device.",
+                 addresses, file paths, or tokens. Add their JSON pointers, such as \
+                 \"/lsp/rust-analyzer/initialization_options\", to settings_sync.exclude to \
+                 keep them on this device.",
             ))
             .child(Label::new(
                 "Secrets stored in your system keychain are never synced.",
@@ -344,7 +377,7 @@ impl SettingsSyncDecisionModal {
                 "Zed identifies this device by its existing per-machine system ID, \
                  the same ID that telemetry uses.",
             ))
-            .child(render_property("Excluded settings", exclusions))
+            .child(render_exclusions(&self.exclusions))
             .child(
                 h_flex().child(
                     Button::new("settings-sync-privacy-policy", "Privacy Policy")
@@ -381,39 +414,78 @@ impl SettingsSyncDecisionModal {
         hosts: &[SyncedSettingsHost],
         cx: &mut Context<Self>,
     ) -> (ModalHeader, Section, AnyElement) {
-        let mut groups = BTreeMap::<String, Vec<String>>::new();
+        let mut groups = BTreeMap::<String, (Vec<String>, Option<Timestamp>)>::new();
         for host in hosts {
-            groups
-                .entry(host.group_id.clone())
-                .or_default()
-                .push(host.label.clone());
+            let (labels, last_synced_at) = groups.entry(host.group_id.clone()).or_default();
+            labels.push(host.label.clone());
+            if let Some(time) = host.last_synced_at
+                && last_synced_at.is_none_or(|latest| latest.0 < time.0)
+            {
+                *last_synced_at = Some(time);
+            }
         }
+        let groups = groups
+            .into_iter()
+            .map(|(group_id, (labels, last_synced_at))| {
+                (group_id, labels.join(" + "), last_synced_at)
+            })
+            .collect::<Vec<_>>();
+        let description = if groups.is_empty() {
+            "No other device of your account syncs settings yet. \
+             Start a sync group for this device."
+        } else {
+            "Settings sync already runs on other devices of your account. \
+             Choose which devices this one syncs with."
+        };
         let header = ModalHeader::new()
             .headline("Choose a Sync Group")
-            .description(
-                "Settings sync already runs on other devices of your account. \
-                 Choose which devices this one syncs with.",
-            )
+            .description(description)
             .show_dismiss_button(true);
-        let mut section = Section::new();
-        for (ix, (group_id, labels)) in groups.into_iter().enumerate() {
-            let labels = labels.join(" + ");
+        let this_label = settings_sync::default_host_label();
+        let mut section = Section::new().child(
+            Label::new(format!(
+                "Your other devices will list this device as \"{this_label}\". \
+                 You can rename it later in the settings sync status."
+            ))
+            .size(LabelSize::Small)
+            .color(Color::Muted),
+        );
+        for (ix, (group_id, labels, last_synced_at)) in groups.iter().enumerate() {
+            let same_labels = groups
+                .iter()
+                .filter(|(_, other_labels, _)| other_labels == labels)
+                .count();
+            let text = if same_labels == 1 {
+                format!("Sync with {labels}")
+            } else {
+                let position = groups[..ix]
+                    .iter()
+                    .filter(|(_, other_labels, _)| other_labels == labels)
+                    .count()
+                    + 1;
+                let last_synced = last_synced_at
+                    .as_ref()
+                    .map(|time| {
+                        let time = format_cloud_timestamp(time);
+                        format!("last synced {time}")
+                    })
+                    .unwrap_or_else(|| String::from("never synced"));
+                format!("Sync with {labels} ({position} of {same_labels}), {last_synced}")
+            };
+            let group_id = group_id.clone();
             section = section.child(
-                Button::new(
-                    ("settings-sync-join-group", ix),
-                    format!("Sync with {labels}"),
-                )
-                .style(ButtonStyle::Outlined)
-                .full_width()
-                .disabled(self.operation_in_flight)
-                .on_click(cx.listener(move |modal, _, _, cx| {
-                    modal.join_group(
-                        SyncedSettingsGroupTarget::Existing {
-                            group_id: group_id.clone(),
-                        },
-                        cx,
-                    );
-                })),
+                Button::new(("settings-sync-join-group", ix), text)
+                    .style(ButtonStyle::Outlined)
+                    .full_width()
+                    .disabled(self.operation_in_flight)
+                    .on_click(cx.listener(move |modal, _, _, cx| {
+                        modal.join_group(
+                            SyncedSettingsGroupTarget::Existing {
+                                group_id: group_id.clone(),
+                            },
+                            cx,
+                        );
+                    })),
             );
         }
         section = section.child(
@@ -581,7 +653,10 @@ impl LoadedFor {
         Self {
             account_id: engine.account_id(),
             group_id: engine.state().and_then(|state| state.group_id.clone()),
-            server_version: engine.status().server_version,
+            server_version: engine
+                .state()
+                .and_then(|state| state.base.as_ref())
+                .map(|base| base.server_version),
             hosts_revision: engine.hosts_revision(),
         }
     }
@@ -680,13 +755,20 @@ impl SettingsSyncStatusModal {
                             modal.hosts_account_id = Some(hosts.account_id);
                             modal.set_hosts(hosts.hosts, window, cx);
                         }
-                        Err(error) => errors.push(format!("Could not load devices: {error:#}")),
+                        Err(error) => {
+                            modal.hosts = None;
+                            modal.hosts_account_id = None;
+                            errors.push(format!("Could not load devices: {error:#}"));
+                        }
                     }
                     match history {
                         Ok(history) => {
                             modal.history = Some(history);
                         }
-                        Err(error) => errors.push(format!("Could not load history: {error:#}")),
+                        Err(error) => {
+                            modal.history = None;
+                            errors.push(format!("Could not load history: {error:#}"));
+                        }
                     }
                     modal.load_error =
                         (!errors.is_empty()).then(|| SharedString::from(errors.join("\n")));
@@ -768,6 +850,7 @@ impl SettingsSyncStatusModal {
                         Some(Ok(_)) => modal.reload(window, cx),
                         Some(Err(error)) => {
                             modal.operation_error = Some(SharedString::from(format!("{error:#}")));
+                            modal.reload(window, cx);
                         }
                         None => {}
                     }
@@ -817,9 +900,10 @@ impl SettingsSyncStatusModal {
         let label = &host.label;
         let confirmation = Confirmation {
             message: format!("Move {label} to this device's sync group?"),
-            detail: String::from(
-                "That device stops syncing with its current group. If its settings differ from \
-                 this group's, it asks how to combine them before changing anything.",
+            detail: format!(
+                "That device stops syncing with its current group and asks for consent before it \
+                 syncs with this group.{}",
+                self.last_device_note(&host)
             ),
             confirm: "Move",
         };
@@ -846,11 +930,20 @@ impl SettingsSyncStatusModal {
         let Some(account_id) = self.hosts_account_id else {
             return;
         };
+        let this_system_id = self.engine.read(cx).this_system_id();
+        let last_device_note = self
+            .hosts
+            .iter()
+            .flatten()
+            .find(|host| Some(&host.system_id) == this_system_id.as_ref())
+            .map(|host| self.last_device_note(host))
+            .unwrap_or_default();
         let confirmation = Confirmation {
             message: format!("Move this device to {target_label}?"),
-            detail: String::from(
+            detail: format!(
                 "This device stops syncing with its current group. If its settings differ from \
-                 the new group's, you choose how to combine them before anything changes.",
+                 the new group's, you choose how to combine them before anything changes.\
+                 {last_device_note}"
             ),
             confirm: "Move",
         };
@@ -888,9 +981,10 @@ impl SettingsSyncStatusModal {
         let label = &host.label;
         let confirmation = Confirmation {
             message: format!("Remove {label} from settings sync?"),
-            detail: String::from(
+            detail: format!(
                 "That device stops syncing until it joins a sync group again. \
-                 Its settings file is not changed.",
+                 Its settings file is not changed.{}",
+                self.last_device_note(&host)
             ),
             confirm: "Remove",
         };
@@ -926,22 +1020,36 @@ impl SettingsSyncStatusModal {
         });
     }
 
+    fn last_device_note(&self, host: &SyncedSettingsHost) -> &'static str {
+        let group_size = self
+            .hosts
+            .iter()
+            .flatten()
+            .filter(|other| other.group_id == host.group_id)
+            .count();
+        if group_size == 1 {
+            " It is the last device in its sync group, so that group's cloud copy and history \
+             are deleted."
+        } else {
+            ""
+        }
+    }
+
     fn erase(
         &mut self,
         scope: SyncedSettingsErasureScope,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(account_id) = self.hosts_account_id else {
+        let engine = self.engine.read(cx);
+        let Some(account_id) = engine.account_id() else {
+            self.operation_error = Some(SharedString::from(
+                "Sign in to Zed to erase synced settings",
+            ));
+            cx.notify();
             return;
         };
-        let this_system_id = self.engine.read(cx).this_system_id();
-        let expected_group_id = self
-            .hosts
-            .iter()
-            .flatten()
-            .find(|host| Some(&host.system_id) == this_system_id.as_ref())
-            .map(|host| host.group_id.clone());
+        let expected_group_id = engine.state().and_then(|state| state.group_id.clone());
         let confirmation = match scope {
             SyncedSettingsErasureScope::Group => Confirmation {
                 message: String::from("Erase this sync group's settings from Zed Cloud?"),
@@ -991,10 +1099,11 @@ impl SettingsSyncStatusModal {
         let activity = engine.activity(cx);
         let has_pending_decision = engine.pending_decision().is_some();
         let exclusions = engine.effective_exclusions(cx);
-        let group_id = status
-            .group_id
-            .clone()
-            .or_else(|| engine.state().and_then(|state| state.group_id.clone()));
+        let group_id = engine.state().and_then(|state| state.group_id.clone());
+        let server_version = engine
+            .state()
+            .and_then(|state| state.base.as_ref())
+            .map(|base| base.server_version);
         let enabled = activity != SyncActivity::Off;
         let can_retry = matches!(activity, SyncActivity::Paused | SyncActivity::Failing);
         let state = match activity {
@@ -1010,28 +1119,36 @@ impl SettingsSyncStatusModal {
             .last_synced_at
             .map(|time| format_timestamp(OffsetDateTime::from(time)))
             .unwrap_or_else(|| String::from("Not since Zed started"));
-        let version = status
-            .server_version
+        let version = server_version
             .map(|version| version.to_string())
             .unwrap_or_else(|| String::from("Unknown"));
-        let exclusions = if exclusions.is_empty() {
-            String::from("None")
-        } else {
-            exclusions.join(", ")
+        let sync_group = match (&group_id, &self.hosts) {
+            (None, _) => String::from("None"),
+            (Some(group_id), Some(hosts)) => {
+                let labels = hosts
+                    .iter()
+                    .filter(|host| host.group_id == *group_id)
+                    .map(|host| host.label.as_str())
+                    .collect::<Vec<_>>();
+                if labels.is_empty() {
+                    String::from("Joined")
+                } else {
+                    labels.join(", ")
+                }
+            }
+            (Some(_), None) if self.loading => String::from("Loading…"),
+            (Some(_), None) => String::from("Not available"),
         };
         Section::new()
             .header(SectionHeader::new("Status"))
             .child(render_property("Settings sync", state))
             .child(render_property("Last synced", last_synced))
             .child(render_property("Cloud version", version))
-            .child(render_property(
-                "Sync group",
-                group_id.unwrap_or_else(|| String::from("None")),
-            ))
+            .child(render_property("Sync group", sync_group))
             .when_some(status.last_error, |section, error| {
                 section.child(render_property("Last error", error))
             })
-            .child(render_property("Excluded settings", exclusions))
+            .child(render_exclusions(&exclusions))
             .child(
                 h_flex()
                     .gap_2()
@@ -1078,12 +1195,18 @@ impl SettingsSyncStatusModal {
             let kept = conflict
                 .remote
                 .as_ref()
-                .map(|value| format!("kept {value}"))
+                .map(|value| {
+                    let value = format_sync_value(value);
+                    format!("kept {value}")
+                })
                 .unwrap_or_else(|| String::from("removed"));
             let yours = conflict
                 .local
                 .as_ref()
-                .map(|value| format!("yours was {value}"))
+                .map(|value| {
+                    let value = format_sync_value(value);
+                    format!("yours was {value}")
+                })
                 .unwrap_or_else(|| String::from("you had it unset"));
             let changed_by = conflict
                 .changed_by
@@ -1130,9 +1253,13 @@ impl SettingsSyncStatusModal {
         let section = Section::new().header(SectionHeader::new("Devices"));
         let Some(hosts) = self.hosts.clone() else {
             return section.child(
-                Label::new("Loading…")
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
+                Label::new(if self.loading {
+                    "Loading…"
+                } else {
+                    "Not available"
+                })
+                .size(LabelSize::Small)
+                .color(Color::Muted),
             );
         };
         if hosts.is_empty() {
@@ -1173,11 +1300,13 @@ impl SettingsSyncStatusModal {
             .collect::<Vec<_>>();
         let mut section = section;
         let mut ix = 0;
+        let mut other_groups = 0;
         for (group_id, group_hosts) in groups {
             let heading = if this_group.as_deref() == Some(group_id.as_str()) {
-                format!("Sync group {group_id} (this device's group)")
+                String::from("This device's sync group")
             } else {
-                format!("Sync group {group_id}")
+                other_groups += 1;
+                format!("Other sync group {other_groups}")
             };
             section = section.child(
                 Label::new(heading)
@@ -1231,7 +1360,7 @@ impl SettingsSyncStatusModal {
         let move_target = this_group
             .filter(|group_id| !is_this_device && *group_id != host.group_id)
             .map(String::from);
-        let disabled = self.operation_in_flight;
+        let disabled = self.operation_in_flight || self.loading;
 
         let row = h_flex()
             .justify_between()
@@ -1346,9 +1475,13 @@ impl SettingsSyncStatusModal {
             .map(|history| history.revisions.clone())
         else {
             return section.child(
-                Label::new("Loading…")
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
+                Label::new(if self.loading {
+                    "Loading…"
+                } else {
+                    "Not available"
+                })
+                .size(LabelSize::Small)
+                .color(Color::Muted),
             );
         };
         if history.is_empty() {
@@ -1364,7 +1497,7 @@ impl SettingsSyncStatusModal {
             .flatten()
             .map(|host| (host.system_id.as_str(), host.label.as_str()))
             .collect::<BTreeMap<_, _>>();
-        let disabled = self.operation_in_flight;
+        let disabled = self.operation_in_flight || self.loading;
         let mut section = section;
         for (ix, revision) in history.into_iter().enumerate() {
             let device = match revision.system_id.as_deref() {
@@ -1408,7 +1541,7 @@ impl SettingsSyncStatusModal {
                         buttons.child(
                             Button::new(
                                 "settings-sync-erase-group",
-                                "Erase this group's cloud copy",
+                                "Erase This Group's Cloud Copy",
                             )
                             .style(ButtonStyle::Outlined)
                             .color(Color::Error)
@@ -1423,7 +1556,7 @@ impl SettingsSyncStatusModal {
                     .child(
                         Button::new(
                             "settings-sync-erase-account",
-                            "Erase all my synced settings",
+                            "Erase All My Synced Settings",
                         )
                         .style(ButtonStyle::Outlined)
                         .color(Color::Error)
@@ -1451,10 +1584,10 @@ impl Render for SettingsSyncStatusModal {
         let max_height = window.viewport_size().height - px(200.);
         let this_system_id = self.engine.read(cx).this_system_id();
         let has_group = self
-            .hosts
-            .iter()
-            .flatten()
-            .any(|host| Some(&host.system_id) == this_system_id.as_ref());
+            .engine
+            .read(cx)
+            .state()
+            .is_some_and(|state| state.group_id.is_some());
         let errors = self
             .operation_error
             .iter()

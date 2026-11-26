@@ -300,7 +300,7 @@ async fn write_keymap_migration(fs: Arc<dyn Fs>) -> Result<()> {
     Ok(())
 }
 
-async fn write_settings_migration(fs: Arc<dyn Fs>) -> Result<()> {
+pub(crate) async fn write_settings_migration(fs: Arc<dyn Fs>) -> Result<()> {
     let old_text = SettingsStore::load_settings(&fs).await?;
     let Ok(Some(new_text)) = migrate_settings(&old_text) else {
         return Ok(());

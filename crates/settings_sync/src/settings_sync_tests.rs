@@ -3,11 +3,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use cloud_api_client::ClientApiError;
 use feature_flags::FeatureFlagAppExt as _;
 use fs::{FakeFs, Fs as _};
 use futures::FutureExt as _;
 use futures::channel::oneshot;
 use gpui::{AppContext as _, Entity, TestAppContext};
+use http_client::StatusCode;
 use parking_lot::Mutex;
 use rand::rngs::StdRng;
 use rand::{Rng as _, SeedableRng as _};
@@ -24,7 +26,10 @@ use crate::merge::{
     BUILT_IN_EXCLUSIONS, ExclusionPattern, ExclusionSet, PathMap, apply_ops_to_text,
     apply_target_to_text, diff_paths, flatten_doc, merge_three_way, unflatten,
 };
-use crate::server::{FAKE_ACCOUNT_ID, FakeSettingsSyncBackend, FakeSettingsSyncServer};
+use crate::server::{
+    FAKE_ACCOUNT_ID, FakeSettingsSyncBackend, FakeSettingsSyncServer, SyncNotImplementedError,
+    map_server_error,
+};
 use crate::strategy::SettingsJsonStrategy;
 use crate::sync_path::SyncPath;
 
@@ -76,6 +81,24 @@ fn test_flatten_keeps_enum_objects_atomic() {
     assert_eq!(
         paths.get(&SyncPath::from_segments(["languages", "Rust", "formatter"])),
         Some(&json!({ "external": { "command": "rustfmt", "arguments": [] } }))
+    );
+
+    let doc = json!({
+        "agent": {
+            "default_model": { "provider": "anthropic", "model": "m1" },
+            "profiles": { "review": { "name": "Review", "tools": { "terminal": true } } }
+        }
+    });
+    let paths = flatten_doc(&classifier, &doc);
+    assert_eq!(
+        (
+            paths.get(&SyncPath::from_segments(["agent", "default_model"])),
+            paths.get(&SyncPath::from_segments(["agent", "profiles", "review"])),
+        ),
+        (
+            Some(&json!({ "provider": "anthropic", "model": "m1" })),
+            Some(&json!({ "name": "Review", "tools": { "terminal": true } })),
+        )
     );
 }
 
@@ -288,7 +311,7 @@ fn test_exclusions_strip_subtrees() {
         ("/buffer_font_size", json!(15)),
         ("/proxy", json!("socks5h://localhost:1080")),
         ("/ssh_connections", json!([{ "host": "example" }])),
-        ("/audio/input_audio_device", json!("mic")),
+        ("/audio/experimental.input_audio_device", json!("mic")),
         ("/macos/buffer_font_size", json!(16)),
         ("/macos/proxy", json!("socks5h://mac:1080")),
         ("/settings_sync/enabled", json!(true)),
@@ -310,13 +333,16 @@ fn test_exclusions_strip_ancestor_of_excluded_subpath() {
     let mut exclusions = ExclusionSet::default();
     exclusions.insert(ExclusionPattern::from_segments([
         "audio",
-        "input_audio_device",
+        "experimental.input_audio_device",
     ]));
 
     let local = path_map(&[
         (
             "/audio",
-            json!({ "input_audio_device": "mic", "experimental.control_input_volume": true }),
+            json!({
+                "experimental.input_audio_device": "mic",
+                "experimental.control_input_volume": true
+            }),
         ),
         ("/theme", json!("One Dark")),
     ]);
@@ -345,7 +371,10 @@ fn test_exclusions_strip_ancestor_of_excluded_subpath() {
         path_map(&[
             (
                 "/audio",
-                json!({ "input_audio_device": "mic", "experimental.control_input_volume": false }),
+                json!({
+                    "experimental.input_audio_device": "mic",
+                    "experimental.control_input_volume": false
+                }),
             ),
             ("/theme", json!("One Light")),
         ])
@@ -499,29 +528,36 @@ fn test_built_in_exclusions_redact_legacy_context_server_secrets() {
 }
 
 #[test]
-fn test_any_depth_exclusions_never_redact_arrays_they_pass_through() {
+fn test_any_depth_exclusions_redact_only_arrays_holding_a_match() {
     let mut exclusions = ExclusionSet::default();
     exclusions.extend_from_pointers(["/**/**/env"]);
-    let mut paths = path_map(&[
+    let local = path_map(&[
         ("/file_scan_exclusions", json!(["**/.git"])),
         ("/terminal/env", json!({ "TOKEN": "SECRET" })),
         (
             "/terminal/shell",
             json!({ "program": "fish", "env": { "A": "B" } }),
         ),
+        (
+            "/lsp/x/initialization_options",
+            json!({ "servers": [{ "env": { "TOKEN": "SECRET" } }], "public": 1 }),
+        ),
     ]);
+    let mut paths = local.clone();
     exclusions.strip(&mut paths);
 
     assert_eq!(
-        (paths, exclusions.pointers()),
+        (paths.clone(), exclusions.pointers()),
         (
             path_map(&[
                 ("/file_scan_exclusions", json!(["**/.git"])),
                 ("/terminal/shell", json!({ "program": "fish" })),
+                ("/lsp/x/initialization_options", json!({ "public": 1 })),
             ]),
             Vec::from(["/**/env".to_string()])
         )
     );
+    assert_eq!(exclusions.restore(&local, &paths), local);
 }
 
 #[test]
@@ -535,13 +571,15 @@ fn test_changing_built_in_exclusions_requires_schema_epoch_bump() {
         vec![
             "/settings_sync/enabled",
             "/proxy",
+            "/edit_predictions/copilot/proxy",
+            "/edit_predictions/copilot/proxy_no_verify",
             "/server_url",
             "/credentials_url",
             "/ssh_connections",
             "/wsl_connections",
             "/dev_container_connections",
-            "/audio/input_audio_device",
-            "/audio/output_audio_device",
+            "/audio/experimental.input_audio_device",
+            "/audio/experimental.output_audio_device",
             "/terminal/env",
             "/lsp/*/binary/env",
             "/dap/*/env",
@@ -554,6 +592,7 @@ fn test_changing_built_in_exclusions_requires_schema_epoch_bump() {
             "/language_models/*/*/custom_headers",
         ]
     );
+    assert_eq!(crate::NON_MIGRATION_SCHEMA_EPOCH_BUMPS, 7);
 }
 
 #[test]
@@ -585,10 +624,7 @@ fn test_exclusions_cover_arrays_carriers_and_replaced_parents() {
     everything.strip(&mut everything_upload);
     assert_eq!(
         unflatten(&everything_upload),
-        json!({
-            "settings_sync": { "exclude": ["/"] },
-            "macos": { "settings_sync": { "exclude": ["/x"] } },
-        })
+        json!({ "settings_sync": { "exclude": ["/"] } })
     );
     assert_eq!(everything.pointers(), vec!["/".to_string()]);
 
@@ -626,11 +662,14 @@ fn test_exclusions_cover_arrays_carriers_and_replaced_parents() {
 
     assert_eq!(
         exclusions.restore(&local, &PathMap::new()),
-        flatten(json!({
-            "context_servers": { "x": { "args": ["SECRET"] } },
-            "terminal": { "env": { "TOKEN": "LOCAL" } },
-            "some_future_setting": { "nested": { "token": "LOCAL" } },
-        }))
+        flatten(json!({ "terminal": { "env": { "TOKEN": "LOCAL" } } }))
+    );
+    assert_eq!(
+        exclusions.restore(
+            &flatten(json!({ "some_future_setting": { "nested": { "token": "LOCAL" } } })),
+            &PathMap::new(),
+        ),
+        flatten(json!({ "some_future_setting": { "nested": { "token": "LOCAL" } } }))
     );
     assert_eq!(
         exclusions.restore(
@@ -647,14 +686,49 @@ fn test_exclusions_cover_arrays_carriers_and_replaced_parents() {
     assert_eq!(
         restored,
         flatten(json!({
-            "context_servers": { "x": { "args": ["SECRET"] } },
             "terminal": { "env": { "TOKEN": "LOCAL" } },
-            "some_future_setting": { "nested": { "token": "LOCAL" } },
+            "some_future_setting": 3,
         }))
     );
     let mut next_upload = restored;
     exclusions.strip(&mut next_upload);
-    assert_eq!(next_upload, PathMap::new());
+    assert_eq!(next_upload, merged);
+    assert_eq!(
+        exclusions.restore_reporting_drops(&local, &merged).1,
+        vec![SyncPath::parse("/some_future_setting").unwrap()]
+    );
+    let mut two_parts = ExclusionSet::default();
+    two_parts.extend_from_pointers([
+        "/some_future_setting/nested/token",
+        "/some_future_setting/flag/x",
+    ]);
+    assert_eq!(
+        two_parts.restore_reporting_drops(
+            &flatten(json!({
+                "some_future_setting": { "nested": { "token": "LOCAL" }, "flag": { "x": 1 } }
+            })),
+            &flatten(json!({ "some_future_setting": { "nested": {}, "flag": 5 } })),
+        ),
+        (
+            flatten(json!({
+                "some_future_setting": { "nested": { "token": "LOCAL" }, "flag": 5 }
+            })),
+            vec![SyncPath::parse("/some_future_setting").unwrap()]
+        )
+    );
+    let mut empty_segments = ExclusionSet::default();
+    empty_segments.extend_from_pointers(["//"]);
+    assert_eq!(empty_segments.pointers(), vec!["//".to_string()]);
+    assert_eq!(
+        exclusions.restore_reporting_drops(
+            &flatten(json!({ "some_future_setting": { "nested": { "token": "LOCAL" } } })),
+            &flatten(json!({ "some_future_setting": { "nested": {} } })),
+        ),
+        (
+            flatten(json!({ "some_future_setting": { "nested": { "token": "LOCAL" } } })),
+            Vec::new()
+        )
+    );
 }
 
 #[test]
@@ -715,7 +789,13 @@ fn test_exclusion_lists_merge_as_sets() {
     let local = exclude(&["/a", "/b", "/local"]);
     let remote = exclude(&["/b", "/remote"]);
     let merge = merge_three_way(&base, &local, &remote);
-    assert_eq!(merge.merged, exclude(&["/b", "/local", "/remote"]));
+    assert_eq!(merge.merged, exclude(&["/b", "/remote", "/local"]));
+    let pushed = merge_three_way(&PathMap::new(), &exclude(&["/y"]), &exclude(&["/x"])).merged;
+    assert_eq!(pushed, exclude(&["/x", "/y"]));
+    assert_eq!(
+        merge_three_way(&exclude(&["/x"]), &exclude(&["/x"]), &pushed).merged,
+        pushed
+    );
     assert_eq!(merge.conflicts, Vec::new());
 
     let merge = merge_three_way(&base, &PathMap::new(), &base);
@@ -869,9 +949,8 @@ fn test_first_sync_replacements_keep_both_exclusion_lists() {
             ("/settings_sync/exclude", json!(["/remote_secret"])),
             ("/tab_size", json!(8)),
         ]),
-        can_replace_remote: true,
     };
-    let exclusions = json!(["/local_secret", "/remote_secret"]);
+    let exclusions = json!(["/remote_secret", "/local_secret"]);
     assert_eq!(
         preview.merge(FirstSyncChoice::ReplaceLocal).merged,
         path_map(&[
@@ -1338,7 +1417,7 @@ async fn test_excluded_paths_never_upload_and_get_redacted(cx: &mut TestAppConte
             {
                 "proxy": "socks5h://localhost:1080",
                 "ssh_connections": [{ "host": "secret-box" }],
-                "audio": { "input_audio_device": "mic" },
+                "audio": { "experimental.input_audio_device": "mic" },
                 "buffer_font_size": 15,
                 "settings_sync": {
                     "enabled": true,
@@ -1526,6 +1605,25 @@ async fn test_history_restores_only_into_its_own_group(cx: &mut TestAppContext) 
     assert_eq!(
         restore("another-group", cx).await.unwrap_err().to_string(),
         rejection
+    );
+    let newer_revision = cloud_api_client::SyncedSettingsRevision {
+        schema_epoch: crate::settings_schema_epoch() + 1,
+        ..first_revision.clone()
+    };
+    let newer_restore = device.engine.update(cx, |engine, cx| {
+        engine.restore_revision(
+            newer_revision,
+            FAKE_ACCOUNT_ID,
+            "fake-group".to_string(),
+            cx,
+        )
+    });
+    assert_eq!(
+        newer_restore.await.unwrap_err().to_string(),
+        format!(
+            "version {} was saved by a newer version of Zed, update Zed to restore it",
+            first_revision.version
+        )
     );
 
     drop(restore("fake-group", cx));
@@ -1768,7 +1866,7 @@ async fn test_pauses_after_repeated_push_conflicts(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_below_epoch_client_pulls_but_never_pushes(cx: &mut TestAppContext) {
+async fn test_below_epoch_client_neither_pulls_nor_pushes(cx: &mut TestAppContext) {
     init_test(cx);
     let server = FakeSettingsSyncServer::new();
     server.set_doc(cloud_api_client::SyncedSettings {
@@ -1790,7 +1888,7 @@ async fn test_below_epoch_client_pulls_but_never_pushes(cx: &mut TestAppContext)
     assert_eq!(server.doc().unwrap().version, 3);
     assert_eq!(
         device.settings_json(cx).await,
-        json!({ "buffer_font_size": 15, "theme": "One Dark" })
+        json!({ "buffer_font_size": 15 })
     );
     let update_required_events = events
         .lock()
@@ -1854,7 +1952,13 @@ async fn test_unimplemented_cloud_skips_cycles_until_available(cx: &mut TestAppC
     assert_eq!(server.doc(), None);
     assert_eq!(server.fetch_count(), 0);
     assert_eq!(server.push_count(), 0);
-    assert_eq!(sync_failed_count(&events), 1);
+    assert_eq!(sync_failed_count(&events), 0);
+    assert_eq!(
+        device
+            .engine
+            .read_with(cx, |engine, cx| engine.activity(cx)),
+        SyncActivity::FeatureUnavailable
+    );
 
     server.set_unimplemented(false);
     sync(&device, cx);
@@ -1957,7 +2061,7 @@ async fn test_newer_epoch_seen_on_retry_stops_pushing(cx: &mut TestAppContext) {
     assert_eq!(server.doc(), Some(racing_doc));
     assert_eq!(
         device.settings_json(cx).await,
-        json!({ "buffer_font_size": 15, "tab_size": 8, "theme": "One Dark" })
+        json!({ "buffer_font_size": 15, "tab_size": 8 })
     );
     let update_required_events = events
         .lock()
@@ -2056,14 +2160,10 @@ async fn test_feature_flag_arriving_later_starts_syncing(cx: &mut TestAppContext
 }
 
 #[gpui::test]
-async fn test_legacy_settings_are_migrated_before_syncing(cx: &mut TestAppContext) {
+async fn test_legacy_settings_wait_for_the_user_to_migrate(cx: &mut TestAppContext) {
     init_test(cx);
     let server = FakeSettingsSyncServer::new();
-
-    let device = make_device(
-        &server,
-        "a",
-        r#"{
+    let legacy_text = r#"{
             "settings_sync": { "exclude": ["/profiles/Work/tab_size", "/context_servers/private/command/args"] },
             "context_servers": {
                 "private": {
@@ -2074,10 +2174,27 @@ async fn test_legacy_settings_are_migrated_before_syncing(cx: &mut TestAppContex
                 }
             },
             "profiles": { "Work": { "terminal": { "env": { "TOKEN": "secret" } }, "tab_size": 8, "buffer_font_size": 20 } }
-        }"#,
-        cx,
-    )
-    .await;
+        }"#;
+
+    let device = make_device(&server, "a", legacy_text, cx).await;
+    let events = subscribe_to_events(&device.engine, cx);
+    settle(cx);
+
+    assert_eq!(server.push_count(), 0);
+    assert_eq!(device.settings_text(cx).await, legacy_text);
+    let migration_required_events = events
+        .lock()
+        .iter()
+        .filter(|event| matches!(event, SettingsSyncEvent::MigrationRequired))
+        .count();
+    assert_eq!(migration_required_events, 1);
+    assert_eq!(sync_failed_count(&events), 0);
+
+    let migrated_text = migrator::migrate_settings(legacy_text).unwrap().unwrap();
+    device
+        .fs
+        .insert_file(&device.settings_path, migrated_text.into_bytes())
+        .await;
     settle(cx);
 
     let exclusions = json!([
@@ -2805,31 +2922,42 @@ async fn test_erasure_is_detected_mid_cycle_and_across_recreation(cx: &mut TestA
 }
 
 #[gpui::test]
-async fn test_upgraded_client_publishes_its_schema_epoch_when_documents_match(
+async fn test_upgraded_client_publishes_its_schema_epoch_only_with_a_real_change(
     cx: &mut TestAppContext,
 ) {
     init_test(cx);
     let server = FakeSettingsSyncServer::new();
+    let older_epoch = crate::settings_schema_epoch() - 1;
     server.set_doc(cloud_api_client::SyncedSettings {
         group_id: "fake-group".to_string(),
         document_id: "seeded-document".to_string(),
         kind: cloud_api_client::SYNCED_SETTINGS_KIND_SETTINGS.to_string(),
         version: 7,
-        schema_epoch: crate::settings_schema_epoch() - 1,
-        doc: json!({
-            "edit_predictions": { "copilot": { "enterprise_uri": "https://enterprise.example" } }
-        }),
+        schema_epoch: older_epoch,
+        doc: json!({ "copilot": { "enterprise_uri": "https://enterprise.example" } }),
         updated_by_system_id: None,
         provenance: BTreeMap::new(),
     });
 
-    let _device = make_device(
+    let device = make_device(
         &server,
         "a",
         r#"{ "copilot": { "enterprise_uri": "https://enterprise.example" } }"#,
         cx,
     )
     .await;
+    settle(cx);
+    let doc = server.doc().unwrap();
+    assert_eq!((doc.version, doc.schema_epoch), (7, older_epoch));
+
+    device
+        .fs
+        .insert_file(
+            &device.settings_path,
+            br#"{ "copilot": { "enterprise_uri": "https://enterprise.example" }, "buffer_font_size": 15 }"#
+                .to_vec(),
+        )
+        .await;
     settle(cx);
 
     let doc = server.doc().unwrap();
@@ -2838,7 +2966,10 @@ async fn test_upgraded_client_publishes_its_schema_epoch_when_documents_match(
         (
             8,
             crate::settings_schema_epoch(),
-            json!({ "copilot": { "enterprise_uri": "https://enterprise.example" } })
+            json!({
+                "copilot": { "enterprise_uri": "https://enterprise.example" },
+                "buffer_font_size": 15
+            })
         )
     );
 }
@@ -2910,6 +3041,529 @@ async fn test_removing_an_exclusion_uploads_the_value(cx: &mut TestAppContext) {
     assert_eq!(
         server.doc().unwrap().doc,
         json!({ "buffer_font_size": 15, "settings_sync": { "exclude": [] } })
+    );
+}
+
+#[gpui::test]
+async fn test_removing_an_exclusion_reaches_devices_that_still_exclude_it(cx: &mut TestAppContext) {
+    init_test(cx);
+    let backend = Arc::new(FakeSettingsSyncBackend::default());
+    let server_a = FakeSettingsSyncServer::in_group(backend.clone(), "group");
+    let server_b = FakeSettingsSyncServer::in_group(backend, "group");
+    let device_a = make_device(
+        &server_a,
+        "a",
+        r#"{ "buffer_font_size": 15, "settings_sync": { "exclude": ["/buffer_font_size"] } }"#,
+        cx,
+    )
+    .await;
+    settle(cx);
+    let device_b = make_device(
+        &server_b,
+        "b",
+        r#"{ "buffer_font_size": 12, "settings_sync": { "exclude": ["/buffer_font_size"] } }"#,
+        cx,
+    )
+    .await;
+    let events_b = subscribe_to_events(&device_b.engine, cx);
+    settle(cx);
+
+    device_a
+        .fs
+        .insert_file(
+            &device_a.settings_path,
+            br#"{ "buffer_font_size": 15, "settings_sync": { "exclude": [] } }"#.to_vec(),
+        )
+        .await;
+    sync(&device_a, cx);
+    sync(&device_b, cx);
+    sync(&device_a, cx);
+
+    let expected = json!({ "buffer_font_size": 15, "settings_sync": { "exclude": [] } });
+    assert_eq!(
+        (
+            device_a.settings_json(cx).await,
+            device_b.settings_json(cx).await,
+            server_a.doc().unwrap().doc,
+        ),
+        (expected.clone(), expected.clone(), expected)
+    );
+    let conflict = first_conflict_batch(&events_b).conflicts.remove(0);
+    assert_eq!(
+        (conflict.path.to_string(), conflict.local, conflict.remote),
+        (
+            "/buffer_font_size".to_string(),
+            Some(json!(12)),
+            Some(json!(15))
+        )
+    );
+}
+
+#[gpui::test]
+async fn test_a_dismissed_first_sync_choice_is_announced_only_once(cx: &mut TestAppContext) {
+    init_test(cx);
+    let server = FakeSettingsSyncServer::new();
+    server.set_doc(cloud_api_client::SyncedSettings {
+        group_id: "fake-group".to_string(),
+        document_id: "seeded-document".to_string(),
+        kind: cloud_api_client::SYNCED_SETTINGS_KIND_SETTINGS.to_string(),
+        version: 1,
+        schema_epoch: crate::settings_schema_epoch(),
+        doc: json!({ "theme": "One Dark" }),
+        updated_by_system_id: None,
+        provenance: BTreeMap::new(),
+    });
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/a",
+        json!({ "settings.json": r#"{ "buffer_font_size": 15 }"# }),
+    )
+    .await;
+    let device = make_consented_device(
+        server.clone(),
+        fs,
+        PathBuf::from("/a/settings.json"),
+        PathBuf::from("/a/sync_state.json"),
+        cx,
+    )
+    .await;
+    let events = subscribe_to_events(&device.engine, cx);
+    let announcements = |events: &Mutex<Vec<SettingsSyncEvent>>| {
+        events
+            .lock()
+            .iter()
+            .filter(|event| matches!(event, SettingsSyncEvent::DecisionRequired))
+            .count()
+    };
+    settle(cx);
+    assert_eq!(announcements(&events), 1);
+
+    device
+        .fs
+        .insert_file(
+            &device.settings_path,
+            br#"{ "buffer_font_size": 16 }"#.to_vec(),
+        )
+        .await;
+    settle(cx);
+    let Some(PendingDecision::FirstSync(preview)) = device
+        .engine
+        .read_with(cx, |engine, _| engine.pending_decision().cloned())
+    else {
+        panic!("expected a first sync choice");
+    };
+    assert_eq!(announcements(&events), 1);
+
+    device
+        .fs
+        .insert_file(
+            &device.settings_path,
+            br#"{ "buffer_font_size": 17 }"#.to_vec(),
+        )
+        .await;
+    device.engine.update(cx, |engine, cx| {
+        engine.choose_first_sync(preview, FirstSyncChoice::Merge, cx)
+    });
+    settle(cx);
+    assert_eq!((announcements(&events), server.push_count()), (2, 0));
+}
+
+#[gpui::test]
+async fn test_consent_completes_after_the_caller_drops_its_task(cx: &mut TestAppContext) {
+    init_test(cx);
+    let server = FakeSettingsSyncServer::unregistered(Arc::new(FakeSettingsSyncBackend::default()));
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/a",
+        json!({ "settings.json": r#"{ "buffer_font_size": 15 }"# }),
+    )
+    .await;
+    let device = make_bare_device(
+        server,
+        fs.clone(),
+        PathBuf::from("/a/settings.json"),
+        PathBuf::from("/a/sync_state.json"),
+        cx,
+    );
+    settle(cx);
+    assert_eq!(
+        device
+            .engine
+            .read_with(cx, |engine, _| engine.pending_decision().cloned()),
+        Some(PendingDecision::Consent)
+    );
+
+    drop(
+        device
+            .engine
+            .update(cx, |engine, cx| engine.accept_consent(cx)),
+    );
+    settle(cx);
+
+    assert_eq!(
+        load_state(fs.as_ref(), Path::new("/a/sync_state.json")).await,
+        SyncState {
+            format_version: 1,
+            user_id: Some(FAKE_ACCOUNT_ID),
+            consented: true,
+            group_id: None,
+            base: None,
+        }
+    );
+    assert_eq!(
+        device
+            .engine
+            .read_with(cx, |engine, _| engine.pending_decision().cloned()),
+        Some(PendingDecision::JoinGroup {
+            account_id: FAKE_ACCOUNT_ID,
+            hosts: Vec::new(),
+        })
+    );
+}
+
+#[test]
+fn test_cloud_errors_carry_the_server_message() {
+    let server_error = |status, body: &str| ClientApiError::ServerError {
+        host: "cloud.zed.dev".to_string(),
+        status,
+        body: body.to_string(),
+    };
+
+    let typed = map_server_error(server_error(
+        StatusCode::NOT_FOUND,
+        r#"{"code":"settings_sync_group_not_found","message":"The settings sync group was not found.","url":null}"#,
+    ));
+    assert_eq!(
+        format!("{typed:#}"),
+        "The settings sync group was not found.: cloud.zed.dev returned 404 Not Found"
+    );
+
+    let unserved = map_server_error(server_error(StatusCode::NOT_FOUND, "Not Found"));
+    assert_eq!(
+        unserved
+            .downcast_ref::<SyncNotImplementedError>()
+            .map(ToString::to_string),
+        Some(SyncNotImplementedError.to_string())
+    );
+
+    let untyped = map_server_error(server_error(StatusCode::BAD_GATEWAY, "upstream"));
+    assert_eq!(
+        format!("{untyped:#}"),
+        "cloud.zed.dev returned 502 Bad Gateway"
+    );
+}
+
+#[gpui::test]
+async fn test_restoring_an_older_version_keeps_newer_exclusions(cx: &mut TestAppContext) {
+    init_test(cx);
+    let server = FakeSettingsSyncServer::new();
+    let device = make_device(&server, "a", r#"{ "buffer_font_size": 15 }"#, cx).await;
+    settle(cx);
+    device
+        .fs
+        .insert_file(
+            &device.settings_path,
+            br#"{
+                "buffer_font_size": 16,
+                "some_future_setting": { "token": "secret" },
+                "settings_sync": { "exclude": ["/some_future_setting"] }
+            }"#
+            .to_vec(),
+        )
+        .await;
+    settle(cx);
+    let history = device
+        .engine
+        .update(cx, |engine, cx| engine.list_history(cx))
+        .await
+        .unwrap();
+    let first_revision = history.revisions.last().unwrap().clone();
+
+    device
+        .engine
+        .update(cx, |engine, cx| {
+            engine.restore_revision(
+                first_revision,
+                FAKE_ACCOUNT_ID,
+                "fake-group".to_string(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    settle(cx);
+    settle(cx);
+
+    assert_eq!(
+        device.settings_json(cx).await,
+        json!({
+            "buffer_font_size": 15,
+            "some_future_setting": { "token": "secret" },
+            "settings_sync": { "exclude": ["/some_future_setting"] }
+        })
+    );
+    assert_eq!(
+        server.doc().unwrap().doc,
+        json!({
+            "buffer_font_size": 15,
+            "settings_sync": { "exclude": ["/some_future_setting"] }
+        })
+    );
+}
+
+#[gpui::test]
+async fn test_a_device_that_leaves_its_group_asks_for_consent_again(cx: &mut TestAppContext) {
+    init_test(cx);
+    let server = FakeSettingsSyncServer::new();
+    let device = make_device(&server, "a", r#"{ "buffer_font_size": 15 }"#, cx).await;
+    settle(cx);
+
+    server.set_account(Some(FAKE_ACCOUNT_ID), None);
+    sync(&device, cx);
+
+    assert_eq!(
+        device.engine.read_with(cx, |engine, _| {
+            (
+                engine.pending_decision().cloned(),
+                engine
+                    .state()
+                    .map(|state| (state.consented, state.group_id.clone())),
+            )
+        }),
+        (
+            Some(PendingDecision::Consent),
+            Some((false, Some("fake-group".to_string())))
+        )
+    );
+}
+
+#[gpui::test]
+async fn test_a_device_removed_during_its_push_asks_for_consent_again(cx: &mut TestAppContext) {
+    init_test(cx);
+    let server = FakeSettingsSyncServer::new();
+    let device = make_device(&server, "a", r#"{ "buffer_font_size": 15 }"#, cx).await;
+    settle(cx);
+
+    let release_push = server.gate_next_push();
+    device
+        .fs
+        .insert_file(
+            &device.settings_path,
+            br#"{ "buffer_font_size": 16 }"#.to_vec(),
+        )
+        .await;
+    settle(cx);
+    server.set_account(Some(FAKE_ACCOUNT_ID), None);
+    release_push.send(()).unwrap();
+    settle(cx);
+    settle(cx);
+
+    assert_eq!(
+        device.engine.read_with(cx, |engine, _| {
+            (
+                engine.pending_decision().cloned(),
+                engine
+                    .state()
+                    .map(|state| (state.consented, state.group_id.clone())),
+            )
+        }),
+        (
+            Some(PendingDecision::Consent),
+            Some((false, Some("fake-group".to_string())))
+        )
+    );
+}
+
+#[gpui::test]
+async fn test_an_unreadable_settings_file_is_not_synced_as_empty(cx: &mut TestAppContext) {
+    init_test(cx);
+    let server = FakeSettingsSyncServer::new();
+    server.set_doc(cloud_api_client::SyncedSettings {
+        group_id: "fake-group".to_string(),
+        document_id: "seeded-document".to_string(),
+        kind: cloud_api_client::SYNCED_SETTINGS_KIND_SETTINGS.to_string(),
+        version: 1,
+        schema_epoch: crate::settings_schema_epoch(),
+        doc: json!({ "theme": "One Dark" }),
+        updated_by_system_id: None,
+        provenance: BTreeMap::new(),
+    });
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree("/a", json!({})).await;
+    fs.insert_file("/a/settings.json", vec![0xff, 0xfe]).await;
+    let device = make_consented_device(
+        server.clone(),
+        fs,
+        PathBuf::from("/a/settings.json"),
+        PathBuf::from("/a/sync_state.json"),
+        cx,
+    )
+    .await;
+    settle(cx);
+
+    assert_eq!(
+        device.engine.read_with(cx, |engine, _| {
+            (
+                engine.pending_decision().cloned(),
+                engine.status().last_error.clone(),
+            )
+        }),
+        (
+            None,
+            Some(
+                "reading the settings file: invalid utf-8 sequence of 1 bytes from index 0"
+                    .to_string()
+            )
+        )
+    );
+}
+
+#[gpui::test]
+async fn test_restoring_a_version_that_drops_local_excluded_parts_is_refused(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let server = FakeSettingsSyncServer::new();
+    let device = make_device(&server, "a", r#"{ "theme": "Ayu Dark" }"#, cx).await;
+    settle(cx);
+    let local_text = r#"{
+        "theme": { "mode": "dark", "light": "One Light", "dark": "One Dark" },
+        "settings_sync": { "exclude": ["/theme/mode"] }
+    }"#;
+    device
+        .fs
+        .insert_file(&device.settings_path, local_text.as_bytes().to_vec())
+        .await;
+    settle(cx);
+    let history = device
+        .engine
+        .update(cx, |engine, cx| engine.list_history(cx))
+        .await
+        .unwrap();
+    let first_revision = history.revisions.last().unwrap().clone();
+
+    let restore = device.engine.update(cx, |engine, cx| {
+        engine.restore_revision(
+            first_revision.clone(),
+            FAKE_ACCOUNT_ID,
+            "fake-group".to_string(),
+            cx,
+        )
+    });
+
+    assert_eq!(
+        restore.await.unwrap_err().to_string(),
+        format!(
+            "version {} replaces /theme, which holds settings excluded on this device, not restoring it",
+            first_revision.version
+        )
+    );
+    assert_eq!(device.settings_text(cx).await, local_text);
+}
+
+#[gpui::test]
+async fn test_a_conflict_is_recorded_when_the_local_write_has_to_be_retried(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let server = FakeSettingsSyncServer::new();
+    let device = make_device(&server, "a", r#"{ "buffer_font_size": 15 }"#, cx).await;
+    settle(cx);
+    let mut remote = server.doc().unwrap();
+    remote.version += 1;
+    remote.doc = json!({ "buffer_font_size": 16 });
+    server.set_doc(remote);
+
+    let release_fetch = server.gate_next_fetch();
+    device
+        .fs
+        .insert_file(
+            &device.settings_path,
+            br#"{ "buffer_font_size": 17 }"#.to_vec(),
+        )
+        .await;
+    settle(cx);
+    device
+        .fs
+        .insert_file(
+            &device.settings_path,
+            br#"{ "buffer_font_size": 17, "theme": "One Dark" }"#.to_vec(),
+        )
+        .await;
+    release_fetch.send(()).unwrap();
+    settle(cx);
+    settle(cx);
+
+    assert_eq!(
+        device.engine.read_with(cx, |engine, _| {
+            engine.recent_conflicts().map(|batch| {
+                batch
+                    .conflicts
+                    .iter()
+                    .map(|conflict| {
+                        (
+                            conflict.path.to_string(),
+                            conflict.local.clone(),
+                            conflict.remote.clone(),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+        }),
+        Some(vec![(
+            "/buffer_font_size".to_string(),
+            Some(json!(17)),
+            Some(json!(16))
+        )])
+    );
+}
+
+#[gpui::test]
+async fn test_using_mine_keeps_values_excluded_inside_the_reverted_setting(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let server = FakeSettingsSyncServer::new();
+    let device = make_device(
+        &server,
+        "a",
+        r#"{ "context_servers": { "x": { "command": "server", "args": ["a"], "env": { "TOKEN": "secret" } } } }"#,
+        cx,
+    )
+    .await;
+    settle(cx);
+    let mut remote = server.doc().unwrap();
+    remote.version += 1;
+    remote.doc = json!({ "context_servers": { "x": { "command": "server", "args": ["c"] } } });
+    server.set_doc(remote);
+    device
+        .fs
+        .insert_file(
+            &device.settings_path,
+            br#"{ "context_servers": { "x": { "command": "server", "args": ["b"], "env": { "TOKEN": "secret" } } } }"#
+                .to_vec(),
+        )
+        .await;
+    settle(cx);
+    let batch = device
+        .engine
+        .read_with(cx, |engine, _| engine.recent_conflicts().cloned())
+        .unwrap();
+
+    device
+        .engine
+        .update(cx, |engine, cx| engine.revert_conflicts(batch, cx))
+        .await
+        .unwrap();
+    settle(cx);
+
+    assert_eq!(
+        device.settings_json(cx).await,
+        json!({
+            "context_servers": {
+                "x": { "command": "server", "args": ["b"], "env": { "TOKEN": "secret" } }
+            }
+        })
     );
 }
 

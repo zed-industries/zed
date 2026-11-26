@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use anyhow::{Context as _, Result};
 use cloud_api_client::{
-    JoinSyncedSettingsGroupBody, SYNCED_SETTINGS_KIND_SETTINGS, SyncedSettings,
+    ClientApiError, JoinSyncedSettingsGroupBody, SYNCED_SETTINGS_KIND_SETTINGS, SyncedSettings,
     SyncedSettingsErasureScope, SyncedSettingsGroupTarget, SyncedSettingsHost,
     SyncedSettingsRevision, UpdateSyncedSettingsBody, UpdateSyncedSettingsHostBody,
 };
@@ -22,10 +23,10 @@ use settings::{SettingsStore, watch_config_file};
 use settings_json::parse_json_with_comments;
 
 use crate::merge::{
-    Conflict, ExclusionSet, PathMap, SyncOp, ThreeWayMerge, diff_paths, merge_three_way,
-    union_exclusion_lists,
+    BUILT_IN_EXCLUSIONS, Conflict, ExclusionPattern, ExclusionSet, PathMap, SyncOp, ThreeWayMerge,
+    diff_paths, merge_three_way, merged_exclusion_lists, unflatten, union_exclusion_lists,
 };
-use crate::server::{FetchResult, PushResult, SettingsSyncServer};
+use crate::server::{FetchResult, PushResult, SettingsSyncServer, SyncNotImplementedError};
 use crate::strategy::{SettingsJsonStrategy, SyncStrategy};
 use crate::sync_enabled;
 use crate::sync_path::SyncPath;
@@ -91,7 +92,6 @@ pub struct FirstSyncPreview {
     pub remote_version: Option<u64>,
     pub local: PathMap,
     pub remote: PathMap,
-    pub can_replace_remote: bool,
 }
 
 impl FirstSyncPreview {
@@ -99,21 +99,18 @@ impl FirstSyncPreview {
         if self.remote_version.is_none() {
             return Vec::from([FirstSyncChoice::ReplaceRemote]);
         }
-        [
+        Vec::from([
             FirstSyncChoice::Merge,
             FirstSyncChoice::ReplaceLocal,
             FirstSyncChoice::ReplaceRemote,
-        ]
-        .into_iter()
-        .filter(|choice| *choice != FirstSyncChoice::ReplaceRemote || self.can_replace_remote)
-        .collect()
+        ])
     }
 
     pub fn merge(&self, choice: FirstSyncChoice) -> ThreeWayMerge {
         let replaced_with = match choice {
-            FirstSyncChoice::ReplaceRemote if self.can_replace_remote => &self.local,
+            FirstSyncChoice::ReplaceRemote => &self.local,
             FirstSyncChoice::ReplaceLocal => &self.remote,
-            FirstSyncChoice::Merge | FirstSyncChoice::ReplaceRemote => {
+            FirstSyncChoice::Merge => {
                 return merge_three_way(&PathMap::new(), &self.local, &self.remote);
             }
         };
@@ -186,6 +183,7 @@ pub enum SettingsSyncEvent {
     ConflictsResolved(ConflictBatch),
     Paused(PauseReason),
     UpdateRequired,
+    MigrationRequired,
     DecisionRequired,
     SyncFailed(String),
     Erased,
@@ -194,13 +192,17 @@ pub enum SettingsSyncEvent {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SettingsSyncStatus {
     pub last_synced_at: Option<SystemTime>,
-    pub server_version: Option<u64>,
-    pub group_id: Option<String>,
     pub last_error: Option<String>,
 }
 
 #[derive(Debug)]
 struct InvalidLocalDocument;
+
+#[derive(Debug)]
+struct MigrationRequired;
+
+#[derive(Debug)]
+struct UpdateRequired;
 
 struct LoadedState {
     state: Option<SyncState>,
@@ -215,6 +217,28 @@ struct StateSnapshot {
 impl std::fmt::Display for InvalidLocalDocument {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "the settings file cannot be synced until it parses")
+    }
+}
+
+impl std::fmt::Display for MigrationRequired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "settings.json uses deprecated settings, update it to the current format to sync"
+        )
+    }
+}
+
+impl std::error::Error for MigrationRequired {}
+
+impl std::error::Error for UpdateRequired {}
+
+impl std::fmt::Display for UpdateRequired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "the synced settings were saved by a newer version of Zed, update Zed to sync"
+        )
     }
 }
 
@@ -236,6 +260,7 @@ struct CycleOutcome {
     merged: PathMap,
     conflicts: Vec<Conflict>,
     new_base: Option<SyncBase>,
+    exclusions: ExclusionSet,
     used_approval: Option<FirstSyncPreview>,
 }
 
@@ -253,6 +278,8 @@ pub struct SettingsSyncEngine {
     recent_conflicts: Option<ConflictBatch>,
     status: SettingsSyncStatus,
     update_required_notified: bool,
+    migration_required_notified: bool,
+    cloud_unavailable: bool,
     flag_gate_notified: bool,
     flag_enabled: bool,
     failure_notified: bool,
@@ -342,6 +369,8 @@ impl SettingsSyncEngine {
             recent_conflicts: None,
             status: SettingsSyncStatus::default(),
             update_required_notified: false,
+            migration_required_notified: false,
+            cloud_unavailable: false,
             flag_gate_notified: false,
             flag_enabled: cx.has_flag::<SettingsSyncFeatureFlag>(),
             failure_notified: false,
@@ -394,7 +423,7 @@ impl SettingsSyncEngine {
     pub fn activity(&self, cx: &App) -> SyncActivity {
         if !sync_enabled(cx) {
             SyncActivity::Off
-        } else if !cx.has_flag::<SettingsSyncFeatureFlag>() {
+        } else if !cx.has_flag::<SettingsSyncFeatureFlag>() || self.cloud_unavailable {
             SyncActivity::FeatureUnavailable
         } else if !self.server.is_ready() {
             SyncActivity::SignedOut
@@ -439,18 +468,14 @@ impl SettingsSyncEngine {
             .as_ref()
             .and_then(|state| state.base.as_ref())
             .map(|base| &base.doc);
-        let docs = user_settings.iter().chain(base_doc);
-        match &self.strategy {
-            Some(strategy) => exclusions_for(strategy.as_ref(), docs),
-            None => {
-                let mut exclusions = ExclusionSet::default();
-                for doc in docs {
-                    exclusions.extend_from_doc(doc);
-                }
-                exclusions
-            }
+        let mut exclusions = ExclusionSet::default();
+        for exclusion in BUILT_IN_EXCLUSIONS {
+            exclusions.insert(ExclusionPattern::from_segments(exclusion.iter().copied()));
         }
-        .pointers()
+        for doc in user_settings.iter().chain(base_doc) {
+            exclusions.extend_from_doc(doc);
+        }
+        exclusions.pointers()
     }
 
     pub fn clear_pending_decision(&mut self, cx: &mut Context<Self>) {
@@ -467,7 +492,7 @@ impl SettingsSyncEngine {
         let fs = self.fs.clone();
         let state_file_path = self.state_file_path.clone();
         let state_write_lock = self.state_write_lock.clone();
-        cx.spawn(async move |engine, cx| {
+        self.spawn_owned(cx, async move |engine, cx| {
             let _state_write_guard = state_write_lock.lock().await;
             let state = update_state(&engine, cx, fs.as_ref(), &state_file_path, |state| {
                 if state.user_id != Some(account_id) {
@@ -633,6 +658,11 @@ impl SettingsSyncEngine {
                     engine.fence_holds(generation) && engine.in_group(account_id, &group_id)
                 },
                 move |strategy, local_full, exclusions| {
+                    anyhow::ensure!(
+                        revision.schema_epoch <= strategy.schema_epoch(),
+                        "version {} was saved by a newer version of Zed, update Zed to restore it",
+                        revision.version
+                    );
                     let doc = if revision.schema_epoch < strategy.schema_epoch() {
                         strategy.migrate_doc(&revision.doc)?
                     } else {
@@ -642,7 +672,16 @@ impl SettingsSyncEngine {
                     exclusions.extend_from_doc(&doc);
                     let mut revision_paths = strategy.flatten(&doc);
                     exclusions.strip(&mut revision_paths);
-                    Ok(exclusions.restore(local_full, &revision_paths))
+                    let (mut target, dropped) =
+                        exclusions.restore_reporting_drops(local_full, &revision_paths);
+                    if let Some(path) = dropped.first() {
+                        anyhow::bail!(
+                            "version {} replaces {path}, which holds settings excluded on this device, not restoring it",
+                            revision.version
+                        );
+                    }
+                    union_exclusion_lists(&mut target, local_full, &revision_paths);
+                    Ok(target)
                 },
             )
             .await
@@ -693,7 +732,8 @@ impl SettingsSyncEngine {
                             target.insert(conflict.path, value);
                         }
                     }
-                    Ok(target)
+                    exclusions.strip(&mut target);
+                    Ok(exclusions.restore(local_full, &target))
                 },
             )
             .await?;
@@ -764,7 +804,12 @@ impl SettingsSyncEngine {
             }
             .await;
             engine
-                .update(cx, |engine, _| engine.erase_in_flight = false)
+                .update(cx, |engine, cx| {
+                    engine.erase_in_flight = false;
+                    if result.is_err() {
+                        engine.sync_now(cx);
+                    }
+                })
                 .ok();
             result_tx.send(result).ok();
         });
@@ -804,6 +849,7 @@ impl SettingsSyncEngine {
     }
 
     pub fn handle_remote_invalidated(&mut self, cx: &mut Context<Self>) {
+        self.bump_hosts_revision(cx);
         self.schedule_sync(cx);
     }
 
@@ -906,12 +952,22 @@ impl SettingsSyncEngine {
             Ok(()) => {
                 self.status.last_error = None;
                 self.failure_notified = false;
+                self.update_required_notified = false;
+                self.migration_required_notified = false;
+                self.cloud_unavailable = false;
             }
             Err(error) => {
                 let message = format!("{error:#}");
                 self.status.last_error = Some(message.clone());
-                if !self.failure_notified && error.downcast_ref::<InvalidLocalDocument>().is_none()
-                {
+                self.cloud_unavailable = error.downcast_ref::<SyncNotImplementedError>().is_some();
+                let reported_elsewhere = self.cloud_unavailable
+                    || error.downcast_ref::<InvalidLocalDocument>().is_some()
+                    || error.downcast_ref::<MigrationRequired>().is_some()
+                    || error.downcast_ref::<UpdateRequired>().is_some()
+                    || error.downcast_ref::<ClientApiError>().is_some_and(|error| {
+                        matches!(error, ClientApiError::ConnectionFailed { .. })
+                    });
+                if !self.failure_notified && !reported_elsewhere {
                     self.failure_notified = true;
                     cx.emit(SettingsSyncEvent::SyncFailed(message));
                 }
@@ -1123,40 +1179,33 @@ impl SettingsSyncEngine {
         let document_path = resolve_document_path(fs.as_ref(), &document_path).await;
         let local_text = match fs.load(&document_path).await {
             Ok(text) => text,
-            Err(error) => {
-                if state.base.is_some() {
-                    return Err(error).context("reading the settings file");
-                }
+            Err(error)
+                if state.base.is_none()
+                    && error
+                        .downcast_ref::<io::Error>()
+                        .is_some_and(|error| error.kind() == io::ErrorKind::NotFound) =>
+            {
                 String::new()
             }
-        };
-        parse_local_document(&local_text).context(InvalidLocalDocument)?;
-        let migration = if local_text.trim().is_empty() {
-            Ok(None)
-        } else {
-            strategy.migrate(&local_text)
-        };
-        let local_text = match migration.context("migrating the settings file")? {
-            Some(migrated_text) => {
-                log::info!("settings sync: migrating the settings file before syncing");
-                if !Self::write_document_if_unchanged(
-                    engine,
-                    cx,
-                    document_path.clone(),
-                    local_text,
-                    migrated_text.clone(),
-                    |_, _| true,
-                )
-                .await?
-                {
-                    engine.update(cx, |engine, cx| engine.schedule_sync(cx))?;
-                    return Ok(());
-                }
-                migrated_text
-            }
-            None => local_text,
+            Err(error) => return Err(error).context("reading the settings file"),
         };
         let local_doc = parse_local_document(&local_text).context(InvalidLocalDocument)?;
+        let migration = if local_text.trim().is_empty() {
+            None
+        } else {
+            strategy
+                .migrate(&local_text)
+                .context("checking the settings file for deprecated settings")?
+        };
+        if migration.is_some() {
+            engine.update(cx, |engine, cx| {
+                if !engine.migration_required_notified {
+                    engine.migration_required_notified = true;
+                    cx.emit(SettingsSyncEvent::MigrationRequired);
+                }
+            })?;
+            return Err(anyhow::Error::new(MigrationRequired));
+        }
         let local_full = strategy.flatten(&local_doc);
 
         let mut fetched = match server.fetch(account_id, document_kind).await {
@@ -1176,10 +1225,29 @@ impl SettingsSyncEngine {
                 document: remote,
             } = fetched;
             let Some(group_id) = group_id else {
-                let hosts = server
-                    .list_hosts(account_id)
-                    .await
-                    .context("listing settings sync hosts")?;
+                if state.base.is_some() {
+                    log::warn!(
+                        "settings sync: this device is no longer in a sync group, asking before syncing again"
+                    );
+                    state.base = None;
+                    state.consented = false;
+                    set_pending_decision(engine, Some(PendingDecision::Consent), cx)?;
+                    return store_state(
+                        engine,
+                        cx,
+                        fs.as_ref(),
+                        &state_file_path,
+                        state,
+                        &state_before_sync,
+                        generation,
+                    )
+                    .await;
+                }
+                let hosts = match server.list_hosts(account_id).await {
+                    Ok(hosts) => hosts,
+                    Err(_) if server.account_id() != Some(account_id) => return Ok(()),
+                    Err(error) => return Err(error).context("listing settings sync hosts"),
+                };
                 if server.account_id() != Some(account_id) {
                     return Ok(());
                 }
@@ -1245,20 +1313,36 @@ impl SettingsSyncEngine {
             }
             observed_remote |= remote.is_some();
 
+            if remote
+                .as_ref()
+                .is_some_and(|remote| remote.schema_epoch > schema_epoch)
+            {
+                set_pending_decision(engine, None, cx)?;
+                engine.update(cx, |engine, cx| {
+                    engine.status.last_error = Some(UpdateRequired.to_string());
+                    if !engine.update_required_notified {
+                        engine.update_required_notified = true;
+                        cx.emit(SettingsSyncEvent::UpdateRequired);
+                    }
+                })?;
+                store_state(
+                    engine,
+                    cx,
+                    fs.as_ref(),
+                    &state_file_path,
+                    state,
+                    &state_before_sync,
+                    generation,
+                )
+                .await?;
+                return Err(anyhow::Error::new(UpdateRequired));
+            }
+
             let remote_full = remote
                 .as_ref()
                 .map(|remote| strategy.flatten(&remote.doc))
                 .unwrap_or_default();
-            let exclusions = exclusions_for(
-                strategy.as_ref(),
-                std::iter::once(&local_doc).chain(remote.as_ref().map(|remote| &remote.doc)),
-            );
-
-            let mut local_view = local_full.clone();
-            let mut remote_paths = remote_full.clone();
-            exclusions.strip(&mut local_view);
-            exclusions.strip(&mut remote_paths);
-            let mut base_paths = match &state.base {
+            let base_full = match &state.base {
                 Some(base) => {
                     let base_doc = if base.schema_epoch < schema_epoch {
                         strategy.migrate_doc(&base.doc)?
@@ -1269,6 +1353,18 @@ impl SettingsSyncEngine {
                 }
                 None => None,
             };
+            let exclusions = cycle_exclusions(
+                strategy.as_ref(),
+                base_full.as_ref(),
+                &local_full,
+                &remote_full,
+            );
+
+            let mut local_view = local_full.clone();
+            let mut remote_paths = remote_full.clone();
+            exclusions.strip(&mut local_view);
+            exclusions.strip(&mut remote_paths);
+            let mut base_paths = base_full;
             if let Some(base_paths) = &mut base_paths {
                 exclusions.strip(base_paths);
             }
@@ -1290,9 +1386,6 @@ impl SettingsSyncEngine {
                         remote_version: remote.as_ref().map(|remote| remote.version),
                         local: local_view.clone(),
                         remote: remote_paths.clone(),
-                        can_replace_remote: remote
-                            .as_ref()
-                            .is_none_or(|remote| remote.schema_epoch <= schema_epoch),
                     };
                     let choice = engine.update(cx, |engine, _| {
                         let approved = engine.approved_first_sync.as_ref()?;
@@ -1324,29 +1417,8 @@ impl SettingsSyncEngine {
             };
             set_pending_decision(engine, None, cx)?;
 
-            // TODO kb cloud: observer semantics for renamed keys — pulling a migrated
-            // doc deletes the old-shape keys locally, regressing the setting's effect
-            // until this Zed updates; document, or skip deletions for observers.
-            let observer_mode = remote
-                .as_ref()
-                .is_some_and(|remote| remote.schema_epoch > schema_epoch);
-            if observer_mode {
-                engine.update(cx, |engine, cx| {
-                    if !engine.update_required_notified {
-                        engine.update_required_notified = true;
-                        log::warn!(
-                            "settings sync: the cloud document was written by a newer Zed; \
-                             pulling only until this Zed is updated"
-                        );
-                        cx.emit(SettingsSyncEvent::UpdateRequired);
-                    }
-                })?;
-            }
-
-            let cloud_is_current = remote.as_ref().is_some_and(|remote| {
-                remote_full == merge.merged && remote.schema_epoch >= schema_epoch
-            });
-            if cloud_is_current || observer_mode {
+            let cloud_is_current = remote.is_some() && remote_full == merge.merged;
+            if cloud_is_current {
                 break CycleOutcome {
                     group_id,
                     new_base: remote.as_ref().map(base_from_remote),
@@ -1354,6 +1426,7 @@ impl SettingsSyncEngine {
                     base_paths: base_paths.unwrap_or_default(),
                     merged: merge.merged,
                     conflicts: merge.conflicts,
+                    exclusions,
                     used_approval,
                 };
             }
@@ -1416,6 +1489,7 @@ impl SettingsSyncEngine {
                             schema_epoch,
                             doc,
                         }),
+                        exclusions,
                         used_approval,
                     };
                 }
@@ -1471,8 +1545,6 @@ impl SettingsSyncEngine {
                 }
                 PushResult::NotRegistered => {
                     log::info!("settings sync: this device left its sync group, restarting");
-                    state.group_id = None;
-                    state.base = None;
                     engine.update(cx, |engine, cx| engine.schedule_sync(cx))?;
                     return store_state(
                         engine,
@@ -1504,12 +1576,9 @@ impl SettingsSyncEngine {
             merged,
             conflicts,
             new_base,
+            exclusions,
             used_approval,
         } = outcome;
-        let exclusions = exclusions_for(
-            strategy.as_ref(),
-            std::iter::once(&local_doc).chain(remote.as_ref().map(|remote| &remote.doc)),
-        );
         let mut local_view = local_full.clone();
         exclusions.strip(&mut local_view);
 
@@ -1571,14 +1640,6 @@ impl SettingsSyncEngine {
             }
         }
 
-        let local_after = if applied {
-            strategy.unflatten(&target)
-        } else {
-            local_doc.clone()
-        };
-        let exclusions_settled = new_base.as_ref().is_none_or(|new_base| {
-            exclusions_for(strategy.as_ref(), [&local_after, &new_base.doc]) == exclusions
-        });
         let synced = applied && new_base.is_some();
         if let Some(new_base) = new_base {
             state.base = Some(if applied {
@@ -1610,9 +1671,7 @@ impl SettingsSyncEngine {
             }
         }
 
-        let server_version = state.base.as_ref().map(|base| base.server_version);
-        let status_group_id = state.group_id.clone();
-        store_state(
+        let stored = store_state(
             engine,
             cx,
             fs.as_ref(),
@@ -1621,7 +1680,7 @@ impl SettingsSyncEngine {
             &state_before_sync,
             generation,
         )
-        .await?;
+        .await;
         engine.update(cx, |engine, cx| {
             if synced {
                 if let Some(used_approval) = &used_approval
@@ -1633,13 +1692,8 @@ impl SettingsSyncEngine {
                     engine.approved_first_sync = None;
                 }
                 engine.status.last_synced_at = Some(SystemTime::now());
-                engine.status.server_version = server_version;
-                engine.status.group_id = status_group_id;
-                if !exclusions_settled {
-                    engine.schedule_sync(cx);
-                }
             }
-            if synced {
+            if synced || !conflicts.is_empty() {
                 let mut retained = engine
                     .recent_conflicts
                     .take()
@@ -1677,7 +1731,7 @@ impl SettingsSyncEngine {
             cx.notify();
         })?;
 
-        Ok(())
+        stored
     }
 }
 
@@ -1810,6 +1864,16 @@ fn exclusions_for<'a>(
     exclusions
 }
 
+fn cycle_exclusions(
+    strategy: &dyn SyncStrategy,
+    base: Option<&PathMap>,
+    local: &PathMap,
+    remote: &PathMap,
+) -> ExclusionSet {
+    let lists = unflatten(&merged_exclusion_lists(base, local, remote));
+    exclusions_for(strategy, [&lists])
+}
+
 async fn push_inputs_unchanged(
     engine: &WeakEntity<SettingsSyncEngine>,
     cx: &AsyncApp,
@@ -1837,14 +1901,37 @@ fn set_pending_decision(
 ) -> Result<()> {
     engine.update(cx, |engine, cx| {
         if engine.pending_decision != decision {
-            let requires_decision = decision.is_some();
+            let announce = decision.as_ref().is_some_and(|decision| {
+                engine
+                    .pending_decision
+                    .as_ref()
+                    .is_none_or(|pending| !same_decision_context(pending, decision))
+            });
             engine.pending_decision = decision;
-            if requires_decision {
+            if announce {
                 cx.emit(SettingsSyncEvent::DecisionRequired);
             }
             cx.notify();
         }
     })
+}
+
+fn same_decision_context(left: &PendingDecision, right: &PendingDecision) -> bool {
+    match (left, right) {
+        (PendingDecision::Consent, PendingDecision::Consent) => true,
+        (
+            PendingDecision::JoinGroup {
+                account_id: left, ..
+            },
+            PendingDecision::JoinGroup {
+                account_id: right, ..
+            },
+        ) => left == right,
+        (PendingDecision::FirstSync(left), PendingDecision::FirstSync(right)) => {
+            left.account_id == right.account_id && left.group_id == right.group_id
+        }
+        _ => false,
+    }
 }
 
 async fn store_state(

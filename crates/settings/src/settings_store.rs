@@ -1770,10 +1770,11 @@ fn parse_settings_value(text: &str) -> Result<Value> {
 }
 
 fn apply_value_change(target: &mut Value, old_value: &Value, new_value: &Value) {
+    if old_value == new_value {
+        return;
+    }
     let (Value::Object(old_object), Value::Object(new_object)) = (old_value, new_value) else {
-        if old_value != new_value {
-            *target = new_value.clone();
-        }
+        *target = new_value.clone();
         return;
     };
     let Value::Object(target_object) = target else {
@@ -2137,6 +2138,18 @@ mod tests {
             )
             .unwrap(),
             serde_json::json!({ "vim_mode": true })
+        );
+        pretty_assertions::assert_eq!(
+            parse_settings_value(
+                &replay_settings_update(
+                    r#"{ "theme": { "mode": "system", "light": "One Light", "dark": "One Dark" } }"#,
+                    r#"{ "theme": { "mode": "system", "light": "One Light", "dark": "One Dark" }, "vim_mode": true }"#,
+                    r#"{ "theme": "Ayu Dark" }"#,
+                )
+                .unwrap()
+            )
+            .unwrap(),
+            serde_json::json!({ "theme": "Ayu Dark", "vim_mode": true })
         );
     }
 

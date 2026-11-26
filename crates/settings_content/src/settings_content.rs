@@ -348,7 +348,13 @@ pub struct SettingsSyncContent {
     /// enabling on one machine can never flip it on another — consent
     /// stays per-device by construction.
     pub enabled: Option<bool>,
-    /// JSON paths (subtrees) to never upload. Merged with built-in defaults.
+    /// JSON pointers of settings that each device keeps for itself and never uploads, for example "/buffer_font_size" or "/lsp/*/initialization_options".
+    /// `*` matches one key and `**` matches any number of keys.
+    /// Merged with the built-in exclusions for environment variables, headers, OAuth clients, API keys, proxies, server URLs, audio devices and remote connections.
+    #[schemars(extend("items" = {
+        "type": "string",
+        "pattern": "^/$|^/?[^/\\s]([^/]*[^/\\s])?(/[^/\\s]([^/]*[^/\\s])?)*$"
+    }))]
     pub exclude: Option<Vec<String>>,
 }
 

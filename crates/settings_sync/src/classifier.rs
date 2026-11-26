@@ -74,6 +74,13 @@ impl DocumentClassifier {
         }
         let schema = self.resolve(schema, depth)?;
         let object = schema.as_object()?;
+        if object
+            .get("required")
+            .and_then(Value::as_array)
+            .is_some_and(|required| !required.is_empty())
+        {
+            return None;
+        }
 
         let mut view = ContainerView {
             properties: Vec::new(),
