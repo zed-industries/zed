@@ -361,6 +361,8 @@ Zed also reads `OPENCODE_API_KEY` from the local Zed process environment.
 
 Zed fetches the available Zen and Go models and their capabilities from OpenCode. OpenCode Free models are excluded since they are only allowed to be used from within OpenCode.
 
+`language_models.opencode.api_url` is the API base URL and defaults to `https://opencode.ai/inference`. When left at the default, requests use the per-model endpoints advertised by OpenCode's catalog. A custom value is used as-is and must be a complete API base, including the protocol path; it takes precedence over the catalog.
+
 By default, both Zen and Go models are shown. You can hide Zen or Go models by adding this to your settings file:
 
 ```json [settings]
@@ -394,7 +396,7 @@ Add custom models in your settings file:
           "reasoning_effort_levels": ["low", "medium", "high", "max"],
           "interleaved_reasoning": false,
           "subscription": "go",
-          "custom_model_api_url": "https://example.com/zen"
+          "custom_model_api_url": "https://example.com/v1"
         }
       ]
     }

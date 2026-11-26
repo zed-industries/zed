@@ -17,7 +17,9 @@ use language_model::{
     ReasoningEffort, SubPageProviderSettings, env_var, unavailable_error,
 };
 use opencode::catalog::{DiscoveredModel, MODEL_CATALOG_URL as RICH_MODEL_CATALOG_URL};
-use opencode::{ApiProtocol, OPENCODE_API_URL, OpenCodeSubscription};
+use opencode::{
+    ApiProtocol, OPENCODE_CREDENTIALS_KEY, OPENCODE_INFERENCE_BASE_URL, OpenCodeSubscription,
+};
 pub use settings::OpenCodeApiProtocol;
 pub use settings::OpenCodeAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore, update_settings_file};
@@ -94,13 +96,13 @@ impl State {
 
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
         let credentials_provider = self.credentials_provider.clone();
-        let api_url = OpenCodeLanguageModelProvider::api_url(cx);
+        let credentials_key = OpenCodeLanguageModelProvider::credentials_key(cx);
         self.fetch_models_task = None;
         self.refresh_models_task = None;
         self.discovered_models.clear();
         self.fetch_models_errors.clear();
         let task = self.api_key_state.store(
-            api_url,
+            credentials_key,
             api_key,
             |this| &mut this.api_key_state,
             credentials_provider,
@@ -119,9 +121,9 @@ impl State {
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         let credentials_provider = self.credentials_provider.clone();
-        let api_url = OpenCodeLanguageModelProvider::api_url(cx);
+        let credentials_key = OpenCodeLanguageModelProvider::credentials_key(cx);
         let task = self.api_key_state.load_if_needed(
-            api_url,
+            credentials_key,
             |this| &mut this.api_key_state,
             credentials_provider,
             cx,
@@ -139,8 +141,8 @@ impl State {
     fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
         self.fetch_models_task = None;
         self.refresh_models_task = None;
-        let api_url = OpenCodeLanguageModelProvider::api_url(cx);
-        if self.api_key_state.key(&api_url).is_none() {
+        let credentials_key = OpenCodeLanguageModelProvider::credentials_key(cx);
+        if self.api_key_state.key(&credentials_key).is_none() {
             cx.notify();
             return;
         }
@@ -312,7 +314,10 @@ impl OpenCodeLanguageModelProvider {
             })
             .detach();
             State {
-                api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
+                api_key_state: ApiKeyState::new(
+                    Self::credentials_key(cx),
+                    (*API_KEY_ENV_VAR).clone(),
+                ),
                 credentials_provider,
                 http_client: http_client.clone(),
                 discovered_models: HashMap::default(),
@@ -383,6 +388,7 @@ impl OpenCodeLanguageModelProvider {
                 key,
                 (
                     DiscoveredModel {
+                        api_url: None,
                         supports_images: true,
                         supports_thinking: model_supports_thinking(&custom_model),
                         model: custom_model,
@@ -415,24 +421,36 @@ impl OpenCodeLanguageModelProvider {
     ) -> SharedString {
         if let Some(url) = config.model.custom_model_api_url() {
             if !url.is_empty() {
-                return url.to_string().into();
+                return url.trim_end_matches('/').to_string().into();
             }
         }
 
-        // Combine base URL with subscription path suffix
-        let base = self
+        let provider_api_url = self
             .state
             .read_with(cx, |_, cx| OpenCodeLanguageModelProvider::api_url(cx));
+        let provider_api_url = provider_api_url.trim_end_matches('/');
+        if provider_api_url != OPENCODE_INFERENCE_BASE_URL {
+            // A custom provider URL is used as the complete API base.
+            return provider_api_url.to_string().into();
+        }
 
-        let suffix = subscription.api_path_suffix();
-        let base_str = base.as_ref().trim_end_matches('/');
-        format!("{}{}", base_str, suffix).into()
+        if let Some(model_api_url) = config.api_url.as_deref() {
+            return model_api_url.trim_end_matches('/').to_string().into();
+        }
+
+        // Last resort is to build an API end-point ourselves from our subscription and the model
+        format!(
+            "{OPENCODE_INFERENCE_BASE_URL}{}{}",
+            subscription.api_path_suffix(),
+            config.model.protocol().api_path()
+        )
+        .into()
     }
 
     fn current_api_key(&self, cx: &AsyncApp) -> Option<Arc<str>> {
         self.state.read_with(cx, |state, cx| {
-            let api_url = OpenCodeLanguageModelProvider::api_url(cx);
-            state.api_key_state.key(&api_url)
+            let credentials_key = OpenCodeLanguageModelProvider::credentials_key(cx);
+            state.api_key_state.key(&credentials_key)
         })
     }
 
@@ -457,11 +475,20 @@ impl OpenCodeLanguageModelProvider {
     }
 
     fn api_url(cx: &App) -> SharedString {
-        let api_url = &Self::settings(cx).api_url;
+        let api_url = Self::settings(cx).api_url.as_str();
         if api_url.is_empty() {
-            OPENCODE_API_URL.into()
+            OPENCODE_INFERENCE_BASE_URL.into()
         } else {
-            SharedString::new(api_url.as_str())
+            SharedString::new(api_url)
+        }
+    }
+
+    fn credentials_key(cx: &App) -> SharedString {
+        let api_url = Self::api_url(cx);
+        if api_url.trim_end_matches('/') == OPENCODE_INFERENCE_BASE_URL {
+            OPENCODE_CREDENTIALS_KEY.into()
+        } else {
+            api_url
         }
     }
 }
@@ -627,6 +654,7 @@ fn language_model(model: &DiscoveredModel, subscription: OpenCodeSubscription) -
         model,
         supports_images,
         supports_thinking,
+        ..
     } = model;
     let supported_effort_levels = model
         .supported_reasoning_effort_levels()
@@ -825,7 +853,7 @@ impl Render for ConfigurationView {
             format!("API key set in {API_KEY_ENV_VAR_NAME} environment variable")
         } else {
             let api_url = OpenCodeLanguageModelProvider::api_url(cx);
-            if api_url == OPENCODE_API_URL {
+            if api_url.trim_end_matches('/') == OPENCODE_INFERENCE_BASE_URL {
                 "API key configured".to_string()
             } else {
                 format!("API key configured for {}", api_url)
@@ -1153,6 +1181,7 @@ mod tests {
             state.discovered_models.insert(
                 OpenCodeSubscription::Zen,
                 vec![DiscoveredModel {
+                    api_url: None,
                     model: test_model("old-model", ApiProtocol::Anthropic),
                     supports_images: true,
                     supports_thinking: false,
@@ -1176,6 +1205,7 @@ mod tests {
         discovered_models.insert(
             OpenCodeSubscription::Zen,
             vec![DiscoveredModel {
+                api_url: None,
                 model: test_model("old-zen", ApiProtocol::Anthropic),
                 supports_images: true,
                 supports_thinking: false,
@@ -1184,6 +1214,7 @@ mod tests {
         discovered_models.insert(
             OpenCodeSubscription::Go,
             vec![DiscoveredModel {
+                api_url: None,
                 model: test_model("old-go", ApiProtocol::OpenAiChat),
                 supports_images: false,
                 supports_thinking: false,
@@ -1191,6 +1222,7 @@ mod tests {
         );
         let mut errors = HashMap::default();
         let new_go_model = DiscoveredModel {
+            api_url: None,
             model: test_model("new-go", ApiProtocol::OpenAiChat),
             supports_images: true,
             supports_thinking: true,
@@ -1245,6 +1277,7 @@ mod tests {
                         None,
                         false,
                     ),
+                    api_url: None,
                     supports_images: false,
                     supports_thinking: true,
                 },
@@ -1433,6 +1466,42 @@ mod tests {
         assert_eq!(models[0].model.max_token_count(), 12345);
         assert_eq!(models[0].model.max_output_tokens(), Some(678));
         assert_eq!(models[0].model.protocol(), ApiProtocol::OpenAiChat);
+        assert_eq!(models[0].api_url, None);
+    }
+
+    #[test]
+    fn test_discovery_uses_model_api_url() -> Result<()> {
+        for (model_provider, expected_api_url) in [
+            (
+                serde_json::json!({
+                    "npm": "@ai-sdk/google",
+                    "api": "https://opencode.ai/inference/go/google/v1beta"
+                }),
+                Some("https://opencode.ai/inference/go/google/v1beta"),
+            ),
+            (serde_json::Value::Null, None),
+        ] {
+            let provider = serde_json::json!({
+                "npm": "@ai-sdk/openai-compatible",
+                "models": {
+                    "model": {
+                        "id": "model",
+                        "name": "Model",
+                        "tool_call": true,
+                        "modalities": {"output": ["text"]},
+                        "limit": {"context": 1000},
+                        "provider": model_provider,
+                    },
+                },
+            });
+            let catalog = serde_json::json!({"opencode-go": provider}).to_string();
+
+            let models = parse_discovered_models(&catalog, OpenCodeSubscription::Go)?;
+
+            assert_eq!(models.len(), 1);
+            assert_eq!(models[0].api_url.as_deref(), expected_api_url);
+        }
+        Ok(())
     }
 
     #[test]
@@ -1522,6 +1591,7 @@ mod tests {
         let model = add_discovered_model(
             &provider,
             DiscoveredModel {
+                api_url: None,
                 model: test_model("test-model", ApiProtocol::Anthropic),
                 supports_images: true,
                 supports_thinking: false,
@@ -1552,6 +1622,71 @@ mod tests {
             .expect("request should reach the http client")
             .expect("request should carry the session header");
         assert_generated_session_id(&captured_header);
+    }
+
+    #[gpui::test]
+    async fn test_stream_completion_uses_catalog_google_api_url(cx: &mut gpui::TestAppContext) {
+        let captured_uri = Arc::new(Mutex::new(None));
+        let http_client = FakeHttpClient::create({
+            let captured_uri = captured_uri.clone();
+            move |request| {
+                let captured_uri = captured_uri.clone();
+                async move {
+                    *captured_uri.lock() = Some(request.uri().to_string());
+                    Ok(Response::builder().status(200).body(AsyncBody::from(
+                        "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Hello\"}]},\"finishReason\":\"STOP\"}]}\n\n",
+                    ))?)
+                }
+            }
+        });
+        let provider = cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            OpenCodeLanguageModelProvider::new_with_cache(
+                http_client,
+                Arc::new(TestCredentialsProvider),
+                FakeFs::new(cx.background_executor().clone()),
+                PathBuf::from("/cache/models.json"),
+                cx,
+            )
+        });
+        let store_key = provider.state.update(cx, |state, cx| {
+            state.set_api_key(Some("test-key".to_string()), cx)
+        });
+        store_key.await.unwrap();
+        let model = add_discovered_model(
+            &provider,
+            DiscoveredModel {
+                api_url: Some("https://opencode.ai/inference/go/google/v1beta".to_string()),
+                model: test_model("test-google-model", ApiProtocol::Google),
+                supports_images: true,
+                supports_thinking: true,
+            },
+            OpenCodeSubscription::Go,
+            cx,
+        );
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let stream = provider
+            .stream_completion(&model, request, &cx.to_async())
+            .await
+            .unwrap();
+        drop(stream);
+
+        assert_eq!(
+            captured_uri.lock().as_deref(),
+            Some(
+                "https://opencode.ai/inference/go/google/v1beta/models/test-google-model:streamGenerateContent?alt=sse"
+            )
+        );
     }
 
     fn assert_generated_session_id(value: &http::HeaderValue) {
