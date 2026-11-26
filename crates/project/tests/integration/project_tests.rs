@@ -86,10 +86,17 @@ use std::{
 };
 #[cfg(target_os = "linux")]
 use std::{ffi::OsStr, os::unix::ffi::OsStrExt as _};
+#[cfg(unix)]
+use std::{
+    fs::OpenOptions,
+    sync::mpsc::{self, RecvTimeoutError},
+};
 use sum_tree::SumTree;
 use task::{ResolvedTask, ShellKind, TaskContext};
 use text::{Anchor, PointUtf16, ReplicaId, ToOffset, Unclipped};
 use unindent::Unindent as _;
+#[cfg(unix)]
+use util::ResultExt as _;
 use util::{
     RandomCharIter, TryFutureExt as _, assert_set_eq, maybe, path,
     paths::{PathMatcher, PathStyle},
@@ -1349,6 +1356,77 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
                 ))),
             ),
         ]
+    );
+}
+
+#[cfg(unix)]
+#[gpui::test]
+async fn test_fifo_settings_file_does_not_block_other_settings_files(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let dir = TempTree::new(json!({
+        ".zed": {},
+        "b": {
+            ".zed": {
+                "settings.json": r#"{ "tab_size": 2 }"#,
+            },
+        },
+    }));
+    let fifo = dir.path().join(".zed").join("settings.json");
+    let status = util::command::new_command("mkfifo")
+        .arg(&fifo)
+        .status()
+        .await
+        .unwrap();
+    assert_eq!(status.code(), Some(0), "mkfifo {fifo:?} failed");
+
+    let (settings_loaded_tx, settings_loaded_rx) = mpsc::channel::<()>();
+    let fifo_releaser = std::thread::spawn(move || {
+        if settings_loaded_rx.recv_timeout(Duration::from_secs(10))
+            != Err(RecvTimeoutError::Timeout)
+        {
+            return false;
+        }
+        while settings_loaded_rx.recv_timeout(Duration::from_millis(1))
+            == Err(RecvTimeoutError::Timeout)
+        {
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&fifo)
+                .log_err();
+        }
+        true
+    });
+
+    let project = Project::test(RealFs::new(None, cx.executor()), [dir.path()], cx).await;
+    cx.run_until_parked();
+    let worktree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    let (fifo_entry, tab_sizes) = cx.read(|cx| {
+        let worktree = worktree.read(cx);
+        (
+            worktree
+                .entry_for_path(rel_path(".zed/settings.json"))
+                .map(|entry| entry.is_fifo),
+            cx.global::<SettingsStore>()
+                .local_settings(worktree.id())
+                .map(|(path, content)| (path, content.all_languages.defaults.tab_size))
+                .collect::<Vec<_>>(),
+        )
+    });
+    drop(settings_loaded_tx);
+    let settings_load_blocked = fifo_releaser.join().unwrap();
+
+    assert_eq!(
+        (fifo_entry, tab_sizes, settings_load_blocked),
+        (
+            Some(true),
+            vec![(rel_path("b").into_arc(), NonZeroU32::new(2))],
+            false,
+        )
     );
 }
 
