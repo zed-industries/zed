@@ -1013,6 +1013,25 @@ impl WorktreeStore {
 
         cx.spawn(async move |this, cx| {
             let worktree_id = next_worktree_id.await?;
+            // Before the worktree starts scanning, so that neither a trust check nor a scan
+            // event happens before the worktree joins the store with the corrected grants.
+            let resolve_trusted_path_casing = this.update(cx, |_, cx| {
+                TrustedWorktrees::try_get_global(cx).map(|trusted_worktrees| {
+                    let worktree_store = cx.entity();
+                    trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                        trusted_worktrees.resolve_trusted_path_casing(
+                            &worktree_store,
+                            abs_path.as_path(),
+                            fs.clone(),
+                            cx,
+                        )
+                    })
+                })
+            })?;
+            if let Some(resolve_trusted_path_casing) = resolve_trusted_path_casing {
+                resolve_trusted_path_casing.await;
+            }
+
             let worktree = Worktree::local(
                 SanitizedPath::cast_arc(abs_path.clone()),
                 visible,

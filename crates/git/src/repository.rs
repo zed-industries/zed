@@ -82,6 +82,7 @@ pub fn original_repo_path_from_common_dir(common_dir: &Path) -> Option<PathBuf> 
 
 fn linked_worktree_git_dir(worktree_path: &Path) -> Result<PathBuf> {
     let dot_git_path = worktree_path.join(".git");
+    anyhow::ensure!(dot_git_path.is_file(), "{dot_git_path:?} is not a file");
     let git_file = std::fs::read_to_string(&dot_git_path)
         .with_context(|| format!("failed to read {}", dot_git_path.display()))?;
     let git_dir = git_file
@@ -1652,6 +1653,10 @@ impl GitRepository for RealGitRepository {
                     path
                 };
 
+                if !path.is_file() {
+                    log::warn!("failed to read commit template {path:?}: not a file");
+                    return Ok(None);
+                }
                 let template = match std::fs::read_to_string(&path) {
                     Ok(s) if !s.trim().is_empty() => Some(s),
                     Err(err) => {
@@ -1875,7 +1880,13 @@ impl GitRepository for RealGitRepository {
     fn merge_message(&self) -> BoxFuture<'_, Option<String>> {
         let path = self.path().join("MERGE_MSG");
         self.executor
-            .spawn(async move { std::fs::read_to_string(&path).ok() })
+            .spawn(async move {
+                if path.is_file() {
+                    std::fs::read_to_string(&path).ok()
+                } else {
+                    None
+                }
+            })
             .boxed()
     }
 

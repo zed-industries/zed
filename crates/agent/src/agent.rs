@@ -675,7 +675,7 @@ fn project_skill_files_from_worktree(worktree: &Worktree) -> Vec<ProjectSkillFil
         let Some(skill_file) = worktree.entry_for_path(&relative_path) else {
             continue;
         };
-        if !skill_file.is_file() {
+        if !skill_file.is_file() || skill_file.is_fifo {
             continue;
         }
 
@@ -1453,7 +1453,7 @@ impl NativeAgent {
             .filter_map(|name| {
                 worktree
                     .entry_for_path(name)
-                    .filter(|entry| entry.is_file())
+                    .filter(|entry| entry.is_file() && !entry.is_fifo)
                     .map(|entry| entry.path.clone())
             })
             .next();

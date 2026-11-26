@@ -1539,6 +1539,8 @@ impl ProjectSearchView {
 
         let query_editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(1, 4, window, cx);
+            // Align the query text with the single-line include/exclude inputs.
+            editor.set_offset_content(false, cx);
             editor.set_placeholder_text("Search all files…", window, cx);
             editor.set_use_autoclose(false);
             editor.set_use_selection_highlight(false);
@@ -1600,6 +1602,7 @@ impl ProjectSearchView {
         ));
         let replacement_editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(1, 4, window, cx);
+            editor.set_offset_content(false, cx);
             editor.set_placeholder_text(REPLACE_PLACEHOLDER, window, cx);
             if let Some(text) = replacement_text {
                 editor.set_text(text, window, cx);

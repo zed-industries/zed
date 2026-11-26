@@ -945,10 +945,15 @@ impl Vim {
 }
 #[cfg(test)]
 mod test {
+    use std::time::Duration;
+
+    use editor::HighlightKey;
     use indoc::indoc;
+    use settings::Settings as _;
     use workspace::item::Item;
 
     use crate::{
+        VimSettings,
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
@@ -1303,6 +1308,59 @@ mod test {
                     ˇfox jumps over
                     the lazy dog"});
         cx.shared_clipboard().await.assert_eq("fox jumps over\n");
+    }
+
+    #[gpui::test]
+    async fn test_visual_yank_highlight(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        let highlight_duration = Duration::from_millis(
+            cx.read(|cx| VimSettings::get_global(cx).highlight_on_yank_duration),
+        );
+
+        cx.set_state(
+            indoc! {"
+                The ˇquick brown
+                fox jumps over
+                the lazy dog"},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("v e y");
+        cx.assert_editor_background_highlights(
+            HighlightKey::HighlightOnYank,
+            indoc! {"
+                The «quickˇ» brown
+                fox jumps over
+                the lazy dog"},
+        );
+        cx.executor().advance_clock(highlight_duration);
+        cx.run_until_parked();
+        cx.assert_editor_background_highlights(
+            HighlightKey::HighlightOnYank,
+            indoc! {"
+                The quick brown
+                fox jumps over
+                the lazy dog"},
+        );
+
+        cx.simulate_keystrokes("V j y");
+        cx.assert_editor_background_highlights(
+            HighlightKey::HighlightOnYank,
+            indoc! {"
+                «The quick brown
+                fox jumps overˇ»
+                the lazy dog"},
+        );
+        cx.executor().advance_clock(highlight_duration);
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("ctrl-v j l y");
+        cx.assert_editor_background_highlights(
+            HighlightKey::HighlightOnYank,
+            indoc! {"
+                «Thˇ»e quick brown
+                «foˇ»x jumps over
+                the lazy dog"},
+        );
     }
 
     #[gpui::test]

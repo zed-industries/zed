@@ -5222,8 +5222,27 @@ impl RenderedText {
             if source_index > line.source_end {
                 continue;
             }
-            let line_source_start = line.source_mappings.first().unwrap().source_index;
-            return line_source_start..line.source_end;
+
+            // A `RenderedLine` is a whole block, so its text can span several
+            // lines, as in a code block or a paragraph with hard breaks. The
+            // clicked line is therefore bounded by the nearest newline on each
+            // side of the rendered index.
+            //
+            // A source index can map into the middle of a rendered character,
+            // because rendered text can differ from its source, hence the
+            // `floor_char_boundary`.
+            let text = line.layout.text();
+            let rendered_index =
+                text.floor_char_boundary(line.rendered_index_for_source_index(source_index));
+            let start = text[..rendered_index]
+                .rfind('\n')
+                .map_or(0, |newline| newline + 1);
+            let end = text[rendered_index..]
+                .find('\n')
+                .map_or(text.len(), |newline| rendered_index + newline);
+
+            return line.source_index_for_rendered_index(start)
+                ..line.source_index_for_exclusive_rendered_end(end);
         }
 
         source_index..source_index
@@ -6376,6 +6395,23 @@ mod tests {
         let line_range = rendered.surrounding_line_range(37); // Simulate click at end of third line with multi-byte chars
         let selected_text = rendered.text_for_range(line_range);
         assert_eq!(selected_text, "Third lineεζ");
+
+        // Test clicking a line within a code block selects only that line,
+        // respecting the newline characters, and not the whole code block
+        // range.
+        let rendered = render_markdown("```\nfirst\nsecond\nthird\n```", cx);
+        let line_range_a = rendered.surrounding_line_range(6);
+        let line_range_b = rendered.surrounding_line_range(12);
+        let line_range_c = rendered.surrounding_line_range(19);
+        assert_eq!(rendered.text_for_range(line_range_a), "first");
+        assert_eq!(rendered.text_for_range(line_range_b), "second");
+        assert_eq!(rendered.text_for_range(line_range_c), "third");
+
+        // Test clicking after a hard break selects only that line, and not the
+        // whole paragraph.
+        let rendered = render_markdown("first\\\nsecond", cx);
+        let line_range = rendered.surrounding_line_range(10);
+        assert_eq!(rendered.text_for_range(line_range), "second");
     }
 
     #[gpui::test]

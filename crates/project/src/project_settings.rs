@@ -1356,6 +1356,10 @@ impl SettingsObserver {
                     } else {
                         Some(
                             async move {
+                                anyhow::ensure!(
+                                    fs.is_file(&abs_path).await,
+                                    "{abs_path:?} is not a file"
+                                );
                                 let content = fs.load(&abs_path).await?;
                                 if abs_path.ends_with(local_vscode_tasks_file_relative_path().as_std_path()) {
                                     let vscode_tasks =
