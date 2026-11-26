@@ -124,29 +124,23 @@ impl DevContainerContext {
     }
 
     pub async fn environment(&self, cx: &mut impl AppContext) -> HashMap<String, String> {
-        let environment = match self
-            .environment
-            .update(cx, |this, cx| {
-                this.local_directory_environment(&Shell::System, self.project_directory.clone(), cx)
-            })
-            .log_err()
-        {
-            Some(task) => task.await,
-            None => None,
+        let project_environment = match self.environment.update(cx, |environment, cx| {
+            environment.local_directory_environment(
+                &Shell::System,
+                self.project_directory.clone(),
+                cx,
+            )
+        }) {
+            Ok(task) => task.await,
+            Err(_) => None,
         };
-        // `localEnv` is resolved from this map alone, so falling back to an empty map
-        // would blank out every variable when the shell environment can't be captured.
-        environment
-            .map(|env| env.into_iter().collect())
-            .unwrap_or_else(|| {
-                log::warn!(
-                    "Failed to load project environment for Dev Container, using Zed's process environment"
-                );
-                // `std::env::vars` panics on non-UTF-8 entries; skip those instead.
-                std::env::vars_os()
-                    .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
-                    .collect()
-            })
+        // `localEnv` is resolved from this map alone. Layer the project environment over
+        //  Zed's process environment, so variables stay available when the project
+        //  environment is partial or missing.
+        std::env::vars_os()
+            .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
+            .chain(project_environment.into_iter().flatten())
+            .collect()
     }
 }
 
