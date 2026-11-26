@@ -1141,19 +1141,19 @@ impl EditorElement {
                     .map(|selection| (selection.head(), local_color)),
             )
             .map(|(head, color)| (head.to_display_point(&snapshot.display_snapshot), color));
-        let is_visible =
-            |(position, _): &(DisplayPoint, Hsla)| visible_row_range.contains(&position.row());
+        let is_non_visible =
+            |(position, _): &(DisplayPoint, Hsla)| !visible_row_range.contains(&position.row());
 
         if cursor_count > MARKER_LIMIT {
             // No markers are drawn past the limit, so resolving a position per cursor would be
             // wasted. Resolve only until one turns out to be out of sight.
             ScrollbarCursors {
                 markers: Vec::new(),
-                any_non_visible: cursors.any(|cursor| !is_visible(&cursor)),
+                any_non_visible: cursors.any(|cursor| is_non_visible(&cursor)),
             }
         } else {
             let markers = cursors.collect::<Vec<_>>();
-            let any_non_visible = markers.iter().any(|cursor| !is_visible(cursor));
+            let any_non_visible = markers.iter().any(is_non_visible);
             ScrollbarCursors {
                 markers,
                 any_non_visible,
@@ -1541,6 +1541,7 @@ impl EditorElement {
         let editor_settings = EditorSettings::get_global(cx);
         let scrollbar_settings = editor_settings.scrollbar;
         let mut scrollbar_cursors = None;
+        let collect_cursors = || self.collect_scrollbar_cursors(snapshot, visible_row_range, cx);
         let show_scrollbars = match scrollbar_settings.show {
             ShowScrollbar::Auto => {
                 let editor = self.editor.read(cx);
@@ -1565,12 +1566,8 @@ impl EditorElement {
                 // Scrollmanager
                 editor.scroll_manager.scrollbars_visible()
                 ||
-                // Cursors out of sight
-                scrollbar_cursors
-                    .get_or_insert_with(|| {
-                        self.collect_scrollbar_cursors(snapshot, visible_row_range, cx)
-                    })
-                    .any_non_visible
+                // Cursors out of sight. Kept last, as it is the only check that resolves cursor positions.
+                scrollbar_cursors.get_or_insert_with(collect_cursors).any_non_visible
             }
             ShowScrollbar::System => self.editor.read(cx).scroll_manager.scrollbars_visible(),
             ShowScrollbar::Always => true,
@@ -1606,9 +1603,7 @@ impl EditorElement {
             window,
         );
         if scrollbar_settings.cursors && scrollbars.visible && scrollbars.vertical.is_some() {
-            scrollbars.cursor_markers = scrollbar_cursors
-                .unwrap_or_else(|| self.collect_scrollbar_cursors(snapshot, visible_row_range, cx))
-                .markers;
+            scrollbars.cursor_markers = scrollbar_cursors.unwrap_or_else(collect_cursors).markers;
         }
         Some(scrollbars)
     }
@@ -6181,9 +6176,11 @@ impl EditorElement {
     }
 
     fn paint_scrollbars(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
-        let Some(scrollbars_layout) = layout.scrollbars_layout.take() else {
+        let Some(mut scrollbars_layout) = layout.scrollbars_layout.take() else {
             return;
         };
+        // The mouse listeners below keep copies of the layout and never read the markers.
+        let cursor_markers = mem::take(&mut scrollbars_layout.cursor_markers);
         let any_scrollbar_dragged = self.editor.read(cx).scroll_manager.any_scrollbar_dragged();
 
         for (scrollbar_layout, axis) in scrollbars_layout.iter_scrollbars() {
@@ -6215,10 +6212,8 @@ impl EditorElement {
                     ));
 
                     if axis == ScrollbarAxis::Vertical {
-                        let fast_markers = self.collect_fast_scrollbar_markers(
-                            &scrollbars_layout.cursor_markers,
-                            scrollbar_layout,
-                        );
+                        let fast_markers =
+                            self.collect_fast_scrollbar_markers(&cursor_markers, scrollbar_layout);
                         // Refresh slow scrollbar markers in the background. Below, we
                         // paint whatever markers have already been computed.
                         self.refresh_slow_scrollbar_markers(layout, scrollbar_layout, window, cx);
@@ -9621,8 +9616,6 @@ impl Element for EditorElement {
                         );
                     });
 
-                    let visible_row_range = start_row..end_row;
-
                     let visible_cursors = self.layout_visible_cursors(
                         &snapshot,
                         &selections,
@@ -9679,6 +9672,7 @@ impl Element for EditorElement {
                     let effective_editor_width =
                         frozen_scroll_state.map_or(editor_width, |settled| settled.editor_width);
 
+                    let visible_row_range = start_row..end_row;
                     let scrollbars_layout = self.layout_scrollbars(
                         &snapshot,
                         &effective_scrollbar_layout_information,
@@ -13122,11 +13116,9 @@ mod tests {
         let element = EditorElement::new(&editor, style);
 
         // Let the scrollbar auto-hide, so that only a cursor out of sight keeps it shown.
-        cx.update(|window, cx| {
-            cx.set_global(ui::scrollbars::ScrollbarAutoHide(true));
-            editor.update(cx, |editor, cx| {
-                editor.scroll_manager.show_scrollbars(window, cx)
-            });
+        cx.set_global(ui::scrollbars::ScrollbarAutoHide(true));
+        editor.update_in(cx, |editor, window, cx| {
+            editor.scroll_manager.show_scrollbars(window, cx)
         });
         cx.executor().advance_clock(Duration::from_secs(2));
         cx.run_until_parked();
