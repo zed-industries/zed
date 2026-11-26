@@ -1,5 +1,19 @@
 # Zed Documentation Guidelines
 
+## Publishing documentation
+
+Before proposing a docs backport or publishing, read
+`script/trigger-docs-build` and `.github/workflows/deploy_docs.yml`.
+
+Create one docs PR against `main` by default. The deployment workflow's
+`channel` selects the published site; `checkout_ref` independently selects
+the content. Public docs can use `channel=stable` with an approved main
+commit. Create a release-branch backport only when requested.
+
+In `trigger-docs-build`, `--from-main` selects the workflow implementation;
+the script still checks out the released channel branch. Verify both
+workflow inputs before publishing.
+
 ## Voice and Tone
 
 ### Core Principles

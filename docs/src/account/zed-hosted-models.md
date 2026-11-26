@@ -156,9 +156,9 @@ Zed's plans offer hosted versions of major LLMs with higher rate limits than dir
 
 Zed no longer offers the models below:
 
-- Claude Opus 4.1 → Claude Opus 4.5, Claude Opus 4.6, Claude Opus 4.7, or Claude Opus 4.8
-- Claude Sonnet 4 → Claude Sonnet 4.5 or Claude Sonnet 4.6
-- Claude Sonnet 3.7 (retired February 19, 2026) → Claude Sonnet 4.5 or Claude Sonnet 4.6
+- Claude Opus 4.1 → Claude Opus 5.5
+- Claude Sonnet 4 → Claude Sonnet 5.5
+- Claude Sonnet 3.7 (retired February 19, 2026) → Claude Sonnet 5.5
 - GPT-5.1 and GPT-5 → GPT-5.2 or GPT-5.3-Codex
 - GPT-5.2-Codex (retired July 23, 2026) → GPT-5.3-Codex
 - Gemini 2.5 Pro → Gemini 3.1 Pro

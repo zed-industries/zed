@@ -180,7 +180,7 @@ impl Display for MountDefinition {
 /// Per the spec, the value can be:
 /// - A boolean (`true` to enable with defaults)
 /// - A string (shorthand for `{"version": "<value>"}`)
-/// - An object mapping option names to string or boolean values
+/// - An object mapping option names to JSON values
 ///
 /// See: https://containers.dev/implementors/features/#devcontainerjson-properties
 #[derive(Debug, Deserialize, Serialize, Eq, PartialEq, Clone)]
@@ -188,22 +188,7 @@ impl Display for MountDefinition {
 pub(crate) enum FeatureOptions {
     Bool(bool),
     String(String),
-    Options(HashMap<String, FeatureOptionValue>),
-}
-
-#[derive(Debug, Deserialize, Serialize, Eq, PartialEq, Clone)]
-#[serde(untagged)]
-pub(crate) enum FeatureOptionValue {
-    Bool(bool),
-    String(String),
-}
-impl std::fmt::Display for FeatureOptionValue {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FeatureOptionValue::Bool(b) => write!(f, "{}", b),
-            FeatureOptionValue::String(s) => write!(f, "{}", s),
-        }
-    }
+    Options(HashMap<String, Value>),
 }
 
 #[derive(Clone, Debug, Serialize, Eq, PartialEq, Default)]
