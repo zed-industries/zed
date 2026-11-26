@@ -1170,8 +1170,9 @@ impl OutlinePanel {
                             outline_panel.default_depth_applied_buffers = outline_panel
                                 .buffers
                                 .iter()
-                                .filter(|(_, buffer)| {
-                                    matches!(buffer.outlines, OutlineState::Outlines(_))
+                                .filter(|(_, buffer)| match &buffer.outlines {
+                                    OutlineState::Outlines(outlines) => !outlines.is_empty(),
+                                    _ => false,
                                 })
                                 .map(|(buffer_id, _)| *buffer_id)
                                 .collect();
@@ -13242,6 +13243,65 @@ test/
             assert!(
                 rendered.contains("## A"),
                 "an outline the user expanded must stay expanded after an unrelated edit, got:\n{rendered}"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_depth_change_while_outlines_empty_applies_to_later_symbols(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(path!("/test"), json!({"src": {"one.rs": ""}}))
+            .await;
+
+        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let outline_panel = outline_panel(&workspace, cx);
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.set_active(true, window, cx)
+        });
+
+        let buffer = open_buffer(&project, path!("/test/src/one.rs"), cx).await;
+        add_multi_buffer_editor(&workspace, &project, &[(&buffer, Vec::new())], cx);
+        wait_for_outline_tasks(&outline_panel, cx).await;
+
+        update_outline_panel_settings(cx, |settings| {
+            settings.expand_outlines_with_depth = Some(0);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
+        wait_for_outline_tasks(&outline_panel, cx).await;
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "mod alpha {\n    fn a() {}\n}\n")], None, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
+        wait_for_outline_tasks(&outline_panel, cx).await;
+
+        outline_panel.update(cx, |panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(panel, cx),
+                    &panel.cached_entries,
+                    None,
+                    cx
+                ),
+                indoc!(
+                    "
+test/
+  src/
+    one.rs
+        outline: mod alpha"
+                ),
+                "a depth change made while a buffer had no outlines should apply to \
+                 outlines that appear later"
             );
         });
     }
