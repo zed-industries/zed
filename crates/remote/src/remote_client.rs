@@ -1418,6 +1418,21 @@ impl RemoteConnectionOptions {
         self.into()
     }
 
+    /// The identity that records saved before Zed stored dev container labels
+    /// have for this connection, so they can be adopted while the same
+    /// container is still running.
+    pub fn legacy_identity(&self) -> Option<RemoteConnectionIdentity<'_>> {
+        match self {
+            Self::Docker(options) if options.config_file.is_some() => {
+                Some(RemoteConnectionIdentity::Docker {
+                    container_id: std::borrow::Cow::Borrowed(&options.container_id),
+                    remote_user: std::borrow::Cow::Borrowed(&options.remote_user),
+                })
+            }
+            _ => None,
+        }
+    }
+
     /// The connection key prefix used in created worktree registry.
     pub fn host_key(&self) -> String {
         match self {

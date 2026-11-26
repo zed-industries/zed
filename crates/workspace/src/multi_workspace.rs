@@ -720,14 +720,7 @@ impl MultiWorkspace {
             return;
         }
 
-        // Equal keys can still differ in runtime details such as a rebuilt dev
-        // container's ID, so keep the live key.
-        if let Some(group) = self
-            .project_groups
-            .iter_mut()
-            .find(|group| group.key == key)
-        {
-            group.key = key;
+        if merge_project_group(&mut self.project_groups, &key) {
             return;
         }
 
@@ -913,9 +906,8 @@ impl MultiWorkspace {
             restored.push(ProjectGroupState { key, expanded });
         }
         for existing in std::mem::take(&mut self.project_groups) {
-            match restored.iter_mut().find(|group| group.key == existing.key) {
-                Some(group) => group.key = existing.key,
-                None => restored.push(existing),
+            if !merge_project_group(&mut restored, &existing.key) {
+                restored.push(existing);
             }
         }
         self.project_groups = restored;
@@ -2401,4 +2393,24 @@ impl Render for MultiWorkspace {
             cx,
         )
     }
+}
+
+/// Points the group of `key` at `key`, and folds in the group that saved the
+/// same dev container before Zed stored its labels. Equal keys can still
+/// differ in runtime details such as a rebuilt dev container's ID, so the live
+/// key wins. Returns whether such a group existed.
+fn merge_project_group(groups: &mut Vec<ProjectGroupState>, key: &ProjectGroupKey) -> bool {
+    let mut merged = false;
+    groups.retain_mut(|group| {
+        if group.key != *key && !key.adopts(&group.key) {
+            return true;
+        }
+        if merged {
+            return false;
+        }
+        group.key = key.clone();
+        merged = true;
+        true
+    });
+    merged
 }

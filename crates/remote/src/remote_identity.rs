@@ -220,6 +220,22 @@ mod tests {
     }
 
     #[test]
+    fn dev_container_legacy_identity_matches_unlabeled_options() {
+        let labeled = dev_container(
+            "container-123",
+            "/home/anth/project/.devcontainer/devcontainer.json",
+        );
+        let unlabeled = RemoteConnectionOptions::Docker(DockerConnectionOptions {
+            container_id: "container-123".to_string(),
+            remote_user: "anth".to_string(),
+            ..Default::default()
+        });
+
+        assert_eq!(labeled.legacy_identity(), Some(unlabeled.identity()));
+        assert_eq!(unlabeled.legacy_identity(), None);
+    }
+
+    #[test]
     fn docker_identity_without_labels_uses_container_id() {
         let left = RemoteConnectionOptions::Docker(DockerConnectionOptions {
             container_id: "container-123".to_string(),

@@ -18349,3 +18349,69 @@ async fn test_dev_container_group_keeps_live_options_after_rebuild(
     });
     assert_eq!(thread_key.host(), Some(&dev_container("container-after")));
 }
+
+#[gpui::test]
+async fn test_dev_container_adopts_records_saved_before_labels(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let local_project = init_test_project("/local", cx).await;
+    cx.update(|cx| release_channel::init(semver::Version::new(0, 0, 0), cx));
+    server_cx.update(|cx| release_channel::init(semver::Version::new(0, 0, 0), cx));
+    let app_state = cx.update(|cx| workspace::AppState::test(cx));
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(local_project, window, cx));
+    let _sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let unlabeled = remote::RemoteConnectionOptions::Docker(remote::DockerConnectionOptions {
+        container_id: "container-1".to_string(),
+        remote_user: "vscode".to_string(),
+        ..Default::default()
+    });
+    let labeled = remote::RemoteConnectionOptions::Docker(remote::DockerConnectionOptions {
+        container_id: "container-1".to_string(),
+        remote_user: "vscode".to_string(),
+        local_folder: Some("/host/project".to_string()),
+        config_file: Some("/host/project/.devcontainer/devcontainer.json".to_string()),
+        ..Default::default()
+    });
+    let paths = PathList::new(&[PathBuf::from("/project")]);
+
+    multi_workspace.update(cx, |mw, cx| {
+        mw.restore_project_groups(
+            vec![workspace::SerializedProjectGroupState {
+                key: ProjectGroupKey::new(Some(unlabeled.clone()), paths.clone()),
+                expanded: true,
+            }],
+            cx,
+        );
+    });
+
+    let server_fs = FakeFs::new(server_cx.executor());
+    server_fs
+        .insert_tree("/project", serde_json::json!({ "src": {} }))
+        .await;
+    let (project, _headless, _opts) = start_remote_project(
+        &server_fs,
+        Path::new("/project"),
+        &app_state,
+        None,
+        Some(labeled.clone()),
+        cx,
+        server_cx,
+    )
+    .await;
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(project, window, cx);
+    });
+    cx.run_until_parked();
+
+    let dev_container_hosts = multi_workspace.read_with(cx, |mw, _| {
+        mw.project_group_keys()
+            .into_iter()
+            .filter(|key| key.path_list() == &paths)
+            .map(|key| key.host().cloned())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(dev_container_hosts, vec![Some(labeled)]);
+}
