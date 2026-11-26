@@ -18361,7 +18361,7 @@ async fn test_dev_container_adopts_records_saved_before_labels(
     let app_state = cx.update(|cx| workspace::AppState::test(cx));
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(local_project, window, cx));
-    let _sidebar = setup_sidebar(&multi_workspace, cx);
+    let sidebar = setup_sidebar(&multi_workspace, cx);
 
     let unlabeled = remote::RemoteConnectionOptions::Docker(remote::DockerConnectionOptions {
         container_id: "container-1".to_string(),
@@ -18386,6 +18386,25 @@ async fn test_dev_container_adopts_records_saved_before_labels(
             cx,
         );
     });
+
+    let thread_id = ThreadId::new();
+    cx.update(|_window, cx| {
+        let metadata = ThreadMetadata {
+            thread_id,
+            session_id: Some(acp::SessionId::new(Arc::from("old-thread"))),
+            agent_id: agent::ZED_AGENT_ID.clone(),
+            title: Some("Old thread".into()),
+            title_override: None,
+            updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 3, 0, 0, 0).unwrap(),
+            created_at: None,
+            interacted_at: None,
+            worktree_paths: WorktreePaths::from_folder_paths(&paths),
+            archived: false,
+            remote_connection: Some(unlabeled.clone()),
+        };
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx));
+    });
+    cx.run_until_parked();
 
     let server_fs = FakeFs::new(server_cx.executor());
     server_fs
@@ -18413,5 +18432,17 @@ async fn test_dev_container_adopts_records_saved_before_labels(
             .map(|key| key.host().cloned())
             .collect::<Vec<_>>()
     });
-    assert_eq!(dev_container_hosts, vec![Some(labeled)]);
+    assert_eq!(dev_container_hosts, vec![Some(labeled.clone())]);
+
+    let thread_connection = cx.update(|_window, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry(thread_id)
+            .and_then(|thread| thread.remote_connection.clone())
+    });
+    assert_eq!(thread_connection, Some(labeled));
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [project]", "  Old thread", "v [local]"]
+    );
 }
