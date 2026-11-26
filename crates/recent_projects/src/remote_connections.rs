@@ -770,6 +770,60 @@ mod tests {
         );
     }
 
+    // Trust saved before Zed stored dev container labels names the container by ID.
+    #[gpui::test]
+    async fn test_dev_container_adopts_trust_saved_before_labels(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let (opts, _headless) = init_remote_server(cx, server_cx).await;
+        let labeled: RemoteConnectionOptions = dev_container_connection(
+            "container-1",
+            "/host/project/.devcontainer/devcontainer.json",
+        )
+        .into();
+        let legacy_identity = labeled
+            .legacy_identity()
+            .map(|identity| identity.into_owned());
+        cx.update(|cx| {
+            let mut db_trusted_paths = project::trusted_worktrees::DbTrustedPaths::default();
+            db_trusted_paths
+                .entry(legacy_identity)
+                .or_default()
+                .insert(PathBuf::from(path!("/project")));
+            project::trusted_worktrees::init(db_trusted_paths, cx);
+            remote::MockConnection::report_connection_options(&opts, labeled, cx);
+        });
+        let mut async_cx = cx.to_async();
+        let window = open_remote_project(
+            opts,
+            vec![PathBuf::from(path!("/project"))],
+            app_state,
+            workspace::OpenOptions::default(),
+            &mut async_cx,
+        )
+        .await
+        .unwrap();
+        cx.executor().run_until_parked();
+
+        let has_restricted_worktrees = window
+            .read_with(cx, |multi_workspace, cx| {
+                let worktree_store = multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .worktree_store();
+                project::trusted_worktrees::TrustedWorktrees::has_restricted_worktrees(
+                    &worktree_store,
+                    cx,
+                )
+            })
+            .unwrap();
+        assert!(!has_restricted_worktrees);
+    }
+
     // A retained workspace on a Windows host matches the requested host, which now answers with a
     // Unix path style, as when an SSH alias is repointed. Its style must not leak into the paths
     // sent over the fresh connection. It stays connected because the mock disconnect looks the

@@ -1508,13 +1508,18 @@ impl Project {
                 .detach();
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
 
-            let (remote_proto, path_style, remote_host) = remote.read_with(cx, |remote, _| {
-                (
-                    remote.proto_client(),
-                    remote.path_style(),
-                    remote.connection_options().identity().into_owned(),
-                )
-            });
+            let (remote_proto, path_style, remote_host, legacy_remote_host) =
+                remote.read_with(cx, |remote, _| {
+                    let connection_options = remote.connection_options();
+                    (
+                        remote.proto_client(),
+                        remote.path_style(),
+                        connection_options.identity().into_owned(),
+                        connection_options
+                            .legacy_identity()
+                            .map(|identity| identity.into_owned()),
+                    )
+                });
             let worktree_store = cx.new(|cx| {
                 WorktreeStore::remote(
                     false,
@@ -1528,6 +1533,13 @@ impl Project {
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
             if init_worktree_trust {
+                if let Some(legacy_remote_host) = legacy_remote_host {
+                    trusted_worktrees::adopt_legacy_trust(
+                        legacy_remote_host,
+                        remote_host.clone(),
+                        cx,
+                    );
+                }
                 trusted_worktrees::track_worktree_trust(
                     worktree_store.clone(),
                     Some(remote_host),

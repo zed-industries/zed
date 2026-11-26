@@ -101,6 +101,30 @@ fn starts_with_ignoring_ascii_case(path: &Path, prefix: &Path) -> bool {
     })
 }
 
+/// Moves trust saved before Zed stored dev container labels, which names the
+/// container by ID, to the labeled identity of the same running container.
+pub fn adopt_legacy_trust(
+    legacy_host: RemoteConnectionIdentity<'static>,
+    remote_host: RemoteConnectionIdentity<'static>,
+    cx: &mut App,
+) {
+    let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) else {
+        return;
+    };
+    trusted_worktrees.update(cx, |trusted_worktrees, _| {
+        if let Some(paths) = trusted_worktrees
+            .db_trusted_paths
+            .remove(&Some(legacy_host))
+        {
+            trusted_worktrees
+                .db_trusted_paths
+                .entry(Some(remote_host))
+                .or_default()
+                .extend(paths);
+        }
+    });
+}
+
 /// An initialization call to set up trust global for a particular project (remote or local).
 pub fn track_worktree_trust(
     worktree_store: Entity<WorktreeStore>,
