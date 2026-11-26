@@ -172,6 +172,47 @@ async fn tab_return_restores_the_cell_selection_and_notebook_mode(cx: &mut TestA
 }
 
 #[gpui::test]
+async fn markdown_tab_return_preserves_the_caret_and_command_mode(cx: &mut TestAppContext) {
+    use workspace::pane::{ActivateNextItem, ActivatePreviousItem};
+    use zed_actions::notebook::EnterEditMode;
+
+    let (fs, workspace, cx) =
+        notebook_workspace(json!({"field.ipynb": NOTEBOOK, "other.txt": "other"}), cx).await;
+    open_file("field.ipynb", &workspace, cx).await;
+    cx.dispatch_action(EnterEditMode);
+    cx.dispatch_action(editor::actions::MoveRight);
+    open_file("other.txt", &workspace, cx).await;
+    cx.dispatch_action(ActivatePreviousItem::default());
+    cx.simulate_keystrokes("x");
+    assert_eq!(
+        cell_sources(&workspace, cx)[0],
+        "#x Field notes\n![sample](attachment:sample.png)"
+    );
+
+    cx.dispatch_action(EnterCommandMode);
+    cx.dispatch_action(ActivateNextItem::default());
+    cx.dispatch_action(ActivatePreviousItem::default());
+    cx.simulate_keystrokes("y");
+    cx.dispatch_action(workspace::SaveAll { save_intent: None });
+    cx.run_until_parked();
+    let saved = fs
+        .load(Path::new(path!("/notebooks/field.ipynb")))
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&saved).unwrap(),
+        serde_json::from_str::<Value>(&NOTEBOOK.replace("# Field notes", "#x Field notes"))
+            .unwrap()
+    );
+    assert_eq!(
+        fs.load(Path::new(path!("/notebooks/other.txt")))
+            .await
+            .unwrap(),
+        "other"
+    );
+}
+
+#[gpui::test]
 async fn discarding_a_notebook_closes_its_tab(cx: &mut TestAppContext) {
     let (fs, workspace, cx) = notebook_workspace(json!({"field.ipynb": NOTEBOOK}), cx).await;
     open_file("field.ipynb", &workspace, cx).await;
