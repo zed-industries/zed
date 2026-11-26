@@ -3215,6 +3215,8 @@ impl PartialOrd for ScaledPixels {
     }
 }
 
+// `BoundsTree` encodes this ordering as integers in `total_order_bits`, so
+// changing it must change that too.
 impl Ord for ScaledPixels {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
         self.0.total_cmp(&other.0)

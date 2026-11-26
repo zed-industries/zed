@@ -78,6 +78,12 @@ impl BoundsScalar for i32 {
 /// Maps between `f32` bits and integers ordered exactly like
 /// [`f32::total_cmp`], which `ScaledPixels` uses for its ordering. The mapping
 /// is its own inverse.
+///
+/// As `i32`, negative floats already sort below non-negative ones, but in
+/// reverse order; flipping their low 31 bits corrects that.
+///
+/// If `ScaledPixels` stops ordering by `total_cmp`, this must change with it,
+/// or the tree's intersections will disagree with [`Bounds::intersects`].
 fn total_order_bits(bits: i32) -> i32 {
     bits ^ (((bits >> 31) as u32 >> 1) as i32)
 }
@@ -117,6 +123,10 @@ impl BoundsScalar for ScaledPixels {
 /// bounds contained in an intersecting bounds with an equal or greater key is
 /// dropped, and a stored bounds contained in a new bounds with an equal or greater
 /// key is overwritten by it.
+///
+/// Tiers, split axes and subtree choice only affect speed, never orderings.
+/// Search pruning requires each internal slot's key to equal its child's
+/// maximum key exactly, though its bounds may be looser.
 #[derive(Debug)]
 pub(crate) struct BoundsTree<U: BoundsScalar> {
     /// From largest to smallest bounds.
@@ -382,6 +392,8 @@ struct Entry<K, Child> {
 
 /// Up to [`PAGE_CAPACITY`] entries, sorted ascending by key.
 ///
+/// Never empty, since splits leave entries on both sides and nothing is removed.
+///
 /// In a leaf page, each entry is a stored bounds and its key. In an internal
 /// page, each entry is a child page with the union of its bounds and its
 /// maximum key.
@@ -531,6 +543,9 @@ impl<U: BoundsScalar, Child: Copy + Default> Page<U, Child> {
 
 impl<U: BoundsScalar> LeafPage<U> {
     /// Finds a stored bounds that `bounds` with `key` makes redundant.
+    ///
+    /// Best effort: other pages aren't checked and only the first match is
+    /// replaced, so redundant bounds can remain.
     fn subsumed_slot(&self, bounds: &NodeBounds<U::OrderKey>, key: Key) -> Option<usize> {
         (0..self.len())
             .find(|&slot| self.keys[slot] <= key && self.lanes.is_contained_by(slot, bounds))
@@ -598,6 +613,7 @@ impl<U: BoundsScalar> InternalPage<U> {
     }
 }
 
+/// `mask` must be nonzero.
 #[inline(always)]
 fn highest_slot(mask: u8) -> usize {
     7 - mask.leading_zeros() as usize
@@ -844,6 +860,8 @@ impl<U: BoundsScalar> BoundsTree<U> {
 
         // Any query intersecting the new bounds would also intersect the winner,
         // whose key is at least as great, so storing the new bounds changes nothing.
+        // This holds later too: the winner is only overwritten by bounds that
+        // contain it with a key at least as great.
         if let Some((max_key, winner)) = max_intersecting
             && key <= max_key
             && self.winner_contains(winner, &new_bounds)
