@@ -16,7 +16,7 @@ use theme_settings::ThemeSettings;
 use std::ops::Deref;
 use std::sync::{Arc, LazyLock};
 use std::{any::TypeId, time::Duration};
-use ui::{CopyButton, Tooltip, prelude::*};
+use ui::{CopyButton, SplitButton, SplitButtonStyle, Tooltip, prelude::*};
 use util::ResultExt;
 
 #[derive(Default)]
@@ -69,6 +69,100 @@ pub trait Notification:
 }
 
 pub struct SuppressEvent;
+
+pub(crate) fn request_resource_approval(
+    request: managed_resources::ResourcePermissionRequest,
+    store: WeakEntity<managed_resources::ManagedResourceStore>,
+    cx: &mut App,
+) -> Task<managed_resources::ResourcePermission> {
+    use managed_resources::ResourcePermission;
+
+    let window = cx
+        .active_window()
+        .and_then(|window| window.downcast::<MultiWorkspace>())
+        .or_else(|| {
+            cx.windows()
+                .into_iter()
+                .find_map(|window| window.downcast::<MultiWorkspace>())
+        });
+    let Some(window) = window else {
+        return Task::ready(ResourcePermission::Denied);
+    };
+    let (sender, receiver) = futures::channel::oneshot::channel();
+    let sender = Arc::new(Mutex::new(Some(sender)));
+    let dismissed = sender.clone();
+    let notification = cx.new(|cx| {
+        simple_message_notification::MessageNotification::new_from_builder(cx, move |_, cx| {
+            let controls = h_flex().gap_2().flex_wrap().children([
+                    ("Allow", ResourcePermission::Allowed),
+                    ("Deny", ResourcePermission::Denied),
+                ].into_iter().map(|(label, permission)| {
+                    let button = |remember| {
+                    let sender = sender.clone();
+                    let store = store.clone();
+                    let request = request.clone();
+                        Button::new((label, usize::from(remember)), if remember { "Always" } else { label })
+                            .label_size(LabelSize::Small)
+                            .when(remember, |button| button.tooltip(Tooltip::text(format!(
+                                "{label} this operation for this resource from any requester. Saved in your user settings."
+                            ))))
+                            .on_click(cx.listener(move |_, _, _, cx| {
+                                if let Some(sender) = sender.lock().take() {
+                                    if !sender.is_canceled() {
+                                        let permission = if remember && store
+                                            .update(cx, |store, cx| store.remember_permission(&request, permission, cx))
+                                            .log_err().and_then(|result| result.log_err()).is_none()
+                                        {
+                                            ResourcePermission::Denied
+                                        } else {
+                                            permission
+                                        };
+                                        sender.send(permission).unwrap_or_else(|_| {
+                                            log::debug!("Resource approval request was cancelled");
+                                        });
+                                    }
+                                }
+                                cx.emit(DismissEvent);
+                            }))
+                    };
+                    div().debug_selector(move || label.to_owned()).child(
+                        SplitButton::new(button(false),
+                            div().debug_selector(move || format!("{label} Always"))
+                                .child(button(true)).into_any_element())
+                            .style(SplitButtonStyle::Outlined)
+                    )
+                }));
+            v_flex()
+                .gap_2()
+                .child(Label::new(request.description()))
+                .child(controls)
+                .into_any_element()
+            })
+            .with_title("Allow managed resource operation?")
+            .show_suppress_button(false)
+    });
+    cx.subscribe(&notification, move |_, _: &DismissEvent, _| {
+        if let Some(sender) = dismissed.lock().take() {
+            sender.send(ResourcePermission::Denied).unwrap_or_else(|_| {
+                log::debug!("Resource approval request was cancelled");
+            });
+        }
+    })
+    .detach();
+    let id = NotificationId::composite::<managed_resources::ResourcePermissionRequest>((
+        "resource-approval",
+        notification.entity_id(),
+    ));
+    window
+        .update(cx, |multi_workspace, _, cx| {
+            multi_workspace.workspace().update(cx, |workspace, cx| {
+                workspace.show_notification(id, cx, |_| notification);
+            });
+        })
+        .log_err();
+    // Closing the notification or its workspace drops the sender and denies the request.
+    cx.spawn(async move |_| receiver.await.unwrap_or(ResourcePermission::Denied))
+}
 
 impl Workspace {
     pub fn has_notification(&self, id: &NotificationId) -> bool {

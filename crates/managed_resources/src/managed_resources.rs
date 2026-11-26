@@ -291,6 +291,73 @@ impl ManagedResourceStore {
         cx.notify();
     }
 
+    pub fn remember_permission(
+        &mut self,
+        request: &ResourcePermissionRequest,
+        permission: ResourcePermission,
+        cx: &mut Context<Self>,
+    ) -> Result<(), ResourceAccessError> {
+        use settings_content::{ResourcePermissionContent, ResourceSpecifier};
+
+        let id = match request {
+            ResourcePermissionRequest::Manage { resource, .. }
+            | ResourcePermissionRequest::ExecuteCommand { resource, .. } => resource,
+        };
+        let content = &mut self.permissions.content;
+        // Preserve the effective rule's other restrictions when specializing a wildcard.
+        let mut entry = content
+            .resource(id)
+            .cloned()
+            .unwrap_or(ResourcePermissionContent {
+                resource: ResourceSpecifier::Specific(id.clone()),
+                management: None,
+                settings: Default::default(),
+            });
+        entry.resource = ResourceSpecifier::Specific(id.clone());
+        match request {
+            ResourcePermissionRequest::Manage { .. } => {
+                entry.management = Some(permission.into());
+            }
+            ResourcePermissionRequest::ExecuteCommand { payload, .. } => {
+                let mut rules: Vec<CommandPermissionRule<serde_json::Value>> = entry
+                    .settings
+                    .get("commands")
+                    .map(|value| serde_json::from_value(value.clone()))
+                    .transpose()
+                    .map_err(|error| ResourceAccessError::CommandSettings(Arc::new(error)))?
+                    .unwrap_or_default();
+                rules.retain(|rule| rule.command != *payload);
+                rules.insert(
+                    0,
+                    CommandPermissionRule {
+                        permission,
+                        command: payload.clone(),
+                    },
+                );
+                entry.settings.insert(
+                    "commands".into(),
+                    serde_json::to_value(rules)
+                        .map_err(|error| ResourceAccessError::CommandSettings(Arc::new(error)))?,
+                );
+            }
+        }
+        content
+            .resources
+            .retain(|rule| rule.resource != entry.resource);
+        let position = content
+            .resources
+            .iter()
+            .position(|rule| rule.resource.matches(id))
+            .unwrap_or(content.resources.len());
+        content.resources.insert(position, entry);
+        if let Some(resource) = self.resources.get_mut(id) {
+            resource.permission_revision = resource.permission_revision.wrapping_add(1);
+        }
+        cx.emit(StateUpdated(self.permissions()));
+        cx.notify();
+        Ok(())
+    }
+
     fn acquire_resource<Resource: ManagedResource>(
         &mut self,
         key: Rc<Resource::Key>,
@@ -1188,6 +1255,55 @@ mod tests {
             store.read_with(cx, |store, _| store.permissions()),
             permissions
         );
+    }
+
+    #[gpui::test]
+    async fn always_allow_preserves_other_resource_and_command_rules(cx: &mut TestAppContext) {
+        let permissions = serde_json::from_value(serde_json::json!({
+            "default": "allowed",
+            "resources": [{"resource":"npm", "management":"automatic", "commands":[
+                {"command":"add", "permission":"prompt"},
+                {"command":"read", "permission":"denied"}
+            ]}]
+        }))
+        .expect("permissions");
+        let store = cx.new(|_| {
+            ManagedResourceStore::new(permissions, |_, _| Task::ready(ResourcePermission::Denied))
+        });
+        let context = Rc::new(TestContext::default());
+        let request = ResourcePermissionRequest::ExecuteCommand {
+            resource: TestResource::id(&"first"),
+            description: "Add".into(),
+            payload: serde_json::json!("add"),
+            bill: test_bill(),
+        };
+        store
+            .update(cx, |store, cx| {
+                store.remember_permission(&request, ResourcePermission::Allowed, cx)
+            })
+            .expect("save approval");
+        let saved = store.read_with(cx, |store, _| {
+            serde_json::to_value(store.permissions()).expect("serialize")
+        });
+        let restored = cx.new(|_| {
+            ManagedResourceStore::new(serde_json::from_value(saved).expect("restore"), |_, _| {
+                Task::ready(ResourcePermission::Denied)
+            })
+        });
+        assert_eq!(
+            execute::<0>(&restored, "first", &context, TestCommand::Add(7), cx)
+                .await
+                .expect("remembered"),
+            Ok(12)
+        );
+        assert!(matches!(
+            execute::<0>(&restored, "first", &context, TestCommand::Read, cx).await,
+            Err(ResourceAccessError::CommandDenied)
+        ));
+        assert!(matches!(
+            execute::<0>(&restored, "second", &context, TestCommand::Add(7), cx).await,
+            Err(ResourceAccessError::CommandDenied)
+        ));
     }
 
     #[gpui::test]
