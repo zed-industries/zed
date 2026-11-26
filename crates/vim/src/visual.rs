@@ -949,9 +949,11 @@ mod test {
 
     use editor::HighlightKey;
     use indoc::indoc;
+    use settings::Settings as _;
     use workspace::item::Item;
 
     use crate::{
+        VimSettings,
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
@@ -1311,6 +1313,9 @@ mod test {
     #[gpui::test]
     async fn test_visual_yank_highlight(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        let highlight_duration = Duration::from_millis(
+            cx.read(|cx| VimSettings::get_global(cx).highlight_on_yank_duration),
+        );
 
         cx.set_state(
             indoc! {"
@@ -1327,7 +1332,7 @@ mod test {
                 fox jumps over
                 the lazy dog"},
         );
-        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.executor().advance_clock(highlight_duration);
         cx.run_until_parked();
         cx.assert_editor_background_highlights(
             HighlightKey::HighlightOnYank,
@@ -1345,7 +1350,7 @@ mod test {
                 fox jumps overˇ»
                 the lazy dog"},
         );
-        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.executor().advance_clock(highlight_duration);
         cx.run_until_parked();
 
         cx.simulate_keystrokes("ctrl-v j l y");
