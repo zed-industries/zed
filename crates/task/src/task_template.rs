@@ -24,9 +24,6 @@ use crate::{
 pub struct TaskTemplate {
     /// Human readable name of the task to display in the UI.
     pub label: String,
-    /// Whether this task runs continuously without exiting on its own.
-    #[serde(skip)]
-    pub is_background: bool,
     /// Executable command to spawn.
     pub command: String,
     /// Arguments to the command.
@@ -156,6 +153,21 @@ impl TaskTemplates {
         serde_json::to_value(schema).unwrap()
     }
 }
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImportedTaskTemplate {
+    #[serde(flatten)]
+    pub template: TaskTemplate,
+    #[serde(
+        default,
+        rename = "isBackground",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub is_background: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImportedTaskTemplates(pub Vec<ImportedTaskTemplate>);
 
 impl TaskTemplate {
     /// Replaces all `VariableName` task variables in the task template string fields.

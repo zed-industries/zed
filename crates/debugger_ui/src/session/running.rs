@@ -33,7 +33,7 @@ use dap::{
 use futures::{SinkExt, channel::mpsc};
 use gpui::{
     Action as _, AnyView, App, AppContext, Axis, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, NoAction, Pixels, Point, Subscription, Task, TaskExt, WeakEntity,
+    Focusable, NoAction, Pixels, Point, SharedString, Subscription, Task, TaskExt, WeakEntity,
 };
 use language::Buffer;
 use loaded_source_list::LoadedSourceList;
@@ -50,6 +50,7 @@ use task::{
     BuildTaskDefinition, DebugScenario, SharedTaskContext, Shell, ShellBuilder, SpawnInTerminal,
     TaskContext, ZedDebugConfig, substitute_variables_in_str,
 };
+use terminal::Terminal;
 use terminal_view::TerminalView;
 use ui::{
     FluentBuilder, IntoElement, Render, StatefulInteractiveElement, Tab, Tooltip, VisibleOnHover,
@@ -59,11 +60,31 @@ use util::ResultExt;
 use variable_list::VariableList;
 use workspace::{
     ActivePaneDecorator, DraggedTab, Item, ItemHandle, Member, Pane, PaneGroup, SplitDirection,
-    Workspace, item::TabContentParams, move_item, pane::Event,
+    Workspace,
+    item::TabContentParams,
+    move_item,
+    pane::Event,
+    workspace_error::{ErrorAction, ErrorSeverity, WorkspaceError},
 };
 
 static PROCESS_ID_PLACEHOLDER: LazyLock<String> =
     LazyLock::new(|| task::VariableName::PickProcessId.template_value());
+
+struct DebugTaskWarning(SharedString);
+
+impl WorkspaceError for DebugTaskWarning {
+    fn primary_message(&self) -> SharedString {
+        self.0.clone()
+    }
+
+    fn primary_action(&self) -> ErrorAction {
+        ErrorAction::dismiss()
+    }
+
+    fn severity(&self) -> ErrorSeverity {
+        ErrorSeverity::Warning
+    }
+}
 
 pub struct RunningState {
     session: Entity<Session>,
@@ -699,6 +720,7 @@ pub(crate) fn new_debugger_pane(
 
 pub struct DebugTerminal {
     pub terminal: Option<Entity<TerminalView>>,
+    background_build_terminal: Option<Entity<Terminal>>,
     focus_handle: FocusHandle,
     _subscriptions: [Subscription; 1],
 }
@@ -714,6 +736,7 @@ impl DebugTerminal {
 
         Self {
             terminal: None,
+            background_build_terminal: None,
             focus_handle,
             _subscriptions: [focus_subscription],
         }
@@ -1137,12 +1160,12 @@ impl RunningState {
 
             let config_is_valid = request_type.is_ok();
             let mut extra_config = Value::Null;
-            let build_output = if let Some(build) = build {
-                let (task_template, locator_name) = match build {
+            let build_task = if let Some(build) = build {
+                match build {
                     BuildTaskDefinition::Template {
                         task_template,
                         locator_name,
-                    } => (task_template, locator_name),
+                    } => Some((task_template, locator_name, false)),
                     BuildTaskDefinition::ByName(ref label) => {
                         let task = task_store.update(cx, |this, cx| {
                             this.task_inventory().map(|inventory| {
@@ -1157,10 +1180,27 @@ impl RunningState {
                         let task = match task {
                             Some(task) => task.await,
                             None => None,
-                        }.with_context(|| format!("Couldn't find task template for {build:?}"))?;
-                        (task, None)
+                        };
+                        match task {
+                            Some((task_template, is_background)) => {
+                                Some((task_template, None, is_background))
+                            }
+                            None => {
+                                let message = format!(
+                                    "Couldn't find task template for {build:?}. Starting the debug session without it."
+                                );
+                                weak_workspace.update_in(cx, |workspace, _window, cx| {
+                                    workspace.show_error(DebugTaskWarning(message.into()), cx);
+                                }).ok();
+                                None
+                            }
+                        }
                     }
-                };
+                }
+            } else {
+                None
+            };
+            let build_output = if let Some((task_template, locator_name, is_background)) = build_task {
                 let Some(mut task) = task_template.resolve_task("debug-build-task", &task_context) else {
                     anyhow::bail!("Could not resolve task variables within a debug scenario");
                 };
@@ -1224,37 +1264,37 @@ impl RunningState {
                         )
                     }).await?;
 
-                let workspace_for_warning = weak_workspace.clone();
+                let workspace_for_terminal = weak_workspace.clone();
                 let terminal_view = cx.new_window_entity(|window, cx| {
                     TerminalView::new(
                         terminal.clone(),
-                        weak_workspace,
+                        workspace_for_terminal,
                         None,
                         weak_project,
                         window,
                         cx,
                     )
                 })?;
+                let background_terminal = is_background.then(|| terminal.clone());
 
                 this.update_in(cx, |this, window, cx| {
                     this.ensure_pane_item(DebuggerPaneItem::Terminal, window, cx);
                     this.debug_terminal.update(cx, |debug_terminal, cx| {
+                        debug_terminal.background_build_terminal = background_terminal;
                         debug_terminal.terminal = Some(terminal_view);
                         cx.notify();
                     });
                     this.refresh_terminal_toolbars(window, cx);
                 })?;
 
-                if task.original_task().is_background {
-                    let label = task.resolved_label.clone();
-                    workspace_for_warning.update_in(cx, |workspace, _window, cx| {
-                        workspace.show_error(
-                            format!(
-                                "Build task '{label}' is a background task; Zed will start debugging without waiting for it to finish."
-                            ),
-                            cx,
-                        );
-                    }).log_err();
+                if is_background {
+                    let message = format!(
+                        "Build task '{}' is a background task; Zed will start debugging without waiting for it to finish.",
+                        task.resolved_label
+                    );
+                    weak_workspace.update_in(cx, |workspace, _window, cx| {
+                        workspace.show_error(DebugTaskWarning(message.into()), cx);
+                    }).ok();
                 } else {
                     let exit_status = terminal
                         .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))

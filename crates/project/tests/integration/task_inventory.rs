@@ -6,7 +6,7 @@ use serde_json::json;
 use settings::SettingsLocation;
 use std::path::Path;
 use std::sync::Arc;
-use task::{ResolvedTask, TaskId};
+use task::{ResolvedTask, TaskId, TaskTemplate};
 use util::rel_path::rel_path;
 
 use project::task_store::{TaskSettingsLocation, TaskStore};
@@ -787,6 +787,63 @@ async fn test_worktree_tasks_file_update_keeps_history_of_unchanged_tasks(cx: &m
     assert_eq!(
         task_by_id(&inventory, &task_id, cx).map(|task| task.id),
         None,
+    );
+}
+
+#[gpui::test]
+async fn test_vscode_background_flag_survives_inventory(cx: &mut TestAppContext) {
+    init_test(cx);
+    let inventory = cx.update(|cx| Inventory::new(cx));
+    inventory.update(cx, |inventory, _| {
+        inventory
+            .update_file_based_tasks(
+                TaskSettingsLocation::Global(tasks_file()),
+                Some(
+                    r#"[
+                        {"label": "watch", "command": "sleep", "isBackground": true},
+                        {"label": "build", "command": "cargo"}
+                    ]"#,
+                ),
+            )
+            .unwrap();
+    });
+
+    let watch = inventory
+        .update(cx, |inventory, cx| {
+            inventory.task_template_by_label(None, None, "watch", cx)
+        })
+        .await;
+    assert_eq!(
+        watch,
+        Some((
+            TaskTemplate {
+                label: "watch".into(),
+                command: "sleep".into(),
+                show_summary: true,
+                show_command: true,
+                ..Default::default()
+            },
+            true,
+        ))
+    );
+
+    let build = inventory
+        .update(cx, |inventory, cx| {
+            inventory.task_template_by_label(None, None, "build", cx)
+        })
+        .await;
+    assert_eq!(
+        build,
+        Some((
+            TaskTemplate {
+                label: "build".into(),
+                command: "cargo".into(),
+                show_summary: true,
+                show_command: true,
+                ..Default::default()
+            },
+            false,
+        ))
     );
 }
 

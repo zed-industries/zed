@@ -3,7 +3,10 @@ use collections::HashMap;
 use serde::Deserialize;
 use util::ResultExt;
 
-use crate::{EnvVariableReplacer, TaskTemplate, TaskTemplates, VariableName};
+use crate::{
+    EnvVariableReplacer, ImportedTaskTemplate, ImportedTaskTemplates, TaskTemplate, TaskTemplates,
+    VariableName,
+};
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -90,7 +93,7 @@ impl VsCodeTaskDefinition {
     fn into_zed_format(
         self,
         replacer: &EnvVariableReplacer,
-    ) -> anyhow::Result<Option<TaskTemplate>> {
+    ) -> anyhow::Result<Option<ImportedTaskTemplate>> {
         if self.other_attributes.contains_key("dependsOn") {
             log::warn!(
                 "Skipping deserializing of a task `{}` with the unsupported `dependsOn` key",
@@ -127,7 +130,6 @@ impl VsCodeTaskDefinition {
             .unwrap_or(false);
         let mut template = TaskTemplate {
             label: self.label,
-            is_background,
             command,
             args,
             cwd: cwd.map(|cwd| replacer.replace(&cwd)),
@@ -139,7 +141,10 @@ impl VsCodeTaskDefinition {
             }
             template.env = options.env;
         }
-        Ok(Some(template))
+        Ok(Some(ImportedTaskTemplate {
+            template,
+            is_background,
+        }))
     }
 }
 
@@ -149,7 +154,7 @@ pub struct VsCodeTaskFile {
     tasks: Vec<VsCodeTaskDefinition>,
 }
 
-impl TryFrom<VsCodeTaskFile> for TaskTemplates {
+impl TryFrom<VsCodeTaskFile> for ImportedTaskTemplates {
     type Error = anyhow::Error;
 
     fn try_from(value: VsCodeTaskFile) -> Result<Self, Self::Error> {
@@ -179,12 +184,26 @@ impl TryFrom<VsCodeTaskFile> for TaskTemplates {
     }
 }
 
+impl TryFrom<VsCodeTaskFile> for TaskTemplates {
+    type Error = anyhow::Error;
+
+    fn try_from(value: VsCodeTaskFile) -> Result<Self, Self::Error> {
+        Ok(Self(
+            ImportedTaskTemplates::try_from(value)?
+                .0
+                .into_iter()
+                .map(|imported| imported.template)
+                .collect(),
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
 
     use crate::{
-        TaskTemplate, TaskTemplates, VsCodeTaskFile,
+        ImportedTaskTemplate, ImportedTaskTemplates, TaskTemplate, TaskTemplates, VsCodeTaskFile,
         vscode_format::{Command, VsCodeTaskDefinition},
     };
 
@@ -488,40 +507,54 @@ mod tests {
             .zip(expected)
             .for_each(|(lhs, rhs)| compare_without_other_attributes(lhs.clone(), rhs));
         let expected = vec![
-            TaskTemplate {
-                label: "Build Extension in Background".to_string(),
+            ImportedTaskTemplate {
+                template: TaskTemplate {
+                    label: "Build Extension in Background".to_string(),
+                    command: "npm".to_string(),
+                    args: vec!["run".to_string(), "watch".to_string()],
+                    cwd: Some("$ZED_WORKTREE_ROOT/editors/code/".to_string()),
+                    ..Default::default()
+                },
                 is_background: true,
-                command: "npm".to_string(),
-                args: vec!["run".to_string(), "watch".to_string()],
-                cwd: Some("$ZED_WORKTREE_ROOT/editors/code/".to_string()),
-                ..Default::default()
             },
-            TaskTemplate {
-                label: "Build Extension".to_string(),
-                command: "npm".to_string(),
-                args: vec!["run".to_string(), "build".to_string()],
-                cwd: Some("$ZED_WORKTREE_ROOT/editors/code/".to_string()),
-                ..Default::default()
+            ImportedTaskTemplate {
+                template: TaskTemplate {
+                    label: "Build Extension".to_string(),
+                    command: "npm".to_string(),
+                    args: vec!["run".to_string(), "build".to_string()],
+                    cwd: Some("$ZED_WORKTREE_ROOT/editors/code/".to_string()),
+                    ..Default::default()
+                },
+                is_background: false,
             },
-            TaskTemplate {
-                label: "Build Server".to_string(),
-                command: "cargo build --package rust-analyzer".to_string(),
-                ..Default::default()
+            ImportedTaskTemplate {
+                template: TaskTemplate {
+                    label: "Build Server".to_string(),
+                    command: "cargo build --package rust-analyzer".to_string(),
+                    ..Default::default()
+                },
+                is_background: false,
             },
-            TaskTemplate {
-                label: "Build Server (Release)".to_string(),
-                command: "cargo build --release --package rust-analyzer".to_string(),
-                ..Default::default()
+            ImportedTaskTemplate {
+                template: TaskTemplate {
+                    label: "Build Server (Release)".to_string(),
+                    command: "cargo build --release --package rust-analyzer".to_string(),
+                    ..Default::default()
+                },
+                is_background: false,
             },
-            TaskTemplate {
-                label: "Pretest".to_string(),
-                command: "npm".to_string(),
-                args: vec!["run".to_string(), "pretest".to_string()],
-                cwd: Some("$ZED_WORKTREE_ROOT/editors/code/".to_string()),
-                ..Default::default()
+            ImportedTaskTemplate {
+                template: TaskTemplate {
+                    label: "Pretest".to_string(),
+                    command: "npm".to_string(),
+                    args: vec!["run".to_string(), "pretest".to_string()],
+                    cwd: Some("$ZED_WORKTREE_ROOT/editors/code/".to_string()),
+                    ..Default::default()
+                },
+                is_background: false,
             },
         ];
-        let tasks: TaskTemplates = vscode_definitions.try_into().unwrap();
+        let tasks: ImportedTaskTemplates = vscode_definitions.try_into().unwrap();
         assert_eq!(tasks.0, expected);
     }
 
