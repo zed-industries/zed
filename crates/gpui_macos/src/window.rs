@@ -1162,7 +1162,8 @@ impl MacWindow {
             let native_view: *mut AnyObject = msg_send![native_view, initWithFrame: content_bounds];
             assert!(!native_view.is_null());
 
-            let metal_frames = MetalFrameSource::is_available().then(Rc::<MetalFrames>::default);
+            let metal_frames =
+                should_use_metal_display_link(renderer.layer()).then(Rc::<MetalFrames>::default);
             let state = Rc::new(Mutex::new(MacWindowState {
                 handle,
                 foreground_executor,
@@ -4290,9 +4291,45 @@ extern "C" fn toggle_tab_bar(this: &AnyObject, _sel: Sel, _id: *mut AnyObject) {
     }
 }
 
+fn should_use_metal_display_link(layer: Option<&objc2_quartz_core::CAMetalLayer>) -> bool {
+    if !MetalFrameSource::is_available() {
+        return false;
+    }
+    let Some(layer) = layer else {
+        return false;
+    };
+    !is_paravirtual_metal_layer(layer)
+}
+
+fn is_paravirtual_metal_layer(layer: &objc2_quartz_core::CAMetalLayer) -> bool {
+    // SAFETY: `CAMetalLayer.device` returns an `id<MTLDevice>` (or nil) and
+    // `MTLDevice.name` returns an `NSString *`. Both are standard Cocoa getters.
+    unsafe {
+        let device: Option<Retained<AnyObject>> = msg_send![layer, device];
+        let Some(device) = device else {
+            return false;
+        };
+        let name: Option<Retained<NSString>> = msg_send![&*device, name];
+        name.is_some_and(|name| is_paravirtual_metal_device_name(&name.to_string()))
+    }
+}
+
+fn is_paravirtual_metal_device_name(name: &str) -> bool {
+    name.contains("Paravirtual")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paravirtual_metal_device_names_fall_back_to_cv_display_link() {
+        assert!(is_paravirtual_metal_device_name("Apple Paravirtual device"));
+        assert!(!is_paravirtual_metal_device_name("Apple M1 Max"));
+        assert!(!is_paravirtual_metal_device_name("Apple M4 Max"));
+        assert!(!is_paravirtual_metal_device_name("AMD Radeon Pro 5500M"));
+        assert!(!should_use_metal_display_link(None));
+    }
 
     #[test]
     fn display_id_for_screen_handles_missing_metadata() {
