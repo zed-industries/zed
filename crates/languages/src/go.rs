@@ -2257,4 +2257,75 @@ mod tests {
             tag_strings
         );
     }
+
+    #[gpui::test]
+    fn test_go_comment_injections_in_call_arguments(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let registry = Arc::new(language::LanguageRegistry::test(cx.executor()));
+        registry.add(go_language());
+        // Stand-in for the SQL extension: any grammar works, only the name is checked.
+        registry.add(Arc::new(language::Language::new(
+            language::LanguageConfig {
+                name: "SQL".into(),
+                matcher: Arc::new(language::LanguageMatcher {
+                    path_suffixes: vec!["sql".into()],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            Some(tree_sitter_bash::LANGUAGE.into()),
+        )));
+
+        let source = r#"
+        package main
+
+        func f() {
+            db.Exec(ctx, /* sql */ `SELECT statement_call`)
+            err := db.QueryRow(ctx, /* sql */ `SELECT short_var`).Scan(&id)
+            rows, err := db.Query(ctx, /* sql */ "SELECT multi_result")
+            if _, err := db.Exec(ctx, /* sql */ `SELECT if_init`); err != nil {
+            }
+            check(db.QueryRow(ctx, /* sql */ `SELECT nested`))
+            db.Exec(ctx, /* sql */ other, `SELECT not_after_comment`)
+            db.Exec(ctx, `SELECT no_comment`)
+        }
+        "#
+        .unindent();
+
+        let buffer = cx.new(|cx| {
+            let mut buffer = crate::Buffer::local(source.clone(), cx);
+            buffer.set_language_registry(registry.clone());
+            buffer.set_language(Some(go_language()), cx);
+            buffer
+        });
+        cx.executor().run_until_parked();
+
+        let language_at = |marker: &str| -> String {
+            let offset = source.find(marker).expect("marker in source");
+            buffer.read_with(cx, |buffer, _| {
+                buffer
+                    .snapshot()
+                    .language_at(offset)
+                    .map(|language| language.name().to_string())
+                    .unwrap_or_default()
+            })
+        };
+
+        for marker in [
+            "statement_call",
+            "short_var",
+            "multi_result",
+            "if_init",
+            "nested",
+        ] {
+            assert_eq!(language_at(marker), "SQL", "{marker} should be injected");
+        }
+        for marker in ["not_after_comment", "no_comment"] {
+            assert_eq!(language_at(marker), "Go", "{marker} should stay Go");
+        }
+    }
 }

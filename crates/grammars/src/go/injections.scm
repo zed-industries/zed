@@ -72,16 +72,15 @@
             (raw_string_literal
               (raw_string_literal_content) @injection.content)
           ]))))
-  (expression_statement
-    (call_expression
-      (argument_list
-        (comment) @_comment
-        [
-          (interpreted_string_literal
-            (interpreted_string_literal_content) @injection.content)
-          (raw_string_literal
-            (raw_string_literal_content) @injection.content)
-        ])))
+  (argument_list
+    (comment) @_comment
+    .
+    [
+      (interpreted_string_literal
+        (interpreted_string_literal_content) @injection.content)
+      (raw_string_literal
+        (raw_string_literal_content) @injection.content)
+    ])
 ]
   (#match? @_comment "^\\/\\*\\s*sql\\s*\\*\\/$")
   (#set! injection.language "sql"))
@@ -143,16 +142,15 @@
             (raw_string_literal
               (raw_string_literal_content) @injection.content)
           ]))))
-  (expression_statement
-    (call_expression
-      (argument_list
-        (comment) @_comment
-        [
-          (interpreted_string_literal
-            (interpreted_string_literal_content) @injection.content)
-          (raw_string_literal
-            (raw_string_literal_content) @injection.content)
-        ])))
+  (argument_list
+    (comment) @_comment
+    .
+    [
+      (interpreted_string_literal
+        (interpreted_string_literal_content) @injection.content)
+      (raw_string_literal
+        (raw_string_literal_content) @injection.content)
+    ])
 ]
   (#match? @_comment "^\\/\\*\\s*json\\s*\\*\\/")
   ; /* json */ or /*json*/
@@ -215,16 +213,15 @@
             (raw_string_literal
               (raw_string_literal_content) @injection.content)
           ]))))
-  (expression_statement
-    (call_expression
-      (argument_list
-        (comment) @_comment
-        [
-          (interpreted_string_literal
-            (interpreted_string_literal_content) @injection.content)
-          (raw_string_literal
-            (raw_string_literal_content) @injection.content)
-        ])))
+  (argument_list
+    (comment) @_comment
+    .
+    [
+      (interpreted_string_literal
+        (interpreted_string_literal_content) @injection.content)
+      (raw_string_literal
+        (raw_string_literal_content) @injection.content)
+    ])
 ]
   (#match? @_comment "^\\/\\*\\s*yaml\\s*\\*\\/")
   ; /* yaml */ or /*yaml*/
@@ -287,16 +284,15 @@
             (raw_string_literal
               (raw_string_literal_content) @injection.content)
           ]))))
-  (expression_statement
-    (call_expression
-      (argument_list
-        (comment) @_comment
-        [
-          (interpreted_string_literal
-            (interpreted_string_literal_content) @injection.content)
-          (raw_string_literal
-            (raw_string_literal_content) @injection.content)
-        ])))
+  (argument_list
+    (comment) @_comment
+    .
+    [
+      (interpreted_string_literal
+        (interpreted_string_literal_content) @injection.content)
+      (raw_string_literal
+        (raw_string_literal_content) @injection.content)
+    ])
 ]
   (#match? @_comment "^\\/\\*\\s*xml\\s*\\*\\/")
   ; /* xml */ or /*xml*/
@@ -359,16 +355,15 @@
             (raw_string_literal
               (raw_string_literal_content) @injection.content)
           ]))))
-  (expression_statement
-    (call_expression
-      (argument_list
-        (comment) @_comment
-        [
-          (interpreted_string_literal
-            (interpreted_string_literal_content) @injection.content)
-          (raw_string_literal
-            (raw_string_literal_content) @injection.content)
-        ])))
+  (argument_list
+    (comment) @_comment
+    .
+    [
+      (interpreted_string_literal
+        (interpreted_string_literal_content) @injection.content)
+      (raw_string_literal
+        (raw_string_literal_content) @injection.content)
+    ])
 ]
   (#match? @_comment "^\\/\\*\\s*html\\s*\\*\\/")
   ; /* html */ or /*html*/
@@ -431,16 +426,15 @@
             (raw_string_literal
               (raw_string_literal_content) @injection.content)
           ]))))
-  (expression_statement
-    (call_expression
-      (argument_list
-        (comment) @_comment
-        [
-          (interpreted_string_literal
-            (interpreted_string_literal_content) @injection.content)
-          (raw_string_literal
-            (raw_string_literal_content) @injection.content)
-        ])))
+  (argument_list
+    (comment) @_comment
+    .
+    [
+      (interpreted_string_literal
+        (interpreted_string_literal_content) @injection.content)
+      (raw_string_literal
+        (raw_string_literal_content) @injection.content)
+    ])
 ]
   (#match? @_comment "^\\/\\*\\s*js\\s*\\*\\/")
   ; /* js */ or /*js*/
@@ -503,16 +497,15 @@
             (raw_string_literal
               (raw_string_literal_content) @injection.content)
           ]))))
-  (expression_statement
-    (call_expression
-      (argument_list
-        (comment) @_comment
-        [
-          (interpreted_string_literal
-            (interpreted_string_literal_content) @injection.content)
-          (raw_string_literal
-            (raw_string_literal_content) @injection.content)
-        ])))
+  (argument_list
+    (comment) @_comment
+    .
+    [
+      (interpreted_string_literal
+        (interpreted_string_literal_content) @injection.content)
+      (raw_string_literal
+        (raw_string_literal_content) @injection.content)
+    ])
 ]
   (#match? @_comment "^\\/\\*\\s*css\\s*\\*\\/")
   ; /* css */ or /*css*/
@@ -575,16 +568,15 @@
             (raw_string_literal
               (raw_string_literal_content) @injection.content)
           ]))))
-  (expression_statement
-    (call_expression
-      (argument_list
-        (comment) @_comment
-        [
-          (interpreted_string_literal
-            (interpreted_string_literal_content) @injection.content)
-          (raw_string_literal
-            (raw_string_literal_content) @injection.content)
-        ])))
+  (argument_list
+    (comment) @_comment
+    .
+    [
+      (interpreted_string_literal
+        (interpreted_string_literal_content) @injection.content)
+      (raw_string_literal
+        (raw_string_literal_content) @injection.content)
+    ])
 ]
   (#match? @_comment "^\\/\\*\\s*lua\\s*\\*\\/")
   ; /* lua */ or /*lua*/
@@ -647,16 +639,15 @@
             (raw_string_literal
               (raw_string_literal_content) @injection.content)
           ]))))
-  (expression_statement
-    (call_expression
-      (argument_list
-        (comment) @_comment
-        [
-          (interpreted_string_literal
-            (interpreted_string_literal_content) @injection.content)
-          (raw_string_literal
-            (raw_string_literal_content) @injection.content)
-        ])))
+  (argument_list
+    (comment) @_comment
+    .
+    [
+      (interpreted_string_literal
+        (interpreted_string_literal_content) @injection.content)
+      (raw_string_literal
+        (raw_string_literal_content) @injection.content)
+    ])
 ]
   (#match? @_comment "^\\/\\*\\s*bash\\s*\\*\\/")
   ; /* bash */ or /*bash*/
