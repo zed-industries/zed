@@ -788,13 +788,18 @@ impl BufferSearchBar {
     ) -> Self {
         let query_editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(1, 4, window, cx);
+            editor.set_offset_content(false, cx);
             editor.set_use_autoclose(false);
             editor.set_use_selection_highlight(false);
             editor
         });
         cx.subscribe_in(&query_editor, window, Self::on_query_editor_event)
             .detach();
-        let replacement_editor = cx.new(|cx| Editor::auto_height(1, 4, window, cx));
+        let replacement_editor = cx.new(|cx| {
+            let mut editor = Editor::auto_height(1, 4, window, cx);
+            editor.set_offset_content(false, cx);
+            editor
+        });
         cx.subscribe(&replacement_editor, Self::on_replacement_editor_event)
             .detach();
 
