@@ -309,8 +309,11 @@ async fn reopening_a_notebook_reuses_source_already_open_in_the_pane(cx: &mut Te
 
 #[gpui::test]
 async fn reopening_notebook_cells_keeps_an_existing_source_tab(cx: &mut TestAppContext) {
-    let (_, workspace, cx) =
-        notebook_workspace(json!({"field.ipynb": NOTEBOOK, "notes.txt": "notes"}), cx).await;
+    let (_, workspace, cx) = notebook_workspace(
+        json!({"field.ipynb": NOTEBOOK, "notes.txt": "notes", "older.txt": "older"}),
+        cx,
+    )
+    .await;
     open_file("field.ipynb", &workspace, cx).await;
     cx.dispatch_action(EditSource);
     let source_id = workspace.read_with(cx, |workspace, cx| {
@@ -320,8 +323,11 @@ async fn reopening_notebook_cells_keeps_an_existing_source_tab(cx: &mut TestAppC
     open_file("notes.txt", &workspace, cx).await;
     cx.dispatch_action(workspace::pane::ActivatePreviousItem::default());
     cx.dispatch_action(OpenNotebook);
+    open_file("older.txt", &workspace, cx).await;
+    cx.dispatch_action(CloseActiveItem::default());
     cx.dispatch_action(CloseActiveItem::default());
     cx.dispatch_action(ReopenClosedItem);
+    assert_eq!(active_tab_title(&workspace, cx), "field.ipynb");
     assert_eq!(cell_sources(&workspace, cx).len(), 2);
     cx.dispatch_action(workspace::ActivatePane(0));
     workspace.read_with(cx, |workspace, cx| {
