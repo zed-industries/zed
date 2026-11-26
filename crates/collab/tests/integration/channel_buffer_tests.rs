@@ -793,7 +793,7 @@ async fn test_channel_buffer_operations_lost_on_reconnect(
     let edit_task = cx_a.spawn({
         let buffer = buffer_for_edit;
         async move |mut cx| {
-            let _ = buffer.update(&mut cx, |buffer, cx| {
+            buffer.update(&mut cx, |buffer, cx| {
                 buffer.edit([(2..2, "c")], None, cx);
             });
         }

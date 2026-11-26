@@ -1,5 +1,8 @@
-# Warn and close pull requests that remain in draft without new commits, and
-# close unsigned community pull requests that have not engaged about CLA trouble.
+# Keep the community pull request queue actionable by closing some PRs:
+# - unsigned PRs: retry the CLA check, close if it fails and the author hasn't engaged
+# - PRs that remain in draft without new commits: ping, then close
+# - PRs whose author didn't respond to changes requested by staff: ping, then close
+# - PRs labeled "no self-review" that keep the README notice: ping, then close
 
 name: Community PR Cleanup
 
@@ -36,6 +39,7 @@ jobs:
           owner: zed-industries
           repositories: zed
           permission-issues: write
+          permission-members: read
           permission-pull-requests: write
 
       - name: Checkout repository
@@ -43,6 +47,7 @@ jobs:
         with:
           sparse-checkout: |
             script/github-pr-cleanup.py
+            script/github_helpers.py
           sparse-checkout-cone-mode: false
 
       - name: Set up Python

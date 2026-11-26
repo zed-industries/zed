@@ -4367,7 +4367,7 @@ mod tests {
             // so we special case row 0 to assume a leading '\n'.
             //
             // Linehood is the birthright of strings.
-            let input_text_lines = input_text.split('\n').enumerate().peekable();
+            let input_text_lines = input_text.split('\n').enumerate();
             let mut block_row = 0;
             for (wrap_row, input_line) in input_text_lines {
                 let wrap_row = WrapRow(wrap_row as u32);

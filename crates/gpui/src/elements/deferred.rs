@@ -78,14 +78,6 @@ impl Element for Deferred {
     }
 }
 
-impl IntoElement for Deferred {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Deferred {
     /// Sets a priority for the element. A higher priority conceptually means painting the element
     /// on top of deferred draws with a lower priority (i.e. closer to the viewer).
@@ -97,10 +89,124 @@ impl Deferred {
 
 #[cfg(test)]
 mod tests {
+    use std::{cell::Cell, rc::Rc};
+
     use crate::{
-        Context, Entity, StyleRefinement, TestAppContext, Window, anchored, deferred, div, point,
+        AvailableSpace, Bounds, ContentMask, Context, Entity, Modifiers, MouseButton,
+        StyleRefinement, TestAppContext, Window, anchored, canvas, deferred, div, point,
         prelude::*, px, size,
     };
+
+    struct SubscriptionLeaf {
+        value: usize,
+        output: Rc<Cell<usize>>,
+    }
+
+    struct SubscriptionPanel {
+        leaf: Entity<SubscriptionLeaf>,
+        deferred_child: bool,
+        renders: Rc<Cell<usize>>,
+    }
+
+    impl Render for SubscriptionPanel {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            let leaf = self.leaf.clone();
+            let child = crate::canvas(
+                |_, _, _| {},
+                move |_, _, _, cx| {
+                    let leaf = leaf.read(cx);
+                    leaf.output.set(leaf.value);
+                },
+            )
+            .size(px(50.));
+            if self.deferred_child {
+                deferred(child).into_any_element()
+            } else {
+                child.into_any_element()
+            }
+        }
+    }
+
+    struct SubscriptionRoot {
+        panel: Entity<SubscriptionPanel>,
+        deferred_panel: bool,
+        renders: Rc<Cell<usize>>,
+    }
+
+    impl Render for SubscriptionRoot {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            let panel = self
+                .panel
+                .clone()
+                .cached(StyleRefinement::default().size(px(100.)));
+            if self.deferred_panel {
+                deferred(panel).into_any_element()
+            } else {
+                panel.into_any_element()
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_cached_reuse_keeps_entity_subscriptions(cx: &mut TestAppContext) {
+        for deferred_child in [true, false] {
+            for deferred_panel in [false, true] {
+                let output = Rc::new(Cell::new(0));
+                let renders = Rc::new(Cell::new(0));
+                let root_renders = Rc::new(Cell::new(0));
+                let leaf = cx.new(|_| SubscriptionLeaf {
+                    value: 1,
+                    output: output.clone(),
+                });
+                let panel = cx.new(|_| SubscriptionPanel {
+                    leaf: leaf.clone(),
+                    deferred_child,
+                    renders: renders.clone(),
+                });
+                let window = cx.open_window(size(px(800.), px(600.)), |_, _| SubscriptionRoot {
+                    panel,
+                    deferred_panel,
+                    renders: root_renders.clone(),
+                });
+                cx.run_until_parked();
+                assert_eq!(output.get(), 1);
+                let initial_renders = renders.get();
+                for _ in 0..2 {
+                    window
+                        .update(cx, |_, _, cx| cx.notify())
+                        .expect("notify root");
+                    cx.run_until_parked();
+                    assert_eq!(
+                        renders.get(),
+                        initial_renders,
+                        "panel should reuse its cache"
+                    );
+                }
+
+                let renders_before_notify = root_renders.get();
+                leaf.update(cx, |leaf, cx| {
+                    leaf.value = 2;
+                    cx.notify();
+                });
+                cx.run_until_parked();
+                let context =
+                    format!("deferred child {deferred_child}, deferred panel {deferred_panel}");
+                assert!(
+                    root_renders.get() > renders_before_notify,
+                    "leaf notification should redraw: {context}"
+                );
+                // A plain entity read has no dispatch-tree path to invalidate the
+                // cached panel, so refresh to run the paint callback again.
+                window
+                    .update(cx, |_, window, _| window.refresh())
+                    .expect("refresh canvas");
+                cx.run_until_parked();
+                assert_eq!(output.get(), 2, "{context}");
+            }
+        }
+    }
 
     /// A stand-in for a dock panel hosting a popover (deferred draw) whose
     /// content opens another popover (a deferred draw created while
@@ -202,5 +308,47 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+
+    struct MaskedOverlayView(Rc<Cell<usize>>);
+
+    impl Render for MaskedOverlayView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let clicks = self.0.clone();
+            let on_click = move |_: &_, _: &mut _, _: &mut _| clicks.set(clicks.get() + 1);
+            let overlay = |bounds: Bounds<_>, window: &mut Window, cx: &mut _| {
+                let mut overlay = div().size(px(200.)).occlude().into_any_element();
+                overlay.layout_as_root(AvailableSpace::min_size(), window, cx);
+                let mask = ContentMask {
+                    bounds: Bounds::new(bounds.origin, size(px(100.), px(200.))),
+                };
+                window.defer_draw(overlay, bounds.origin, 1, Some(mask));
+            };
+            div()
+                .size_full()
+                .child(
+                    div()
+                        .absolute()
+                        .size(px(200.))
+                        .on_mouse_down(MouseButton::Left, on_click),
+                )
+                .child(canvas(overlay, |_, _, _, _| {}).size_full())
+        }
+    }
+
+    #[gpui::test]
+    fn test_deferred_content_mask_clips_hitboxes(cx: &mut TestAppContext) {
+        let clicks = Rc::new(Cell::new(0));
+        let (_, cx) = cx.add_window_view({
+            let clicks = clicks.clone();
+            |_, _| MaskedOverlayView(clicks)
+        });
+        cx.run_until_parked();
+
+        cx.simulate_click(point(px(50.), px(50.)), Modifiers::none());
+        assert_eq!(clicks.get(), 0, "the visible overlay should block clicks");
+
+        cx.simulate_click(point(px(150.), px(50.)), Modifiers::none());
+        assert_eq!(clicks.get(), 1, "the clipped area should not block clicks");
     }
 }

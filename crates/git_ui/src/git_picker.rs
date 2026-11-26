@@ -432,7 +432,7 @@ impl Render for GitPicker {
                 }))
             })
             .key_context({
-                let mut key_context = KeyContext::new_with_defaults();
+                let mut key_context = KeyContext::new_with_defaults(cx.platform_info().os);
                 key_context.add("Pane");
                 key_context.add("GitPicker");
                 match self.tab {
@@ -483,24 +483,6 @@ impl Render for GitPicker {
             .child(self.render_tab_bar(cx))
             .child(self.render_active_picker(window, cx))
     }
-}
-
-pub fn open_branches(
-    workspace: &mut Workspace,
-    _: &zed_actions::git::Branch,
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
-) {
-    open_with_tab(workspace, GitPickerTab::Branches, window, cx);
-}
-
-pub fn open_stash(
-    workspace: &mut Workspace,
-    _: &zed_actions::git::ViewStash,
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
-) {
-    open_with_tab(workspace, GitPickerTab::Stashes, window, cx);
 }
 
 fn open_with_tab(

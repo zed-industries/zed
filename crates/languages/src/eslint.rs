@@ -1,10 +1,7 @@
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
+use github_releases::{AssetKind, GitHubLspBinaryVersion, build_asset_url, download_server_binary};
 use gpui::AsyncApp;
-use http_client::{
-    github::{AssetKind, GitHubLspBinaryVersion, build_asset_url},
-    github_download::download_server_binary,
-};
 use language::{LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain};
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, read_package_installed_version};
@@ -117,7 +114,8 @@ impl LspInstaller for EsLintLspAdapter {
                 remove_matching(&container_dir, |_| true).await;
 
                 download_server_binary(
-                    &*delegate.http_client(),
+                    &delegate.background_executor(),
+                    delegate.http_client(),
                     &version.url,
                     None,
                     &destination_path,

@@ -27,6 +27,13 @@ pub struct Bookmark {
     pub label: String,
 }
 
+pub struct ProjectBookmark {
+    pub path: Arc<Path>,
+    pub label: String,
+    pub buffer: Entity<Buffer>,
+    pub anchor: text::Anchor,
+}
+
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SerializedBookmark {
     pub row: u32,
@@ -305,6 +312,11 @@ impl BookmarkStore {
             unreachable!("resolve_if_needed should have converted to Loaded");
         };
 
+        // Overlapping worktrees can open the same path in different buffers.
+        if buffer_bookmarks.buffer != buffer {
+            return;
+        }
+
         let snapshot = buffer.read(cx).text_snapshot();
 
         let existing_index = buffer_bookmarks.bookmarks.iter().position(|existing| {
@@ -338,6 +350,10 @@ impl BookmarkStore {
             return None;
         };
 
+        if &buffer_bookmarks.buffer != buffer {
+            return None;
+        }
+
         let snapshot = buffer.read(cx).text_snapshot();
 
         buffer_bookmarks.bookmarks.iter().find(|existing| {
@@ -363,6 +379,10 @@ impl BookmarkStore {
         else {
             return;
         };
+
+        if &buffer_bookmarks.buffer != buffer {
+            return;
+        }
 
         let snapshot = buffer.read(cx).text_snapshot();
         let row = anchor.summary::<Point>(&snapshot).row;
@@ -397,6 +417,10 @@ impl BookmarkStore {
         let Some(BookmarkEntry::Loaded(file_bookmarks)) = self.bookmarks.get(&abs_path) else {
             return Vec::new();
         };
+
+        if file_bookmarks.buffer != buffer {
+            return Vec::new();
+        }
 
         file_bookmarks
             .bookmarks
@@ -464,6 +488,59 @@ impl BookmarkStore {
                 Self::emit_bookmarks_changed(cx);
             }
         }
+    }
+
+    pub async fn all_bookmarks(
+        this: &Entity<BookmarkStore>,
+        cx: &mut (impl AppContext + Clone),
+    ) -> Result<Vec<ProjectBookmark>> {
+        Self::resolve_all(this, cx).await?;
+
+        let bookmarks = cx.read_entity(this, |bookmark_store, cx| {
+            let mut bookmarks = Vec::new();
+
+            for (path, value) in &bookmark_store.bookmarks {
+                let BookmarkEntry::Loaded(buffer_bookmarks) = value else {
+                    continue;
+                };
+
+                let snapshot = buffer_bookmarks.buffer.read(cx).snapshot();
+                for bookmark in &buffer_bookmarks.bookmarks {
+                    let label = if bookmark.label.is_empty() {
+                        let row = snapshot.summary_for_anchor::<Point>(&bookmark.anchor).row;
+                        let line_length = snapshot.line_len(row);
+                        let mut label = String::with_capacity(line_length as usize);
+
+                        for chunk in snapshot
+                            .text_for_range(Point::new(row, 0)..Point::new(row, line_length))
+                        {
+                            let chunk = if label.is_empty() {
+                                chunk.trim_start()
+                            } else {
+                                chunk
+                            };
+                            label.push_str(chunk);
+                        }
+
+                        let trimmed_length = label.trim_end().len();
+                        label.truncate(trimmed_length);
+                        label
+                    } else {
+                        bookmark.label.clone()
+                    };
+
+                    bookmarks.push(ProjectBookmark {
+                        path: path.clone(),
+                        label,
+                        buffer: buffer_bookmarks.buffer.clone(),
+                        anchor: bookmark.anchor,
+                    });
+                }
+            }
+
+            bookmarks
+        });
+        Ok(bookmarks)
     }
 
     pub fn all_serialized_bookmarks(

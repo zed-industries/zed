@@ -13,7 +13,7 @@ use language_model::{
     CompactionResult, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelCompletionStream, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest,
-    LanguageModelToolChoiceSupport, RateLimiter,
+    LanguageModelToolChoiceSupport, PromptCompactionStrategy, RateLimiter, Speed,
 };
 use open_ai::{
     ReasoningEffort,
@@ -120,10 +120,16 @@ impl State {
             .spawn({
                 let credentials_provider = credentials_provider.clone();
                 async move |this, cx| {
-                    let result = credentials_provider
-                        .read_credentials(CREDENTIALS_KEY, cx)
-                        .await;
+                    let result = language_model::read_credentials(
+                        credentials_provider.as_ref(),
+                        CREDENTIALS_KEY,
+                        cx,
+                    )
+                    .await;
                     let refresh_models_task = this.update(cx, |state, cx| {
+                        if state.auth_generation != 0 {
+                            return None;
+                        }
                         match result {
                             Ok(Some((_, bytes))) => {
                                 match serde_json::from_slice::<CodexCredentials>(&bytes) {
@@ -416,6 +422,7 @@ pub struct DiscoveredChatGptModel {
     default_reasoning_effort: Option<ReasoningEffort>,
     supported_reasoning_efforts: Vec<ReasoningEffort>,
     supports_priority: bool,
+    supports_ultrafast: bool,
 }
 
 impl ChatGptModel {
@@ -519,16 +526,22 @@ impl ChatGptModel {
             Self::Discovered(model) => model.supports_priority,
         }
     }
+
+    pub fn supports_ultrafast(&self) -> bool {
+        matches!(self, Self::Discovered(model) if model.supports_ultrafast)
+    }
 }
 
 fn codex_responses_request(
     model: &ChatGptModel,
     mut request: LanguageModelRequest,
 ) -> Result<open_ai::responses::Request> {
-    if !model.supports_priority() {
-        request.speed = None;
-    }
-    let mut responses_request = into_open_ai_response(
+    request.speed = request.speed.filter(|speed| match speed {
+        Speed::Standard => true,
+        Speed::Fast => model.supports_priority(),
+        Speed::Ultrafast => model.supports_ultrafast(),
+    });
+    into_open_ai_response(
         request,
         model.id(),
         model.supports_parallel_tool_calls(),
@@ -539,10 +552,7 @@ fn codex_responses_request(
             .supported_reasoning_efforts()
             .contains(&ReasoningEffort::None),
         &PROVIDER_ID,
-    )?;
-    responses_request.store = Some(false);
-    responses_request.instructions.get_or_insert_default();
-    Ok(responses_request)
+    )
 }
 
 fn codex_extra_headers(
@@ -635,7 +645,14 @@ impl From<CatalogModel> for ChatGptModel {
             .additional_speed_tiers
             .iter()
             .any(|tier| tier == "fast")
-            || model.service_tiers.iter().any(|tier| tier.id == "priority");
+            || model
+                .service_tiers
+                .iter()
+                .any(|tier| matches!(tier.id.as_str(), "priority" | "fast"));
+        let supports_ultrafast = model
+            .service_tiers
+            .iter()
+            .any(|tier| tier.id == "ultrafast");
         let supports_images = model
             .input_modalities
             .as_ref()
@@ -652,6 +669,7 @@ impl From<CatalogModel> for ChatGptModel {
             default_reasoning_effort,
             supported_reasoning_efforts,
             supports_priority,
+            supports_ultrafast,
         }))
     }
 }
@@ -748,9 +766,11 @@ pub fn language_model(model: &ChatGptModel) -> LanguageModel {
         supports_tools: true,
         supports_images: model.supports_images(),
         tool_choice_support: LanguageModelToolChoiceSupport::ALL,
+        prompt_compaction_strategy: PromptCompactionStrategy::PreserveRequestPrefix,
         supports_streaming_tools: true,
         supports_thinking: true,
         supports_fast_mode: model.supports_priority(),
+        supports_ultrafast_mode: model.supports_ultrafast(),
         supports_server_side_compaction: true,
         supports_explicit_compaction: true,
         supported_effort_levels,
@@ -1715,7 +1735,7 @@ mod tests {
                 ))?)
         });
 
-        let state = cx.new(|cx| State::new(http, creds_provider, cx));
+        let state = cx.new(|cx| State::new(http.clone(), creds_provider.clone(), cx));
 
         let load_task = cx
             .read(|cx| state.read(cx).load_task())
@@ -1733,6 +1753,49 @@ mod tests {
                 Some("gpt-account-default")
             );
         });
+
+        let state = cx.new(|cx| State::new(http, creds_provider, cx));
+        state.update(cx, |state, _| state.auth_generation += 1);
+        let load_task = cx
+            .read(|cx| state.read(cx).load_task())
+            .expect("constructor should start the credentials load");
+        cx.run_until_parked();
+        load_task.await.expect("stale load should complete");
+        cx.read(|cx| {
+            let state = state.read(cx);
+            assert_eq!(
+                state
+                    .credentials
+                    .as_ref()
+                    .map(|creds| creds.access_token.as_str()),
+                None
+            );
+            assert!(state.load_task().is_none());
+        });
+    }
+
+    #[test]
+    fn ultrafast_requests_require_catalog_support() -> Result<()> {
+        for (tier, expected) in [("priority", false), ("ultrafast", true)] {
+            let catalog: CatalogModel = serde_json::from_value(serde_json::json!({
+                "slug": "gpt-6.2-sol",
+                "display_name": "GPT-6.2 Sol",
+                "visibility": "list",
+                "priority": 0,
+                "service_tiers": [{"id": tier}],
+            }))?;
+            let model = ChatGptModel::from(catalog);
+            let request = LanguageModelRequest {
+                speed: Some(Speed::Ultrafast),
+                ..Default::default()
+            };
+            assert_eq!(model.supports_ultrafast(), expected);
+            assert_eq!(
+                codex_responses_request(&model, request)?.service_tier,
+                expected.then_some(open_ai::ServiceTier::Ultrafast),
+            );
+        }
+        Ok(())
     }
 
     #[gpui::test]

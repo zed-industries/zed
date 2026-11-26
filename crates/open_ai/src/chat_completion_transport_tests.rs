@@ -1,4 +1,6 @@
 use super::*;
+use anyhow::anyhow;
+use futures::TryStreamExt as _;
 use futures::executor::block_on;
 use http_client::{
     FakeHttpClient, Response,
@@ -151,10 +153,6 @@ fn streaming_transport_preserves_usage_limit_errors() {
         .expect("provider error event")
         .expect_err("usage limit should reject the completion")
     });
-    let error = error
-        .downcast_ref::<LanguageModelCompletionError>()
-        .expect("typed provider rejection");
-
     assert!(!error.is_transient());
     assert!(matches!(
         error,
@@ -165,10 +163,67 @@ fn streaming_transport_preserves_usage_limit_errors() {
             message,
             category: ProviderErrorCategory::PaymentRequired,
             ..
-        } if provider == &LanguageModelProviderName::from("Compatible Provider".to_string())
+        } if provider == LanguageModelProviderName::from("Compatible Provider".to_string())
             && code == "usage_limit_reached"
             && message == "The usage limit has been reached"
     ));
+}
+
+#[test]
+fn streaming_transport_preserves_decode_and_read_errors() {
+    let bodies = [
+        (AsyncBody::from("data: not JSON\n\n"), "decode"),
+        (AsyncBody::from("data: {\"choices\":false}\n\n"), "decode"),
+        (
+            AsyncBody::from_reader(
+                futures::stream::iter([Err::<Vec<u8>, _>(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionReset,
+                    "connection reset",
+                ))])
+                .into_async_read(),
+            ),
+            "read",
+        ),
+    ];
+    for (body, expected_kind) in bodies {
+        let body = Mutex::new(Some(body));
+        let client = FakeHttpClient::create(move |_| {
+            let body = body.lock().expect("body lock").take().expect("one request");
+            async move { Ok(Response::builder().status(200).body(body)?) }
+        });
+        let request = serde_json::from_value(json!({
+            "model": "custom/model",
+            "messages": [],
+            "stream": true
+        }))
+        .expect("valid chat completion request");
+        let error = block_on(async {
+            stream_completion(
+                client.as_ref(),
+                "Compatible Provider",
+                "https://example.com/v1",
+                "secret",
+                request,
+                &CustomHeaders::default(),
+            )
+            .await
+            .expect("streaming request")
+            .next()
+            .await
+            .expect("stream error event")
+            .expect_err("invalid response should fail")
+        });
+        let kind = match error {
+            LanguageModelCompletionError::DeserializeResponse { .. } => "decode",
+            LanguageModelCompletionError::ApiReadResponseError { error, .. }
+                if error.kind() == std::io::ErrorKind::ConnectionReset =>
+            {
+                "read"
+            }
+            error => panic!("unexpected stream error: {error:?}"),
+        };
+        assert_eq!(kind, expected_kind);
+    }
 }
 
 #[test]

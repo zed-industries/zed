@@ -224,7 +224,8 @@ impl<M: ManagedView> PopoverMenu<M> {
         self
     }
 
-    /// Defines which corner of the handle to attach the menu's anchor to.
+    /// Defines which corner of the handle to attach the menu's anchor to. If the menu doesn't
+    /// fit on that side of the handle, it opens on the other side.
     pub fn attach(mut self, attach: Anchor) -> Self {
         self.attach = Some(attach);
         self
@@ -373,14 +374,17 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
 
                 let menu_element = element_state.menu.borrow_mut().as_mut().map(|menu| {
                     let offset = self.resolved_offset(window);
-                    let mut anchored = anchored()
+                    let anchored = anchored()
                         .snap_to_window_with_margin(px(8.))
-                        .anchor(self.anchor)
-                        .offset(offset);
-                    if let Some(child_bounds) = element_state.child_bounds {
-                        anchored =
-                            anchored.position(child_bounds.corner(self.resolved_attach()) + offset);
-                    }
+                        .anchor(self.anchor);
+                    let anchored = match element_state.child_bounds {
+                        // The offset is doubled on purpose. This used to add it twice, and
+                        // callers picked their offsets with that in mind.
+                        Some(child_bounds) => anchored
+                            .attach(child_bounds, self.resolved_attach())
+                            .offset(offset + offset),
+                        None => anchored.offset(offset),
+                    };
                     let mut element = deferred(anchored.child(div().occlude().child(menu.clone())))
                         .with_priority(1)
                         .into_any();
@@ -499,10 +503,96 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
     }
 }
 
-impl<M: ManagedView> IntoElement for PopoverMenu<M> {
-    type Element = Self;
+#[cfg(test)]
+mod tests {
+    use gpui::{EventEmitter, FocusHandle, Focusable, TestAppContext, VisualTestContext};
 
-    fn into_element(self) -> Self::Element {
-        self
+    use super::*;
+    use crate::Button;
+
+    struct TestMenu {
+        focus_handle: FocusHandle,
+    }
+
+    impl EventEmitter<DismissEvent> for TestMenu {}
+
+    impl Focusable for TestMenu {
+        fn focus_handle(&self, _: &App) -> FocusHandle {
+            self.focus_handle.clone()
+        }
+    }
+
+    impl Render for TestMenu {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .track_focus(&self.focus_handle)
+                .debug_selector(|| "MENU".into())
+                .w(px(200.))
+                .h(px(100.))
+        }
+    }
+
+    struct PopoverTestView {
+        handle: PopoverMenuHandle<TestMenu>,
+        top: Pixels,
+    }
+
+    impl Render for PopoverTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                div()
+                    .absolute()
+                    .left(px(100.))
+                    .top(self.top)
+                    .debug_selector(|| "TRIGGER".into())
+                    .child(
+                        PopoverMenu::new("popover")
+                            .trigger(Button::new("trigger", "Open"))
+                            .menu(|_, cx| {
+                                Some(cx.new(|cx| TestMenu {
+                                    focus_handle: cx.focus_handle(),
+                                }))
+                            })
+                            .with_handle(self.handle.clone()),
+                    ),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn popover_opens_below_its_trigger_or_above_when_it_does_not_fit(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+        for (top, opens_above) in [(px(40.), false), (px(560.), true)] {
+            let handle = PopoverMenuHandle::default();
+            let window = cx.open_window(size(px(800.), px(600.)), |_, _| PopoverTestView {
+                handle: handle.clone(),
+                top,
+            });
+            cx.run_until_parked();
+            let mut cx = VisualTestContext::from_window(window.into(), cx);
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            cx.update(|window, cx| handle.show(window, cx));
+            for _ in 0..3 {
+                cx.update(|window, cx| window.draw(cx).clear(cx));
+            }
+
+            let trigger = cx.debug_bounds("TRIGGER").expect("trigger bounds");
+            let menu = cx.debug_bounds("MENU").expect("menu bounds");
+            let offset = cx.update(|window, _| rems_from_px(5_f32) * window.rem_size());
+            let top = if opens_above {
+                trigger.top() - menu.size.height
+            } else {
+                trigger.bottom()
+            };
+            assert_eq!(
+                menu.origin,
+                point(trigger.left() - offset - offset, top),
+                "trigger: {trigger:?}, menu: {menu:?}"
+            );
+        }
     }
 }

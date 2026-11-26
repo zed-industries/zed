@@ -115,18 +115,25 @@ pub struct AnthropicAvailableModel {
 #[with_fallible_options]
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct AmazonBedrockSettingsContent {
+    /// Custom Converse models. Names are sent exactly as written. Omitted
+    /// capabilities are inherited from discovery or the models.dev catalog when known.
     pub available_models: Option<Vec<BedrockAvailableModel>>,
     /// Custom models served through the `bedrock-mantle` endpoint's
-    /// OpenAI-compatible APIs, in addition to the built-in Mantle models
-    /// (GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.6 Luna, GPT-5.5, GPT-5.4, Grok 4.3).
+    /// OpenAI-compatible APIs. Zed does not include built-in Mantle models.
     pub mantle_available_models: Option<Vec<BedrockMantleAvailableModel>>,
     pub custom_headers: Option<HashMap<String, String>>,
+    /// A custom Converse endpoint. When nonempty, Zed skips AWS model listing
+    /// and offers models.dev profiles for the Region plus custom models.
+    /// Does not change the endpoint for Mantle models.
     pub endpoint_url: Option<String>,
     pub region: Option<String>,
     pub profile: Option<String>,
     pub authentication_method: Option<BedrockAuthMethodContent>,
+    /// Prefer global inference profiles over geographic profiles. Defaults to
+    /// false, but a model without a matching geographic profile still uses its
+    /// global profile. Does not change pinned custom or application profiles.
     pub allow_global: Option<bool>,
-    /// The guardrail identifier (ARN or ID) to apply to Bedrock API requests.
+    /// The guardrail identifier (ARN or ID) to apply to Converse inference requests.
     pub guardrail_identifier: Option<String>,
     /// The guardrail version to use. Defaults to "DRAFT" if not specified.
     pub guardrail_version: Option<String>,

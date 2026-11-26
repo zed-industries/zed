@@ -1,10 +1,6 @@
 mod async_body;
-#[cfg(not(target_family = "wasm"))]
-pub mod github;
-#[cfg(all(not(target_family = "wasm"), feature = "github-download"))]
-pub mod github_download;
 
-pub use anyhow::{Result, anyhow};
+use anyhow::Result;
 pub use async_body::{AsyncBody, Inner, Json};
 pub use http::{self, Method, Request, Response, StatusCode, Uri, request::Builder};
 use http::{HeaderName, HeaderValue};
@@ -24,7 +20,6 @@ pub enum RedirectPolicy {
     FollowLimit(u32),
     FollowAll,
 }
-pub struct FollowRedirects(pub bool);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RequestTimeout(pub Duration);

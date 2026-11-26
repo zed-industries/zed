@@ -11,8 +11,21 @@ use smol_str::SmolStr;
 /// A shared string is an immutable string that can be cheaply cloned in GPUI
 /// tasks. Essentially an abstraction over an `Arc<str>` and `&'static str`,
 /// currently backed by a [`SmolStr`].
-#[derive(Eq, PartialEq, PartialOrd, Ord, Hash, Clone)]
+#[derive(Eq, PartialOrd, Ord, Clone)]
 pub struct SharedString(SmolStr);
+
+impl PartialEq for SharedString {
+    fn eq(&self, other: &Self) -> bool {
+        let (this, other_str) = (self.as_str(), other.as_str());
+        (this.as_ptr() == other_str.as_ptr() && this.len() == other_str.len()) || self.0 == other.0
+    }
+}
+
+impl std::hash::Hash for SharedString {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
 
 impl std::ops::Deref for SharedString {
     type Target = str;

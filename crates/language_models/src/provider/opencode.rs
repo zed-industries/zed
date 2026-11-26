@@ -1,29 +1,30 @@
-use anyhow::{Context as _, Result, anyhow, bail};
+use crate::provider::model_catalog_cache;
+use anyhow::{Result, anyhow};
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 use fs::Fs;
-use futures::{AsyncReadExt, FutureExt, StreamExt, future::BoxFuture};
+use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{
     App, AsyncApp, BackgroundExecutor, Context, Entity, SharedString, Task, TaskExt, Window,
 };
-use http_client::{AsyncBody, CustomHeaders, HttpClient, Method, Request, http};
+use http_client::{AsyncBody, CustomHeaders, HttpClient, http};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, InlineDescription, LanguageModel,
     LanguageModelClient, LanguageModelCompletionError, LanguageModelCompletionStream,
     LanguageModelEffortLevel, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelToolChoiceSupport, ModelRateLimiters, ProviderSettingsView,
-    RateLimiter, ReasoningEffort, SubPageProviderSettings, env_var, unavailable_error,
+    ReasoningEffort, SubPageProviderSettings, env_var, unavailable_error,
 };
+use opencode::catalog::{DiscoveredModel, MODEL_CATALOG_URL as RICH_MODEL_CATALOG_URL};
 use opencode::{ApiProtocol, OPENCODE_API_URL, OpenCodeSubscription};
-use serde::Deserialize;
 pub use settings::OpenCodeApiProtocol;
 pub use settings::OpenCodeAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
-    time::{Duration, SystemTime},
+    time::Duration,
 };
 use ui::{
     Banner, ButtonLink, ConfiguredApiCard, Divider, List, ListBulletItem, Severity, Switch,
@@ -31,27 +32,6 @@ use ui::{
 };
 use ui_input::InputField;
 use util::ResultExt;
-
-use crate::provider::anthropic::{AnthropicEventMapper, into_anthropic};
-use crate::provider::google::{GoogleEventMapper, into_google};
-use crate::provider::open_ai::{
-    ChatCompletionMaxTokensParameter, OpenAiResponseEventMapper, into_open_ai,
-    into_open_ai_response,
-};
-use language_model::chat_completion::{ChatCompletionEventMapper, ResponseStreamEvent};
-
-fn normalize_reasoning_effort(effort: &str) -> Option<ReasoningEffort> {
-    match effort.trim().to_ascii_lowercase().as_str() {
-        "none" => Some(ReasoningEffort::None),
-        "minimal" => Some(ReasoningEffort::Minimal),
-        "low" => Some(ReasoningEffort::Low),
-        "medium" => Some(ReasoningEffort::Medium),
-        "high" => Some(ReasoningEffort::High),
-        "xhigh" => Some(ReasoningEffort::XHigh),
-        "max" => Some(ReasoningEffort::Max),
-        _ => None,
-    }
-}
 
 fn reasoning_effort_display(effort: ReasoningEffort) -> (&'static str, &'static str) {
     match effort {
@@ -77,11 +57,7 @@ const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new(
 const API_KEY_ENV_VAR_NAME: &str = "OPENCODE_API_KEY";
 static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 const OPENCODE_SESSION_HEADER_NAME: &str = "x-opencode-session";
-const RICH_MODEL_CATALOG_URL: &str = "https://models.opencode.ai/api.json";
-const MODEL_CATALOG_RESPONSE_LIMIT_BYTES: u64 = 8 * 1024 * 1024;
-const MODEL_CATALOG_FETCH_TIMEOUT: Duration = Duration::from_secs(15);
-const MODEL_CATALOG_DISK_FRESHNESS: Duration = Duration::from_secs(5 * 60);
-const MODEL_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const MODEL_CATALOG_REFRESH_INTERVAL: Duration = model_catalog_cache::REFRESH_INTERVAL;
 pub(crate) const RESERVED_HEADER_NAMES: &[&str] = &[OPENCODE_SESSION_HEADER_NAME];
 
 #[derive(Default, Clone, Debug, PartialEq)]
@@ -109,13 +85,6 @@ pub struct State {
     refresh_models_task: Option<Task<()>>,
     cache_path: PathBuf,
     fs: Arc<dyn Fs>,
-}
-
-#[derive(Clone)]
-struct DiscoveredModel {
-    model: opencode::Model,
-    supports_images: bool,
-    supports_thinking: bool,
 }
 
 impl State {
@@ -172,7 +141,6 @@ impl State {
         self.refresh_models_task = None;
         let api_url = OpenCodeLanguageModelProvider::api_url(cx);
         if self.api_key_state.key(&api_url).is_none() {
-            self.fetch_models_task = None;
             cx.notify();
             return;
         }
@@ -181,7 +149,7 @@ impl State {
         let cache_path = self.cache_path.clone();
         let executor = cx.background_executor().clone();
         self.fetch_models_task = Some(cx.spawn(async move |this, cx| {
-            let cached_catalog = load_cached_catalog(fs.as_ref(), &cache_path).await;
+            let cached_catalog = load_cached_catalog(fs.clone(), &cache_path, &executor).await;
             if let Ok(Some((catalog, _))) = &cached_catalog {
                 let results = catalog_results(Ok(catalog));
                 this.update(cx, |this, cx| {
@@ -206,14 +174,8 @@ impl State {
                 return;
             }
 
-            let catalog = fetch_model_catalog(http_client, executor).await;
-            let results = catalog_results(catalog.as_ref().map(String::as_str));
-            if results.iter().all(|(_, result)| result.is_ok())
-                && let Ok(catalog) = catalog
-                && let Err(error) = store_cached_catalog(fs.as_ref(), cache_path, catalog).await
-            {
-                log::warn!("Failed to cache OpenCode model catalog: {error:#}");
-            }
+            let results =
+                refresh_catalog(http_client.as_ref(), &executor, fs.as_ref(), &cache_path).await;
             this.update(cx, |this, cx| {
                 apply_discovery_results(
                     &mut this.discovered_models,
@@ -233,15 +195,9 @@ impl State {
         self.refresh_models_task = Some(cx.spawn(async move |this, cx| {
             loop {
                 executor.timer(MODEL_CATALOG_REFRESH_INTERVAL).await;
-                let catalog = fetch_model_catalog(http_client.clone(), executor.clone()).await;
-                let results = catalog_results(catalog.as_ref().map(String::as_str));
-                if results.iter().all(|(_, result)| result.is_ok())
-                    && let Ok(catalog) = catalog
-                    && let Err(error) =
-                        store_cached_catalog(fs.as_ref(), cache_path.clone(), catalog).await
-                {
-                    log::warn!("Failed to cache OpenCode model catalog: {error:#}");
-                }
+                let results =
+                    refresh_catalog(http_client.as_ref(), &executor, fs.as_ref(), &cache_path)
+                        .await;
                 if this
                     .update(cx, |this, cx| {
                         apply_discovery_results(
@@ -277,28 +233,25 @@ fn catalog_results(
     })
 }
 
-async fn load_cached_catalog(fs: &dyn Fs, path: &Path) -> Result<Option<(String, bool)>> {
-    let Some(metadata) = fs.metadata(path).await? else {
+async fn load_cached_catalog(
+    fs: Arc<dyn Fs>,
+    path: &Path,
+    executor: &BackgroundExecutor,
+) -> Result<Option<(String, bool)>> {
+    let Some((catalog, is_fresh)) = model_catalog_cache::load_cached(fs, path, executor).await?
+    else {
         return Ok(None);
     };
-    let catalog = fs.load(path).await?;
     for subscription in [OpenCodeSubscription::Zen, OpenCodeSubscription::Go] {
         parse_discovered_models(&catalog, subscription)?;
     }
-    let is_fresh = SystemTime::now()
-        .duration_since(metadata.mtime.timestamp_for_user())
-        .is_ok_and(|age| age < MODEL_CATALOG_DISK_FRESHNESS);
     Ok(Some((catalog, is_fresh)))
 }
 
 async fn store_cached_catalog(fs: &dyn Fs, path: PathBuf, catalog: String) -> Result<()> {
     let mut catalog = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&catalog)?;
     catalog.retain(|provider, _| matches!(provider.as_str(), "opencode" | "opencode-go"));
-    if let Some(parent) = path.parent() {
-        fs.create_dir(parent).await?;
-    }
-    fs.atomic_write(path, serde_json::to_string(&catalog)?)
-        .await
+    model_catalog_cache::store_cached(fs, path, serde_json::to_string(&catalog)?).await
 }
 
 fn apply_discovery_results(
@@ -491,164 +444,6 @@ impl OpenCodeLanguageModelProvider {
         })
     }
 
-    fn stream_anthropic(
-        &self,
-        config: &DiscoveredModel,
-        subscription: OpenCodeSubscription,
-        request_limiter: &RateLimiter,
-        request: anthropic::Request,
-        http_client: Arc<dyn HttpClient>,
-        extra_headers: CustomHeaders,
-        cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<
-            futures::stream::BoxStream<
-                'static,
-                Result<anthropic::Event, anthropic::AnthropicError>,
-            >,
-            LanguageModelCompletionError,
-        >,
-    > {
-        // Anthropic crate appends /v1/messages to api_url
-        let api_url = self.base_api_url(config, subscription, cx);
-        let api_key = self.current_api_key(cx);
-
-        let future = request_limiter.stream(async move {
-            let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::NoApiKey {
-                    provider: PROVIDER_NAME,
-                });
-            };
-            let request = anthropic::stream_completion(
-                http_client.as_ref(),
-                &api_url,
-                &api_key,
-                request,
-                None,
-                &extra_headers,
-            );
-            let response = request.await?;
-            Ok(response)
-        });
-
-        async move { Ok(future.await?.boxed()) }.boxed()
-    }
-
-    fn stream_openai_chat(
-        &self,
-        config: &DiscoveredModel,
-        subscription: OpenCodeSubscription,
-        request_limiter: &RateLimiter,
-        request: open_ai::Request,
-        http_client: Arc<dyn HttpClient>,
-        extra_headers: CustomHeaders,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
-    {
-        // OpenAI crate appends /chat/completions to api_url, so we pass base + "/v1"
-        let base_url = self.base_api_url(config, subscription, cx);
-        let api_url: SharedString = format!("{base_url}/v1").into();
-        let api_key = self.current_api_key(cx);
-        let provider_name = PROVIDER_NAME.0.to_string();
-
-        let future = request_limiter.stream(async move {
-            let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::NoApiKey {
-                    provider: PROVIDER_NAME,
-                });
-            };
-            let request = open_ai::stream_completion(
-                http_client.as_ref(),
-                &provider_name,
-                &api_url,
-                &api_key,
-                request,
-                &extra_headers,
-            );
-            let response = request.await?;
-            Ok(response)
-        });
-
-        async move { Ok(future.await?.boxed()) }.boxed()
-    }
-
-    fn stream_openai_response(
-        &self,
-        config: &DiscoveredModel,
-        subscription: OpenCodeSubscription,
-        request_limiter: &RateLimiter,
-        request: open_ai::responses::Request,
-        http_client: Arc<dyn HttpClient>,
-        extra_headers: CustomHeaders,
-        cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<futures::stream::BoxStream<'static, Result<open_ai::responses::StreamEvent>>>,
-    > {
-        // Responses crate appends /responses to api_url, so we pass base + "/v1"
-        let base_url = self.base_api_url(config, subscription, cx);
-        let api_url: SharedString = format!("{base_url}/v1").into();
-        let api_key = self.current_api_key(cx);
-        let provider_name = PROVIDER_NAME.0.to_string();
-
-        let future = request_limiter.stream(async move {
-            let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::NoApiKey {
-                    provider: PROVIDER_NAME,
-                });
-            };
-            let request = open_ai::responses::stream_response(
-                http_client.as_ref(),
-                &provider_name,
-                &api_url,
-                &api_key,
-                request,
-                &extra_headers,
-            );
-            let response = request.await?;
-            Ok(response)
-        });
-
-        async move { Ok(future.await?.boxed()) }.boxed()
-    }
-
-    fn stream_google(
-        &self,
-        config: &DiscoveredModel,
-        subscription: OpenCodeSubscription,
-        request_limiter: &RateLimiter,
-        request: google_ai::GenerateContentRequest,
-        http_client: Arc<dyn HttpClient>,
-        extra_headers: CustomHeaders,
-        cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<futures::stream::BoxStream<'static, Result<google_ai::GenerateContentResponse>>>,
-    > {
-        let api_url = self.base_api_url(config, subscription, cx);
-        let api_key = self.current_api_key(cx);
-
-        let future = request_limiter.stream(async move {
-            let Some(api_key) = api_key else {
-                return Err(LanguageModelCompletionError::NoApiKey {
-                    provider: PROVIDER_NAME,
-                });
-            };
-            let request = opencode::stream_generate_content(
-                http_client.as_ref(),
-                &api_url,
-                &api_key,
-                request,
-                &extra_headers,
-            );
-            let response = request.await?;
-            Ok(response)
-        });
-
-        async move { Ok(future.await?.boxed()) }.boxed()
-    }
-
     pub fn settings(cx: &App) -> &OpenCodeSettings {
         &crate::AllLanguageModelSettings::get_global(cx).opencode
     }
@@ -715,6 +510,11 @@ impl LanguageModelProvider for OpenCodeLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
+    fn refresh_models(&self, cx: &mut App) {
+        self.state
+            .update(cx, |state, cx| state.restart_fetch_models_task(cx));
+    }
+
     fn settings_view(&self, _cx: &mut App) -> Option<ProviderSettingsView> {
         let state = self.state.clone();
         Some(ProviderSettingsView::SubPage(
@@ -749,156 +549,38 @@ impl LanguageModelClient for OpenCodeLanguageModelProvider {
         });
         let extra_headers = self.custom_headers(cx);
 
-        match config.model.protocol() {
-            ApiProtocol::Anthropic => {
-                let mode = if config.supports_thinking && request.thinking_allowed {
-                    anthropic::AnthropicModelMode::AdaptiveThinking
-                } else {
-                    anthropic::AnthropicModelMode::Default
-                };
-                let anthropic_request = match into_anthropic(
-                    request,
-                    config.model.id().to_string(),
-                    1.0,
-                    config.model.max_output_tokens().unwrap_or(8192),
-                    mode,
-                    anthropic::completion::AnthropicPromptCacheMode::Automatic,
-                    &PROVIDER_ID,
-                ) {
-                    Ok(request) => request,
-                    Err(error) => return async move { Err(error.into()) }.boxed(),
-                };
-                let stream = self.stream_anthropic(
-                    &config,
-                    subscription,
-                    &request_limiter,
-                    anthropic_request,
-                    http_client,
-                    extra_headers,
-                    cx,
-                );
-                let executor = cx.background_executor().clone();
-                async move {
-                    let mapper = AnthropicEventMapper::new(PROVIDER_NAME, PROVIDER_ID);
-                    Ok(language_model::stream_in_background(
-                        mapper.map_stream(stream.await?).boxed(),
-                        executor,
-                    ))
-                }
-                .boxed()
-            }
-            ApiProtocol::OpenAiChat => {
-                let reasoning_effort = if request.thinking_allowed {
-                    request
-                        .thinking_effort
-                        .as_deref()
-                        .and_then(normalize_reasoning_effort)
-                } else {
-                    None
-                };
-                let openai_request = match into_open_ai(
-                    request,
-                    config.model.id(),
-                    true,
-                    false,
-                    config.model.max_output_tokens(),
-                    ChatCompletionMaxTokensParameter::MaxCompletionTokens,
-                    reasoning_effort,
-                    config.model.interleaved_reasoning(),
-                ) {
-                    Ok(request) => request,
-                    Err(error) => return async move { Err(error.into()) }.boxed(),
-                };
-                let stream = self.stream_openai_chat(
-                    &config,
-                    subscription,
-                    &request_limiter,
-                    openai_request,
-                    http_client,
-                    extra_headers,
-                    cx,
-                );
-                let executor = cx.background_executor().clone();
-                async move {
-                    let mapper = ChatCompletionEventMapper::new();
-                    Ok(language_model::stream_in_background(
-                        mapper.map_stream(stream.await?).boxed(),
-                        executor,
-                    ))
-                }
-                .boxed()
-            }
-            ApiProtocol::OpenAiResponses => {
-                let supports_none_reasoning_effort = config
-                    .model
-                    .supported_reasoning_effort_levels()
-                    .is_some_and(|levels| levels.contains(&ReasoningEffort::None));
-                let response_request = match into_open_ai_response(
-                    request,
-                    config.model.id(),
-                    true,
-                    false,
-                    config.model.max_output_tokens(),
-                    None,
-                    supports_none_reasoning_effort,
-                    &PROVIDER_ID,
-                ) {
-                    Ok(request) => request,
-                    Err(error) => return async move { Err(error.into()) }.boxed(),
-                };
-                let stream = self.stream_openai_response(
-                    &config,
-                    subscription,
-                    &request_limiter,
-                    response_request,
-                    http_client,
-                    extra_headers,
-                    cx,
-                );
-                let executor = cx.background_executor().clone();
-                async move {
-                    let mapper = OpenAiResponseEventMapper::new(PROVIDER_ID);
-                    Ok(language_model::stream_in_background(
-                        mapper.map_stream(stream.await?).boxed(),
-                        executor,
-                    ))
-                }
-                .boxed()
-            }
-            ApiProtocol::Google => {
-                let mut request = request;
-                if request.max_output_tokens.is_some() {
-                    request.max_output_tokens =
-                        request.effective_max_output_tokens(config.model.max_output_tokens());
-                }
-                let mode = if config.supports_thinking {
-                    google_ai::GoogleModelMode::Thinking {
-                        budget_tokens: None,
-                    }
-                } else {
-                    google_ai::GoogleModelMode::Default
-                };
-                let google_request = match into_google(request, config.model.id().to_string(), mode)
-                {
-                    Ok(request) => request,
-                    Err(error) => return async move { Err(error.into()) }.boxed(),
-                };
-                let stream = self.stream_google(
-                    &config,
-                    subscription,
-                    &request_limiter,
-                    google_request,
-                    http_client,
-                    extra_headers,
-                    cx,
-                );
-                async move {
-                    let mapper = GoogleEventMapper::new();
-                    Ok(mapper.map_stream(stream.await?.boxed()).boxed())
-                }
-                .boxed()
-            }
+        let api_url = self.base_api_url(&config, subscription, cx);
+        let api_key = self.current_api_key(cx);
+        let executor = cx.background_executor().clone();
+        let stream_in_background = config.model.protocol() != ApiProtocol::Google;
+        async move {
+            let api_key = api_key.ok_or(LanguageModelCompletionError::NoApiKey {
+                provider: PROVIDER_NAME,
+            })?;
+            let stream = request_limiter
+                .stream(async move {
+                    opencode::completion::stream_completion(
+                        http_client.as_ref(),
+                        opencode::completion::CompletionConfig {
+                            model: &config,
+                            api_url: &api_url,
+                            api_key: &api_key,
+                            provider_id: PROVIDER_ID,
+                            provider_name: PROVIDER_NAME,
+                            custom_headers: &extra_headers,
+                        },
+                        request,
+                    )
+                    .await
+                })
+                .await?;
+            Ok(if stream_in_background {
+                language_model::stream_in_background(stream.boxed(), executor)
+            } else {
+                stream.boxed()
+            })
         }
+        .boxed()
     }
 }
 
@@ -1015,196 +697,28 @@ fn language_model(model: &DiscoveredModel, subscription: OpenCodeSubscription) -
     }
 }
 
-#[derive(Deserialize)]
-struct RichCatalogProvider {
-    npm: Option<String>,
-    models: HashMap<String, RichCatalogModel>,
-}
-
-#[derive(Deserialize)]
-struct RichCatalogModel {
-    id: String,
-    name: String,
-    #[serde(default)]
-    reasoning: bool,
-    #[serde(default)]
-    reasoning_options: Option<Vec<ReasoningOption>>,
-    #[serde(default)]
-    tool_call: bool,
-    #[serde(default)]
-    interleaved: serde_json::Value,
-    #[serde(default)]
-    modalities: ModelModalities,
-    limit: ModelLimits,
-    provider: Option<ModelTransport>,
-    cost: Option<ModelCost>,
-    status: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct ModelCost {
-    input: Option<f64>,
-    output: Option<f64>,
-}
-
-#[derive(Default, Deserialize)]
-struct ModelModalities {
-    #[serde(default)]
-    input: Vec<String>,
-    #[serde(default)]
-    output: Vec<String>,
-}
-
-#[derive(Deserialize)]
-struct ModelLimits {
-    context: u64,
-    output: Option<u64>,
-}
-
-#[derive(Deserialize)]
-struct ModelTransport {
-    npm: String,
-}
-
-#[derive(Deserialize)]
-struct ReasoningOption {
-    #[serde(rename = "type")]
-    kind: String,
-    #[serde(default)]
-    values: Vec<String>,
-}
-
 fn parse_discovered_models(
     rich_catalog: &str,
     subscription: OpenCodeSubscription,
 ) -> Result<Vec<DiscoveredModel>> {
-    let provider_key = match subscription {
-        OpenCodeSubscription::Zen => "opencode",
-        OpenCodeSubscription::Go => "opencode-go",
-    };
-    let rich_catalog = serde_json::from_str::<serde_json::Value>(rich_catalog)?;
-    let provider = rich_catalog
-        .get(provider_key)
-        .cloned()
-        .ok_or_else(|| anyhow!("OpenCode catalog is missing {provider_key}"))?;
-    let provider = serde_json::from_value::<RichCatalogProvider>(provider)?;
-    let mut compatible_candidate_count = provider.models.len();
-    let models = provider
-        .models
-        .into_iter()
-        .filter_map(|(catalog_id, metadata)| {
-            if metadata.status.as_deref() == Some("deprecated")
-                || (subscription == OpenCodeSubscription::Zen
-                    && metadata
-                        .cost
-                        .as_ref()
-                        .is_some_and(|cost| cost.input == Some(0.0) && cost.output == Some(0.0)))
-            {
-                compatible_candidate_count -= 1;
-                return None;
-            }
-            if metadata.id != catalog_id
-                || !metadata.tool_call
-                || !metadata
-                    .modalities
-                    .output
-                    .iter()
-                    .any(|value| value == "text")
-                || metadata.limit.context == 0
-            {
-                return None;
-            }
-            let transport = metadata
-                .provider
-                .as_ref()
-                .map(|provider| provider.npm.as_str())
-                .or(provider.npm.as_deref());
-            let protocol = transport.and_then(protocol_for_transport)?;
-            let reasoning_effort_levels = metadata
-                .reasoning
-                .then(|| {
-                    metadata
-                        .reasoning_options
-                        .as_deref()
-                        .unwrap_or_default()
-                        .iter()
-                        .find(|option| option.kind == "effort")
-                        .into_iter()
-                        .flat_map(|option| &option.values)
-                        .filter_map(|effort| normalize_reasoning_effort(effort))
-                        .collect::<Vec<_>>()
-                })
-                .filter(|levels| !levels.is_empty());
-            Some(DiscoveredModel {
-                model: opencode::Model::new(
-                    metadata.id.clone(),
-                    Some(metadata.name.clone()),
-                    metadata.limit.context,
-                    metadata.limit.output,
-                    protocol,
-                    reasoning_effort_levels,
-                    None,
-                    metadata.interleaved == serde_json::Value::Bool(true)
-                        || metadata.interleaved.is_object(),
-                ),
-                supports_images: metadata
-                    .modalities
-                    .input
-                    .iter()
-                    .any(|value| value == "image"),
-                supports_thinking: metadata.reasoning,
-            })
-        })
-        .collect::<Vec<_>>();
-    if compatible_candidate_count > 0 && models.is_empty() {
-        bail!("OpenCode model metadata did not contain any compatible models");
-    }
-    Ok(models)
+    opencode::catalog::parse_model_catalog(rich_catalog, subscription, None)
 }
 
-fn protocol_for_transport(transport: &str) -> Option<ApiProtocol> {
-    match transport {
-        "@ai-sdk/anthropic" => Some(ApiProtocol::Anthropic),
-        "@ai-sdk/openai" => Some(ApiProtocol::OpenAiResponses),
-        "@ai-sdk/openai-compatible" => Some(ApiProtocol::OpenAiChat),
-        "@ai-sdk/google" => Some(ApiProtocol::Google),
-        _ => None,
+async fn refresh_catalog(
+    client: &dyn HttpClient,
+    executor: &BackgroundExecutor,
+    fs: &dyn Fs,
+    path: &Path,
+) -> [(OpenCodeSubscription, Result<Vec<DiscoveredModel>>); 2] {
+    let catalog = model_catalog_cache::fetch(client, executor, RICH_MODEL_CATALOG_URL).await;
+    let results = catalog_results(catalog.as_ref().map(String::as_str));
+    if results.iter().all(|(_, result)| result.is_ok())
+        && let Ok(catalog) = catalog
+        && let Err(error) = store_cached_catalog(fs, path.to_path_buf(), catalog).await
+    {
+        log::warn!("Failed to cache OpenCode model catalog: {error:#}");
     }
-}
-
-async fn fetch_model_catalog(
-    client: Arc<dyn HttpClient>,
-    executor: BackgroundExecutor,
-) -> Result<String> {
-    let fetch = fetch_catalog_resource(client.as_ref(), RICH_MODEL_CATALOG_URL).fuse();
-    let timeout = executor.timer(MODEL_CATALOG_FETCH_TIMEOUT).fuse();
-    futures::pin_mut!(fetch, timeout);
-    futures::select_biased! {
-        result = fetch => result,
-        _ = timeout => bail!("OpenCode model catalog request timed out"),
-    }
-}
-
-async fn fetch_catalog_resource(client: &dyn HttpClient, url: &str) -> Result<String> {
-    // Catalogs are public; completion credentials and custom headers must not be sent here.
-    let request = Request::builder().method(Method::GET).uri(url);
-    let mut response = client
-        .send(request.body(AsyncBody::empty())?)
-        .await
-        .with_context(|| format!("requesting OpenCode catalog at {url}"))?;
-    if !response.status().is_success() {
-        bail!(
-            "OpenCode catalog request to {url} returned {}",
-            response.status()
-        );
-    }
-    let mut body = String::new();
-    response
-        .body_mut()
-        .take(MODEL_CATALOG_RESPONSE_LIMIT_BYTES)
-        .read_to_string(&mut body)
-        .await?;
-    Ok(body)
+    results
 }
 
 struct ConfigurationView {
@@ -1447,6 +961,7 @@ mod tests {
     use http_client::{FakeHttpClient, Response};
     use language_model::{LanguageModelRequestMessage, MessageContent, Role};
     use parking_lot::Mutex;
+    use std::time::SystemTime;
 
     fn test_catalog() -> &'static str {
         r#"{
@@ -1586,10 +1101,11 @@ mod tests {
             .await
             .unwrap();
 
-        let (catalog, is_fresh) = load_cached_catalog(fs.as_ref(), &cache_path)
-            .await
-            .unwrap()
-            .unwrap();
+        let (catalog, is_fresh) =
+            load_cached_catalog(fs.clone(), &cache_path, &cx.background_executor)
+                .await
+                .unwrap()
+                .unwrap();
 
         assert!(is_fresh);
         assert_eq!(catalog, test_catalog());
@@ -1603,7 +1119,11 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(load_cached_catalog(fs.as_ref(), &cache_path).await.is_err());
+        assert!(
+            load_cached_catalog(fs.clone(), &cache_path, &cx.background_executor)
+                .await
+                .is_err()
+        );
         assert_eq!(fs.load(&cache_path).await.unwrap(), "not json");
     }
 
@@ -1828,6 +1348,50 @@ mod tests {
             ] {
                 let models = parse_discovered_models(&catalog.to_string(), subscription)?;
                 assert_eq!(models.len(), expected_count, "{subscription:?}: {catalog}",);
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_discovery_inherits_transport_unless_model_overrides_it() -> Result<()> {
+        for (model_provider, expected_protocol) in [
+            (serde_json::Value::Null, ApiProtocol::OpenAiChat),
+            (
+                serde_json::json!({"api": "https://opencode.ai/inference/openai/v1"}),
+                ApiProtocol::OpenAiChat,
+            ),
+            (
+                serde_json::json!({"npm": "@ai-sdk/anthropic"}),
+                ApiProtocol::Anthropic,
+            ),
+        ] {
+            let provider = serde_json::json!({
+                "npm": "@ai-sdk/openai-compatible",
+                "models": {
+                    "model": {
+                        "id": "model",
+                        "name": "Model",
+                        "tool_call": true,
+                        "modalities": {"output": ["text"]},
+                        "limit": {"context": 1000},
+                        "provider": model_provider,
+                    },
+                },
+            });
+            let catalog = serde_json::json!({
+                "opencode": provider,
+                "opencode-go": provider,
+            })
+            .to_string();
+            for subscription in [OpenCodeSubscription::Zen, OpenCodeSubscription::Go] {
+                let models = parse_discovered_models(&catalog, subscription)?;
+                assert_eq!(models.len(), 1, "{subscription:?}: {model_provider}");
+                assert_eq!(
+                    models[0].model.protocol(),
+                    expected_protocol,
+                    "{subscription:?}: {model_provider}",
+                );
             }
         }
         Ok(())

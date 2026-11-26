@@ -301,12 +301,22 @@ impl Onboarding {
     }
 }
 
+/// The pinned header and the scrolling body share this so they stay aligned.
+fn content_column() -> Div {
+    v_flex()
+        .min_w_0()
+        .max_w(rems_from_px(780_f32))
+        .w_full()
+        .mx_auto()
+        .px_12()
+}
+
 impl Render for Onboarding {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+        v_flex()
             .image_cache(gpui::retain_all("onboarding-page"))
             .key_context({
-                let mut ctx = KeyContext::new_with_defaults();
+                let mut ctx = KeyContext::new_with_defaults(cx.platform_info().os);
                 ctx.add("Onboarding");
                 ctx.add("menu");
                 ctx
@@ -325,62 +335,66 @@ impl Render for Onboarding {
                 window.focus_prev(cx);
                 cx.notify();
             }))
-            .vertical_scrollbar_for(&self.scroll_handle, window, cx)
             .child(
-                div()
-                    .id("page-content")
-                    .size_full()
-                    .overflow_y_scroll()
+                content_column()
+                    .flex_none()
+                    .pt_12()
+                    .gap_6()
                     .child(
-                        v_flex()
-                            .min_w_0()
-                            .max_w(rems_from_px(780_f32))
+                        h_flex()
                             .w_full()
-                            .mx_auto()
-                            .p_12()
-                            .gap_6()
+                            .gap_4()
+                            .justify_between()
                             .child(
                                 h_flex()
-                                    .w_full()
                                     .gap_4()
-                                    .justify_between()
+                                    .child(Vector::square(VectorName::ZedLogo, rems(2.5)))
                                     .child(
-                                        h_flex()
-                                            .gap_4()
-                                            .child(Vector::square(VectorName::ZedLogo, rems(2.5)))
+                                        v_flex()
                                             .child(
-                                                v_flex()
-                                                    .child(
-                                                        Headline::new("Welcome to Zed")
-                                                            .size(HeadlineSize::Small),
-                                                    )
-                                                    .child(
-                                                        Label::new("The editor for what's next")
-                                                            .color(Color::Muted)
-                                                            .size(LabelSize::Small)
-                                                            .italic(),
-                                                    ),
+                                                Headline::new("Welcome to Zed")
+                                                    .size(HeadlineSize::Small),
+                                            )
+                                            .child(
+                                                Label::new("The editor for what's next")
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::Small)
+                                                    .italic(),
                                             ),
-                                    )
-                                    .child({
-                                        Button::new("finish_setup", "Finish Setup")
-                                            .style(ButtonStyle::Filled)
-                                            .size(ButtonSize::Medium)
-                                            .width(rems_from_px(200_f32))
-                                            .key_binding(KeyBinding::for_action_in(
-                                                &Finish,
-                                                &self.focus_handle,
-                                                cx,
-                                            ))
-                                            .on_click(|_, window, cx| {
-                                                window.dispatch_action(Finish.boxed_clone(), cx);
-                                            })
-                                    }),
+                                    ),
                             )
-                            .child(Divider::horizontal().color(ui::DividerColor::BorderVariant))
-                            .child(self.render_page(cx)),
+                            .child({
+                                Button::new("finish_setup", "Finish Setup")
+                                    .style(ButtonStyle::Filled)
+                                    .size(ButtonSize::Medium)
+                                    .width(rems_from_px(200_f32))
+                                    .key_binding(KeyBinding::for_action_in(
+                                        &Finish,
+                                        &self.focus_handle,
+                                        cx,
+                                    ))
+                                    .on_click(|_, window, cx| {
+                                        window.dispatch_action(Finish.boxed_clone(), cx);
+                                    })
+                            }),
                     )
-                    .track_scroll(&self.scroll_handle),
+                    .child(Divider::horizontal().color(ui::DividerColor::BorderVariant)),
+            )
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .vertical_scrollbar_for(&self.scroll_handle, window, cx)
+                    .child(
+                        div()
+                            .id("page-content")
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.scroll_handle)
+                            .child(content_column().pt_6().pb_12().child(self.render_page(cx))),
+                    ),
             )
     }
 }

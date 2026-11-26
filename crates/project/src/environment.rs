@@ -66,6 +66,11 @@ impl ProjectEnvironment {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn inherited_cli_environment(&self) -> Option<&HashMap<String, String>> {
+        self.cli_environment.as_ref()
+    }
+
     /// Returns the inherited CLI environment, if this project was opened from the Zed CLI.
     pub(crate) fn get_cli_environment(&self) -> Option<HashMap<String, String>> {
         if cfg!(any(test, feature = "test-support")) {
@@ -122,7 +127,7 @@ impl ProjectEnvironment {
 
         let remote_client = self.remote_client.as_ref().and_then(|it| it.upgrade());
         match remote_client {
-            Some(remote_client) => remote_client.clone().read(cx).shell().map(|shell| {
+            Some(remote_client) => remote_client.read(cx).shell().map(|shell| {
                 self.remote_directory_environment(
                     &Shell::Program(shell),
                     abs_path,
@@ -145,7 +150,7 @@ impl ProjectEnvironment {
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
         let remote_client = self.remote_client.as_ref().and_then(|it| it.upgrade());
         match remote_client {
-            Some(remote_client) => remote_client.clone().read(cx).shell().map(|shell| {
+            Some(remote_client) => remote_client.read(cx).shell().map(|shell| {
                 self.remote_directory_environment(
                     &Shell::Program(shell),
                     abs_path,

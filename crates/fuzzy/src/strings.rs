@@ -194,7 +194,7 @@ where
         return Vec::new();
     }
 
-    let mut results = segment_results.concat();
+    let mut results = segment_results.into_iter().flatten().collect::<Vec<_>>();
     rank_matches(&mut results, max_results);
     results
 }

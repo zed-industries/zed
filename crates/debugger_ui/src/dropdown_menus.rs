@@ -94,7 +94,7 @@ impl DebugPanel {
         let running_state = running_state?;
 
         let mut session_entries = Vec::with_capacity(self.sessions_with_children.len() * 3);
-        let mut sessions_with_children = self.sessions_with_children.iter().peekable();
+        let mut sessions_with_children = self.sessions_with_children.iter();
 
         while let Some((root, children)) = sessions_with_children.next() {
             let root_entry = if let Ok([single_child]) = <&[_; 1]>::try_from(children.as_slice())
@@ -103,7 +103,7 @@ impl DebugPanel {
             {
                 sessions_with_children.next();
                 SessionListEntry {
-                    leaf: single_child.clone(),
+                    leaf: single_child,
                     ancestors: vec![root.clone()],
                 }
             } else {
@@ -197,7 +197,7 @@ impl DebugPanel {
                         },
                         {
                             let weak = weak.clone();
-                            let leaf = session_entry.leaf.clone();
+                            let leaf = session_entry.leaf;
                             move |window, cx| {
                                 weak.update(cx, |panel, cx| {
                                     panel.activate_session(leaf.clone(), window, cx);

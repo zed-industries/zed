@@ -1,5 +1,5 @@
 use crate::{AcpThread, ElicitationStore, ReceiptSubmission};
-use agent_client_protocol::schema::{MaybeUndefined, v1 as acp_v1, v2 as acp_v2};
+use agent_client_protocol::{schema::MaybeUndefined, v1::schema as acp_v1, v2::schema as acp_v2};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet, IndexMap};
@@ -92,6 +92,13 @@ pub fn build_terminal_auth_task(
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AgentDescriptionFormat {
+    #[default]
+    PlainText,
+    Markdown,
+}
+
 pub trait AgentConnection {
     fn agent_id(&self) -> AgentId;
 
@@ -100,6 +107,16 @@ pub trait AgentConnection {
     fn agent_version(&self) -> Option<SharedString> {
         None
     }
+
+    /// Native and v1 descriptions remain literal after conversion to v2 schema types.
+    fn description_format(&self) -> AgentDescriptionFormat {
+        AgentDescriptionFormat::PlainText
+    }
+
+    /// Initiate shutdown of connection-owned resources when their shared UI owner ends.
+    /// This is independent of session close and may leave retained models alive.
+    /// It does not wait for process exit or a complete protocol drain.
+    fn shutdown(&self) {}
 
     fn new_session(
         self: Rc<Self>,
@@ -128,6 +145,18 @@ pub trait AgentConnection {
     /// Whether this agent supports explicitly closing existing sessions.
     fn supports_close_session(&self) -> bool {
         false
+    }
+
+    /// Whether subagents follow the ACP subagents RFD on this connection: they are discovered
+    /// only through their parent's announcements, and must never be loaded or resumed.
+    fn announces_subagents(&self) -> bool {
+        false
+    }
+
+    /// Whether cancelling a session's work answers its pending permission requests with
+    /// `cancelled` locally instead of waiting for the agent to cancel them.
+    fn answers_permission_requests_on_cancel(&self) -> bool {
+        true
     }
 
     /// Whether conversation teardown should invoke `close_session`.
@@ -177,6 +206,13 @@ pub trait AgentConnection {
     }
 
     fn auth_methods(&self) -> &[acp_v2::AuthMethod];
+
+    /// A snapshot belongs to the live process, not to a session or a saved agent configuration.
+    fn auth_status(&self) -> Option<watch::Receiver<Option<acp_v2::AuthStatusResponse>>> {
+        None
+    }
+
+    fn refresh_auth_status(&self, _cx: &App) {}
 
     fn terminal_auth_task(
         &self,
@@ -242,6 +278,32 @@ pub trait AgentConnection {
 
     /// Requests cancellation; success does not establish that execution stopped.
     fn cancel(&self, session_id: &acp_v2::SessionId, cx: &mut App) -> Result<()>;
+
+    /// Asks the agent to stop one tool call. Success means the agent accepted the request;
+    /// the tool call's own updates report when it stops.
+    fn cancel_tool_call(
+        &self,
+        _session_id: &acp_v2::SessionId,
+        _tool_call_id: &acp_v2::ToolCallId,
+        _cx: &mut App,
+    ) -> Task<Result<()>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "Cancelling tool calls is not supported"
+        )))
+    }
+
+    /// Asks the agent to stop one terminal's process. Success means the agent accepted the
+    /// request; the terminal's exit status reports when it stops.
+    fn cancel_terminal(
+        &self,
+        _session_id: &acp_v2::SessionId,
+        _terminal_id: &acp_v2::TerminalId,
+        _cx: &mut App,
+    ) -> Task<Result<()>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "Cancelling terminals is not supported"
+        )))
+    }
 
     /// Request-scoped elicitations are connection-level because they can arrive before a session
     /// thread exists. Session-scoped elicitations stay in the thread timeline, but use
@@ -380,6 +442,15 @@ pub trait AgentSessionModes {
 pub trait AgentSessionConfigOptions {
     /// Get all current config options with their state
     fn config_options(&self) -> Vec<acp_v2::SessionConfigOption>;
+
+    fn description_format(&self) -> AgentDescriptionFormat {
+        AgentDescriptionFormat::PlainText
+    }
+
+    /// Agent-owned sessions may report configuration without allowing the client to change it.
+    fn is_read_only(&self) -> bool {
+        false
+    }
 
     /// Set a config option value
     /// Returns the full updated list of config options
@@ -567,6 +638,13 @@ pub struct ProtocolErrorInfo<'a> {
 
 impl<'a> ProtocolErrorInfo<'a> {
     pub fn from_error(error: &'a anyhow::Error) -> Option<Self> {
+        if let Some(error) = error.downcast_ref::<agent_client_protocol::Error>() {
+            return Some(Self {
+                code: error.code.into(),
+                message: &error.message,
+                data: error.data.as_ref(),
+            });
+        }
         if let Some(error) = error.downcast_ref::<acp_v1::Error>() {
             return Some(Self {
                 code: error.code.into(),
@@ -645,6 +723,11 @@ pub trait AgentModelSelector: 'static {
     /// A task resolving to `Ok(())` on success or an error.
     fn select_model(&self, model_id: AgentModelId, cx: &mut App) -> Task<Result<()>>;
 
+    /// Makes the session thread-only: from then on, the models selected in it
+    /// are no longer saved as the user's default. Agents that never save one
+    /// have nothing to do.
+    fn mark_thread_only(&self, _cx: &mut App) {}
+
     /// Retrieves the currently selected model for a specific session (thread).
     ///
     /// # Parameters
@@ -708,10 +791,6 @@ impl AgentModelList {
             AgentModelList::Flat(models) => models.is_empty(),
             AgentModelList::Grouped(groups) => groups.is_empty(),
         }
-    }
-
-    pub fn is_flat(&self) -> bool {
-        matches!(self, AgentModelList::Flat(_))
     }
 }
 
@@ -905,7 +984,7 @@ mod test_support {
     use action_log::ActionLog;
     use collections::{HashMap, VecDeque};
     use futures::{channel::oneshot, future::try_join_all};
-    use gpui::{AppContext as _, WeakEntity};
+    use gpui::{AppContext as _, Entity, WeakEntity};
     use parking_lot::Mutex;
 
     use crate::AuthorizationKind;
@@ -961,6 +1040,10 @@ mod test_support {
         permission_requests: HashMap<acp_v2::ToolCallId, PermissionOptions>,
         next_prompt_updates: Arc<Mutex<Vec<StubPromptUpdate>>>,
         next_prompt_response: Arc<Mutex<Option<oneshot::Receiver<Result<acp_v1::PromptResponse>>>>>,
+        auth_methods: Vec<acp_v2::AuthMethod>,
+        description_format: AgentDescriptionFormat,
+        next_authenticate_response: Arc<Mutex<Option<oneshot::Receiver<Result<()>>>>>,
+        next_load_error: Arc<Mutex<Option<anyhow::Error>>>,
         next_receipt_response:
             Arc<Mutex<Option<oneshot::Receiver<Result<acp_v2::PromptResponse>>>>>,
         receipt_prompt: Arc<Mutex<Option<Vec<acp_v2::ContentBlock>>>>,
@@ -969,14 +1052,16 @@ mod test_support {
         next_close_responses: Arc<Mutex<VecDeque<oneshot::Receiver<Result<()>>>>>,
         set_title_calls: Arc<Mutex<Vec<(acp_v2::SessionId, SharedString)>>>,
         cancel_calls: Arc<Mutex<Vec<acp_v2::SessionId>>>,
+        shutdown_calls: Arc<AtomicUsize>,
         next_cancel_error: Arc<Mutex<Option<anyhow::Error>>>,
         supports_receipt_submissions: bool,
         supports_retry: bool,
         supports_load_session: bool,
         supports_close_session: bool,
+        announces_subagents: bool,
         close_sessions_on_release: bool,
-        supports_session_additional_directories: bool,
         supports_set_title: bool,
+        supports_truncate: bool,
         agent_id: AgentId,
         telemetry_id: SharedString,
         prompt_capabilities_rx: watch::Receiver<acp_v2::PromptCapabilities>,
@@ -1005,6 +1090,10 @@ mod test_support {
             Self {
                 next_prompt_updates: Default::default(),
                 next_prompt_response: Default::default(),
+                auth_methods: Vec::new(),
+                description_format: AgentDescriptionFormat::PlainText,
+                next_authenticate_response: Default::default(),
+                next_load_error: Default::default(),
                 next_receipt_response: Default::default(),
                 receipt_prompt: Default::default(),
                 next_truncate: Default::default(),
@@ -1012,6 +1101,7 @@ mod test_support {
                 next_close_responses: Default::default(),
                 set_title_calls: Default::default(),
                 cancel_calls: Default::default(),
+                shutdown_calls: Default::default(),
                 next_cancel_error: Default::default(),
                 permission_requests: HashMap::default(),
                 sessions: Arc::default(),
@@ -1019,9 +1109,10 @@ mod test_support {
                 supports_retry: false,
                 supports_load_session: false,
                 supports_close_session: false,
+                announces_subagents: false,
                 close_sessions_on_release: true,
-                supports_session_additional_directories: false,
                 supports_set_title: true,
+                supports_truncate: true,
                 agent_id: AgentId::new("stub"),
                 telemetry_id: "stub".into(),
                 prompt_capabilities_rx: watch::Receiver::constant(
@@ -1031,6 +1122,14 @@ mod test_support {
                         .embedded_context(acp_v2::PromptEmbeddedContextCapabilities::new()),
                 ),
             }
+        }
+
+        pub fn set_next_load_error(&self, error: anyhow::Error) {
+            *self.next_load_error.lock() = Some(error);
+        }
+
+        pub fn shutdown_calls(&self) -> usize {
+            self.shutdown_calls.load(Ordering::SeqCst)
         }
 
         pub fn set_next_prompt_updates(&self, updates: Vec<acp_v1::SessionUpdate>) {
@@ -1055,6 +1154,27 @@ mod test_support {
         ) -> oneshot::Sender<Result<acp_v1::PromptResponse>> {
             let (sender, receiver) = oneshot::channel();
             assert!(self.next_prompt_response.lock().replace(receiver).is_none());
+            sender
+        }
+
+        pub fn with_auth_methods(mut self, methods: Vec<acp_v2::AuthMethod>) -> Self {
+            self.auth_methods = methods;
+            self
+        }
+
+        pub fn with_description_format(mut self, format: AgentDescriptionFormat) -> Self {
+            self.description_format = format;
+            self
+        }
+
+        pub fn defer_next_authenticate_response(&self) -> oneshot::Sender<Result<()>> {
+            let (sender, receiver) = oneshot::channel();
+            assert!(
+                self.next_authenticate_response
+                    .lock()
+                    .replace(receiver)
+                    .is_none()
+            );
             sender
         }
 
@@ -1089,6 +1209,18 @@ mod test_support {
             sender
         }
 
+        /// Makes a session this connection did not create, such as an ACP subagent, known to
+        /// it, as a real connection knows the subagents it announced.
+        pub fn track_session(&self, thread: &Entity<AcpThread>, cx: &App) {
+            self.sessions.lock().insert(
+                thread.read(cx).session_id().clone(),
+                Session {
+                    thread: thread.downgrade(),
+                    response_tx: None,
+                },
+            );
+        }
+
         pub fn take_cancel_calls(&self) -> Vec<acp_v2::SessionId> {
             std::mem::take(&mut *self.cancel_calls.lock())
         }
@@ -1121,6 +1253,11 @@ mod test_support {
             self
         }
 
+        pub fn with_announced_subagents(mut self, announces_subagents: bool) -> Self {
+            self.announces_subagents = announces_subagents;
+            self
+        }
+
         pub fn with_close_sessions_on_release(mut self, close_sessions_on_release: bool) -> Self {
             self.close_sessions_on_release = close_sessions_on_release;
             self
@@ -1144,16 +1281,13 @@ mod test_support {
             self
         }
 
-        pub fn with_supports_session_additional_directories(
-            mut self,
-            supports_session_additional_directories: bool,
-        ) -> Self {
-            self.supports_session_additional_directories = supports_session_additional_directories;
+        pub fn with_supports_set_title(mut self, supports_set_title: bool) -> Self {
+            self.supports_set_title = supports_set_title;
             self
         }
 
-        pub fn with_supports_set_title(mut self, supports_set_title: bool) -> Self {
-            self.supports_set_title = supports_set_title;
+        pub fn with_supports_truncate(mut self, supports_truncate: bool) -> Self {
+            self.supports_truncate = supports_truncate;
             self
         }
 
@@ -1235,6 +1369,14 @@ mod test_support {
     }
 
     impl AgentConnection for StubAgentConnection {
+        fn description_format(&self) -> AgentDescriptionFormat {
+            self.description_format
+        }
+
+        fn shutdown(&self) {
+            self.shutdown_calls.fetch_add(1, Ordering::SeqCst);
+        }
+
         fn agent_id(&self) -> AgentId {
             self.agent_id.clone()
         }
@@ -1244,7 +1386,7 @@ mod test_support {
         }
 
         fn auth_methods(&self) -> &[acp_v2::AuthMethod] {
-            &[]
+            &self.auth_methods
         }
 
         fn model_selector(
@@ -1273,6 +1415,10 @@ mod test_support {
             self.supports_close_session
         }
 
+        fn announces_subagents(&self) -> bool {
+            self.announces_subagents
+        }
+
         fn should_close_sessions_on_release(&self) -> bool {
             self.supports_close_session && self.close_sessions_on_release
         }
@@ -1292,10 +1438,6 @@ mod test_support {
             }
         }
 
-        fn supports_session_additional_directories(&self) -> bool {
-            self.supports_session_additional_directories
-        }
-
         fn load_session(
             self: Rc<Self>,
             session_id: acp_v2::SessionId,
@@ -1308,6 +1450,9 @@ mod test_support {
                 return Task::ready(Err(anyhow::Error::msg("Loading sessions is not supported")));
             }
 
+            if let Some(error) = self.next_load_error.lock().take() {
+                return Task::ready(Err(error));
+            }
             let thread = self.create_session(session_id, project, work_dirs, title, cx);
             Task::ready(Ok(thread))
         }
@@ -1315,9 +1460,14 @@ mod test_support {
         fn authenticate(
             &self,
             _method_id: acp_v2::AuthMethodId,
-            _cx: &mut App,
+            cx: &mut App,
         ) -> Task<gpui::Result<()>> {
-            unimplemented!()
+            match self.next_authenticate_response.lock().take() {
+                Some(response) => cx.spawn(async move |_| response.await?),
+                None => Task::ready(Err(anyhow::Error::msg(
+                    "No deferred authentication response",
+                ))),
+            }
         }
 
         fn validate_prompt_content(&self, content: &[acp_v2::ContentBlock]) -> Result<()> {
@@ -1464,9 +1614,11 @@ mod test_support {
             _cx: &App,
         ) -> Option<Rc<dyn AgentSessionTruncate>> {
             // Capability checks also call this; only run may consume the gate.
-            Some(Rc::new(StubAgentSessionEditor {
-                next_truncate: self.next_truncate.clone(),
-            }))
+            self.supports_truncate.then(|| {
+                Rc::new(StubAgentSessionEditor {
+                    next_truncate: self.next_truncate.clone(),
+                }) as Rc<dyn AgentSessionTruncate>
+            })
         }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {

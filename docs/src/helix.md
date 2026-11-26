@@ -17,6 +17,16 @@ For a detailed list of Helix's default keybindings, please visit the [official H
 
 ## Core differences
 
+By default, Zed's Helix mode uses the system clipboard for yanking, deleting, and pasting. To match Helix's behavior and use internal registers instead, set `vim.use_system_clipboard` to `"never"`. You can always access the system clipboard by explicitly using `+` as the register.
+
+```json [settings]
+{
+  "vim": {
+    "use_system_clipboard": "never"
+  }
+}
+```
+
 Any text object that works with `m i` or `m a` also works with `]` and `[`, so for example `] (` selects the next pair of parentheses after the cursor.
 
 In Helix mode, some text object keys follow Helix's meanings instead of Vim's: `m i m` and `m a m` select the closest surrounding pair of any kind (brackets, quotes, backticks, or vertical bars), `t` is the type/class text object, `c` is the comment text object, and `x` is the (X)HTML element text object.

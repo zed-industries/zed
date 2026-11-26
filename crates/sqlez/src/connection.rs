@@ -2,7 +2,6 @@ use std::{
     cell::RefCell,
     ffi::{CStr, CString},
     marker::PhantomData,
-    path::Path,
     ptr,
 };
 
@@ -100,11 +99,6 @@ impl Connection {
             sqlite3_backup_finish(backup);
             destination.last_error()
         }
-    }
-
-    pub fn backup_main_to(&self, destination: impl AsRef<Path>) -> Result<()> {
-        let destination = Self::open_file(destination.as_ref().to_string_lossy().as_ref());
-        self.backup_main(&destination)
     }
 
     pub fn sql_has_syntax_error(&self, sql: &str) -> Option<(String, usize)> {

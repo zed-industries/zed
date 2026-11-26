@@ -203,7 +203,6 @@ pub enum ToolChoice {
 #[derive(Clone, Deserialize, Serialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolDefinition {
-    #[allow(dead_code)]
     Function { function: FunctionDefinition },
 }
 
@@ -302,39 +301,6 @@ impl From<String> for MessageContent {
 impl From<&str> for MessageContent {
     fn from(text: &str) -> Self {
         Self::Plain(text.to_string())
-    }
-}
-
-impl MessageContent {
-    pub fn as_text(&self) -> Option<&str> {
-        match self {
-            Self::Plain(text) => Some(text),
-            Self::Multipart(parts) if parts.len() == 1 => {
-                if let MessagePart::Text { text, .. } = &parts[0] {
-                    Some(text)
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
-    }
-
-    pub fn to_text(&self) -> String {
-        match self {
-            Self::Plain(text) => text.clone(),
-            Self::Multipart(parts) => parts
-                .iter()
-                .filter_map(|part| {
-                    if let MessagePart::Text { text, .. } = part {
-                        Some(text.as_str())
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>()
-                .concat(),
-        }
     }
 }
 

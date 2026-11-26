@@ -19,8 +19,8 @@ use workspace::{ModalView, Workspace};
 
 use crate::agent_configuration::manage_profiles_modal::profile_modal_header::ProfileModalHeader;
 use crate::agent_configuration::tool_picker::{ToolPicker, ToolPickerDelegate};
-use crate::language_model_selector::{LanguageModelSelector, language_model_selector};
 use crate::{AgentPanel, ManageProfiles};
+use language_model_selector::{LanguageModelPicker, language_model_picker};
 
 enum Mode {
     ChooseProfile(ChooseProfileMode),
@@ -38,7 +38,7 @@ enum Mode {
     },
     ConfigureDefaultModel {
         profile_id: AgentProfileId,
-        model_picker: Entity<LanguageModelSelector>,
+        model_picker: Entity<LanguageModelPicker>,
         _subscription: Subscription,
     },
 }
@@ -229,7 +229,7 @@ impl ManageProfilesModal {
         let model_picker = cx.new(|cx| {
             let profile_id = profile_id_for_closure.clone();
 
-            language_model_selector(
+            language_model_picker(
                 {
                     let profile_id = profile_id.clone();
                     move |cx| {
@@ -280,7 +280,7 @@ impl ManageProfilesModal {
                 {
                     let fs = fs.clone();
                     move |model, should_be_favorite, cx| {
-                        crate::favorite_models::toggle_in_settings(
+                        language_model_selector::toggle_in_settings(
                             model,
                             should_be_favorite,
                             fs.clone(),

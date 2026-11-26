@@ -197,9 +197,10 @@ where
 mod test {
     use std::{path::PathBuf, sync::Arc};
 
+    use anyhow::anyhow;
     use fs::{FakeFs, Fs};
     use gpui::TestAppContext;
-    use http_client::{FakeHttpClient, anyhow};
+    use http_client::FakeHttpClient;
     use serde::Deserialize;
 
     use crate::oci::{

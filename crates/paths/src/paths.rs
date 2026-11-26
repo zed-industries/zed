@@ -260,20 +260,6 @@ pub fn database_dir() -> &'static PathBuf {
     DATABASE_DIR.get_or_init(|| data_dir().join("db"))
 }
 
-/// Returns the path to the crashes directory, if it exists for the current platform.
-pub fn crashes_dir() -> &'static Option<PathBuf> {
-    static CRASHES_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
-    CRASHES_DIR.get_or_init(|| {
-        cfg!(target_os = "macos").then_some(home_dir().join("Library/Logs/DiagnosticReports"))
-    })
-}
-
-/// Returns the path to the retired crashes directory, if it exists for the current platform.
-pub fn crashes_retired_dir() -> &'static Option<PathBuf> {
-    static CRASHES_RETIRED_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
-    CRASHES_RETIRED_DIR.get_or_init(|| crashes_dir().as_ref().map(|dir| dir.join("Retired")))
-}
-
 /// Returns the path to the `settings.json` file.
 pub fn settings_file() -> &'static PathBuf {
     static SETTINGS_FILE: OnceLock<PathBuf> = OnceLock::new();
@@ -421,20 +407,6 @@ pub fn prompt_overrides_dir(repo_path: Option<&Path>) -> PathBuf {
         .clone()
 }
 
-/// Returns the path to the semantic search's embeddings directory.
-///
-/// This is where the embeddings used to power semantic search are stored.
-pub fn embeddings_dir() -> &'static PathBuf {
-    static EMBEDDINGS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    EMBEDDINGS_DIR.get_or_init(|| {
-        if cfg!(target_os = "macos") {
-            config_dir().join("embeddings")
-        } else {
-            data_dir().join("embeddings")
-        }
-    })
-}
-
 /// Returns the path to the languages directory.
 ///
 /// This is where language servers are downloaded to for languages built-in to Zed.
@@ -475,12 +447,6 @@ pub fn default_prettier_dir() -> &'static PathBuf {
 pub fn remote_servers_dir() -> &'static PathBuf {
     static REMOTE_SERVERS_DIR: OnceLock<PathBuf> = OnceLock::new();
     REMOTE_SERVERS_DIR.get_or_init(|| data_dir().join("remote_servers"))
-}
-
-/// Returns the path to the directory where the devcontainer CLI is installed.
-pub fn devcontainer_dir() -> &'static PathBuf {
-    static DEVCONTAINER_DIR: OnceLock<PathBuf> = OnceLock::new();
-    DEVCONTAINER_DIR.get_or_init(|| data_dir().join("devcontainer"))
 }
 
 /// Returns the relative path to a `.zed` folder within a project.

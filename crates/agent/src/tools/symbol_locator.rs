@@ -34,8 +34,6 @@ pub type CodeActionStore = Entity<Option<PendingCodeActions>>;
 pub struct ResolvedSymbol {
     pub buffer: Entity<Buffer>,
     pub position: Anchor,
-    pub line_text: String,
-    pub truncated: bool,
 }
 
 pub const MAX_LINE_DISPLAY_LEN: usize = 200;
@@ -165,7 +163,7 @@ impl SymbolLocator {
             .await
             .map_err(|e| format!("Failed to open '{}': {e}", self.file_path))?;
 
-        let (position, line_text, truncated) = buffer.read_with(cx, |buffer, _cx| {
+        let position = buffer.read_with(cx, |buffer, _cx| {
             let snapshot = buffer.snapshot();
             let row = line.saturating_sub(1);
 
@@ -177,7 +175,6 @@ impl SymbolLocator {
             }
 
             let line_len = snapshot.line_len(row);
-            let truncated = line_len as usize > MAX_LINE_DISPLAY_LEN;
             let line_start = Point::new(row, 0);
             let line_end = Point::new(row, line_len);
             let line_chars = || {
@@ -198,22 +195,10 @@ impl SymbolLocator {
                 )
             })?;
 
-            let position = snapshot.anchor_before(Point::new(row, byte_offset as u32));
-            let display_text: String = line_chars()
-                .skip_while(|c| c.is_whitespace())
-                .take(MAX_LINE_DISPLAY_LEN)
-                .collect::<String>();
-            let display_text = display_text.trim_end().to_string();
-
-            Ok((position, display_text, truncated))
+            Ok(snapshot.anchor_before(Point::new(row, byte_offset as u32)))
         })?;
 
-        Ok(ResolvedSymbol {
-            buffer,
-            position,
-            line_text,
-            truncated,
-        })
+        Ok(ResolvedSymbol { buffer, position })
     }
 }
 

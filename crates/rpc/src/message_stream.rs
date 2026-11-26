@@ -1,5 +1,3 @@
-#![allow(non_snake_case)]
-
 pub use ::proto::*;
 
 use async_tungstenite::tungstenite::Message as WebSocketMessage;

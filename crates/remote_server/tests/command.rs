@@ -24,7 +24,7 @@ fn tcp_command_keeps_adapter_logs_out_of_dap() -> Result<()> {
             let address = listener.local_addr()?;
             let directory = tempfile::tempdir()?;
             let marker = directory.path().join("adapter-logged");
-            let mut child = Command::new(env!("CARGO_BIN_EXE_remote_server"))
+            let mut child = Command::new(env!("CARGO_BIN_EXE_remote-server"))
                 .args(["tcp", &address.to_string(), "5000", "--", "/bin/sh", "-c"])
                 .arg(r#"printf 'adapter log'; : > "$1"; exec sleep 30"#)
                 .arg("adapter")
@@ -73,7 +73,7 @@ fn tcp_command_reports_adapter_spawn_failure() -> Result<()> {
     smol::block_on(async {
         let directory = tempfile::tempdir()?;
         let missing_adapter = directory.path().join("missing-adapter");
-        let output = Command::new(env!("CARGO_BIN_EXE_remote_server"))
+        let output = Command::new(env!("CARGO_BIN_EXE_remote-server"))
             .args(["tcp", "127.0.0.1:0", "5000", "--"])
             .arg(missing_adapter)
             .output()
@@ -255,7 +255,7 @@ fn test_remote_command_inherits_shell_environment() -> Result<()> {
                 working_dir: None,
             };
             let exec =
-                stdio_launcher_command(ShellKind::Posix, env!("CARGO_BIN_EXE_remote_server"))?;
+                stdio_launcher_command(ShellKind::Posix, env!("CARGO_BIN_EXE_remote-server"))?;
             let mut child = shell_launcher(home.path(), &exec).spawn()?;
             child
                 .stdin
@@ -822,7 +822,7 @@ fn test_remote_command_launcher_survives_local_nushell() -> Result<()> {
 }
 
 fn launcher() -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_remote_server"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_remote-server"));
     command
         .arg("exec")
         .stdin(Stdio::piped())
@@ -835,7 +835,7 @@ fn install_helper(home: &std::path::Path) -> Result<String> {
     let helper_directory = home.join(".local/share/zed");
     std::fs::create_dir_all(&helper_directory)?;
     let helper = helper_directory.join("remote server");
-    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_remote_server"), &helper)?;
+    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_remote-server"), &helper)?;
     Ok(helper.display().to_string())
 }
 

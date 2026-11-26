@@ -4,6 +4,10 @@ version = "0.1.0"
 publish.workspace = true
 edition.workspace = true
 
+[[bin]]
+name = "fs-benchmarks"
+path = "src/main.rs"
+
 [dependencies]
 fs.workspace = true
 gpui.workspace = true

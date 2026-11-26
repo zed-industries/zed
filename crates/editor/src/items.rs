@@ -17,6 +17,7 @@ use gpui::{
     AnyElement, App, AsyncWindowContext, Context, Entity, EntityId, EventEmitter, Font,
     IntoElement, ParentElement, Pixels, SharedString, Styled, Task, WeakEntity, Window, point,
 };
+use itertools::Itertools as _;
 use language::{
     Bias, Buffer, BufferRow, CharKind, CharScopeContext, HighlightedText, LocalFile, PLAIN_TEXT,
     Point, SelectionGoal,
@@ -796,15 +797,9 @@ impl Item for Editor {
         };
 
         let description = params.detail.and_then(|detail| {
-            let path = path_for_buffer(&self.buffer, detail, false, cx)?;
-            let description = path.trim();
-
-            if description.is_empty() {
-                return None;
-            }
-
+            let description = self.tab_description(detail, cx)?;
             Some(util::truncate_and_trailoff(
-                description,
+                &description,
                 params.max_title_len.unwrap_or(MAX_TAB_TITLE_LEN),
             ))
         });
@@ -925,23 +920,8 @@ impl Item for Editor {
         self.capability(cx)
     }
 
-    // Note: this mirrors the logic in `Editor::toggle_read_only`, but is reachable
-    // without relying on focus-based action dispatch.
-    fn toggle_read_only(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(buffer) = self.buffer.read(cx).as_singleton() {
-            buffer.update(cx, |buffer, cx| {
-                buffer.set_capability(
-                    match buffer.capability() {
-                        Capability::ReadWrite => Capability::Read,
-                        Capability::Read => Capability::ReadWrite,
-                        Capability::ReadOnly => Capability::ReadOnly,
-                    },
-                    cx,
-                );
-            });
-        }
-        cx.notify();
-        window.refresh();
+    fn read_only_toggle_buffer(&self, cx: &App) -> Option<Entity<Buffer>> {
+        self.buffer.read(cx).as_singleton()
     }
 
     fn has_deleted_file(&self, cx: &App) -> bool {
@@ -981,7 +961,7 @@ impl Item for Editor {
             self.report_editor_event(ReportEditorEvent::Saved { auto_saved: false }, None, cx);
         }
 
-        let buffers = self.buffer().clone().read(cx).all_buffers();
+        let buffers = self.buffer().read(cx).all_buffers();
         let buffers = buffers
             .into_iter()
             .map(|handle| handle.read(cx).base_buffer().unwrap_or(handle.clone()))
@@ -1653,6 +1633,17 @@ fn clip_ranges<'a>(
 impl EventEmitter<SearchEvent> for Editor {}
 
 impl Editor {
+    /// Panes keep increasing `detail` until tabs for files with the same name look different.
+    pub fn tab_description(&self, detail: usize, cx: &App) -> Option<SharedString> {
+        let path = path_for_buffer(&self.buffer, detail, false, cx)?;
+        let description = path.trim();
+        if description.is_empty() {
+            None
+        } else {
+            Some(description.to_string().into())
+        }
+    }
+
     pub fn update_restoration_data(
         &self,
         cx: &mut Context<Self>,
@@ -1797,7 +1788,25 @@ impl SearchableItem for Editor {
         }
 
         if let Some(range) = enabled {
-            let ranges = self.selections.disjoint_anchor_ranges().collect::<Vec<_>>();
+            let ranges = if self.selections.line_mode() {
+                let snapshot = self.display_snapshot(cx);
+                let buffer = snapshot.buffer_snapshot();
+                self.selections
+                    .all_adjusted(&snapshot)
+                    .into_iter()
+                    .map(|selection| selection.range())
+                    .coalesce(|previous, next| {
+                        if next.start <= previous.end {
+                            Ok(previous.start..previous.end.max(next.end))
+                        } else {
+                            Err((previous, next))
+                        }
+                    })
+                    .map(|line| buffer.anchor_before(line.start)..buffer.anchor_after(line.end))
+                    .collect::<Vec<_>>()
+            } else {
+                self.selections.disjoint_anchor_ranges().collect::<Vec<_>>()
+            };
 
             if ranges.iter().any(|s| s.start != s.end) {
                 self.set_search_within_ranges(&ranges, cx);
@@ -2607,7 +2616,38 @@ mod tests {
     use serde_json::json;
     use std::path::{Path, PathBuf};
     use util::{path, paths::PathWithPosition, rel_path::RelPath};
+    use workspace::item::ItemHandle as _;
     use workspace::path_link::{OpenTarget, OpenTargetFoundBy};
+
+    #[gpui::test]
+    fn test_read_only_toggle_requires_singleton_buffer(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let buffer = cx.new(|cx| Buffer::local("text", cx));
+        let (singleton_editor, cx) = cx.add_window_view({
+            let buffer = buffer.clone();
+            |window, cx| Editor::for_buffer(buffer, None, window, cx)
+        });
+        let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+        let multibuffer_editor = cx.new_window_entity(|window, cx| {
+            Editor::for_multibuffer(multibuffer.clone(), None, window, cx)
+        });
+
+        cx.update(|window, cx| {
+            assert_eq!(
+                singleton_editor.read_only_toggle_buffer(cx).as_ref(),
+                Some(&buffer)
+            );
+            singleton_editor.toggle_read_only(window, cx);
+            assert_eq!(buffer.read(cx).capability(), Capability::Read);
+            singleton_editor.toggle_read_only(window, cx);
+            assert_eq!(buffer.read(cx).capability(), Capability::ReadWrite);
+
+            assert_eq!(multibuffer_editor.read_only_toggle_buffer(cx), None);
+            multibuffer_editor.toggle_read_only(window, cx);
+            assert_eq!(multibuffer.read(cx).capability(), Capability::ReadWrite);
+        });
+    }
 
     #[gpui::test]
     fn test_path_for_file(cx: &mut App) {

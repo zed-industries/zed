@@ -1,5 +1,5 @@
 use gpui::{App, Context, Entity, IntoElement, ParentElement, Render, Subscription, div};
-use project::image_store::{ImageFormat, ImageMetadata};
+use project::image_store::{ImageFormat, ImageMetadata, RasterImageFormat};
 use settings::Settings;
 use ui::prelude::*;
 use util::size::format_file_size;
@@ -64,15 +64,18 @@ impl Render for ImageInfo {
 
         components.push(
             match metadata.format {
-                ImageFormat::Png => "PNG",
-                ImageFormat::Jpeg => "JPEG",
-                ImageFormat::Gif => "GIF",
-                ImageFormat::WebP => "WebP",
-                ImageFormat::Tiff => "TIFF",
-                ImageFormat::Bmp => "BMP",
-                ImageFormat::Ico => "ICO",
-                ImageFormat::Avif => "Avif",
-                _ => "Unknown",
+                ImageFormat::Svg => "SVG",
+                ImageFormat::Raster(format) => match format {
+                    RasterImageFormat::Png => "PNG",
+                    RasterImageFormat::Jpeg => "JPEG",
+                    RasterImageFormat::Gif => "GIF",
+                    RasterImageFormat::WebP => "WebP",
+                    RasterImageFormat::Tiff => "TIFF",
+                    RasterImageFormat::Bmp => "BMP",
+                    RasterImageFormat::Ico => "ICO",
+                    RasterImageFormat::Avif => "Avif",
+                    _ => "Unknown",
+                },
             }
             .to_string(),
         );

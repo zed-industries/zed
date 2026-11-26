@@ -239,7 +239,7 @@ fn selection_lines(text: &str, base_indent: &str, trim_markers: bool) -> Option<
             let line = if ix == 0 {
                 line
             } else {
-                line.strip_prefix(base_indent).unwrap_or(line)
+                line.trim_prefix(base_indent)
             };
             let line = if trim_markers {
                 trim_list_marker(line)
@@ -263,7 +263,7 @@ fn trim_list_marker(line: &str) -> &str {
         return line.trim();
     }
     let rest = &trimmed[marker_len..];
-    let rest = rest.strip_prefix(['.', ')']).unwrap_or(rest);
+    let rest = rest.trim_prefix(['.', ')']);
     rest.trim()
 }
 

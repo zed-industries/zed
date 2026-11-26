@@ -4,7 +4,7 @@ use acp_thread::{
     ClientUserMessageId, PermissionOptions, ProcessOutput, ThreadStatus,
 };
 use agent_client_protocol::schema::MaybeUndefined;
-use agent_client_protocol::schema::v2 as acp_v2;
+use agent_client_protocol::v2::schema as acp_v2;
 use agent_settings::{AgentProfileId, AgentSettings, AutoCompactThreshold, COMPACTION_PROMPT};
 use anyhow::Result;
 use client::{Client, RefreshLlmTokenListener, UserStore};
@@ -105,7 +105,7 @@ impl FakeTerminalHandle {
         }
     }
 
-    pub(crate) fn new_with_immediate_exit(cx: &mut App, exit_code: u32) -> Self {
+    pub(crate) fn new_with_immediate_exit(cx: &mut App, exit_code: i64) -> Self {
         let killed = Arc::new(AtomicBool::new(false));
         let stopped_by_user = Arc::new(AtomicBool::new(false));
         let (exit_sender, _exit_receiver) = futures::channel::oneshot::channel();
@@ -610,15 +610,10 @@ async fn test_thinking_allowed_when_model_cannot_disable_thinking(cx: &mut TestA
 
 #[gpui::test]
 async fn test_system_prompt(cx: &mut TestAppContext) {
-    let ThreadTest {
-        fake,
-        thread,
-        project_context,
-        ..
-    } = setup(cx, TestModel::Fake).await;
+    let ThreadTest { fake, thread, .. } = setup(cx, TestModel::Fake).await;
 
-    project_context.update(cx, |project_context, _cx| {
-        project_context.shell = "test-shell".into()
+    let shell = thread.read_with(cx, |thread, cx| {
+        crate::sandboxing::terminal_shell_name(thread.project().read(cx), cx)
     });
     thread.update(cx, |thread, _| thread.add_tool(EchoTool));
     thread
@@ -643,7 +638,7 @@ async fn test_system_prompt(cx: &mut TestAppContext) {
         panic!("Expected text content");
     };
     assert!(
-        system_prompt.contains("test-shell"),
+        system_prompt.contains(&format!("Default Shell: {shell}")),
         "unexpected system message: {:?}",
         system_message
     );
@@ -3581,7 +3576,7 @@ async fn test_refusal(cx: &mut TestAppContext) {
     // If the model refuses to continue, the thread should remove all the messages after the last user message.
     fake.send_last_event(
         &model,
-        LanguageModelCompletionEvent::Stop(StopReason::Refusal),
+        LanguageModelCompletionEvent::Stop(StopReason::Refusal(None)),
     );
     let events = events.collect::<Vec<_>>().await;
     assert_eq!(stop_events(events), vec![acp_v2::StopReason::Refusal]);
@@ -4195,6 +4190,79 @@ async fn test_title_generation(cx: &mut TestAppContext) {
     send.collect::<Vec<_>>().await;
     thread.read_with(cx, |thread, _| {
         assert_eq!(thread.title(), Some("Hello world".into()))
+    });
+}
+
+#[gpui::test]
+async fn test_title_generation_disabled_by_settings(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model,
+        fake,
+        thread,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+
+    let set_auto_generate_thread_titles = |enabled, cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.auto_generate_thread_titles = enabled;
+            agent_settings::AgentSettings::override_global(settings, cx);
+        })
+    };
+    set_auto_generate_thread_titles(false, cx);
+
+    let summary_model = fake.model("summary");
+    thread.update(cx, |thread, cx| {
+        thread.set_summarization_model(Some(summary_model.clone()), cx)
+    });
+
+    let send = thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Hello"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake.send_last_text(&model, "Hey!");
+    fake.end_last(&model);
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _| assert_eq!(thread.title(), None));
+    assert_eq!(fake.pending_completions_for(&summary_model), Vec::new());
+    send.collect::<Vec<_>>().await;
+    cx.run_until_parked();
+    thread.read_with(cx, |thread, _| assert_eq!(thread.title(), None));
+
+    set_auto_generate_thread_titles(true, cx);
+    let send = thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Hello again"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    fake.send_last_text(&model, "Hey again!");
+    fake.end_last(&model);
+    cx.run_until_parked();
+    let summary_request = fake.pending_completions_for(&summary_model).pop().unwrap();
+    fake.send_text(&summary_model, &summary_request, "Auto title\n");
+    fake.end_stream(&summary_model, &summary_request);
+    send.collect::<Vec<_>>().await;
+    cx.run_until_parked();
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.title(), Some("Auto title".into()))
+    });
+
+    set_auto_generate_thread_titles(false, cx);
+    thread.update(cx, |thread, cx| {
+        assert!(thread.regenerate_title(cx));
+    });
+    cx.run_until_parked();
+    let summary_request = fake.pending_completions_for(&summary_model).pop().unwrap();
+    fake.send_text(&summary_model, &summary_request, "Manual title\n");
+    fake.end_stream(&summary_model, &summary_request);
+    cx.run_until_parked();
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.title(), Some("Manual title".into()))
     });
 }
 
@@ -5941,12 +6009,12 @@ async fn test_ask_user_elicitation_references_scoped_tool_call_id(cx: &mut TestA
         thread.respond_to_elicitation(
             &elicitation_id,
             acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
-                acp_v2::ElicitationAcceptAction::new().content(std::collections::BTreeMap::from([
-                    (
+                acp_v2::ElicitationAcceptAction::new().content(
+                    agent_client_protocol::schema::IndexMap::from([(
                         "other".to_string(),
                         acp_v2::ElicitationContentValue::from("delve into src"),
-                    ),
-                ])),
+                    )]),
+                ),
             )),
             cx,
         );
@@ -6133,6 +6201,13 @@ async fn test_subagent_tool_call_end_to_end(cx: &mut TestAppContext) {
             .acp_thread
             .upgrade()
             .expect("subagent thread should be alive")
+    });
+    acp_thread.read_with(cx, |parent, _| {
+        assert_eq!(
+            parent.subagent(&subagent_session_id),
+            Some(&subagent_thread),
+            "the parent thread owns the spawned subagent"
+        );
     });
 
     let request = fake.pending_completions_for(&model).pop().unwrap();
@@ -6634,6 +6709,13 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
         assert_eq!(running.len(), 1, "subagent should be running");
         assert_eq!(running[0], subagent_session_id, "should be same session");
     });
+    acp_thread.read_with(cx, |parent, _| {
+        assert_eq!(
+            parent.subagents().collect::<Vec<_>>(),
+            [&subagent_acp_thread],
+            "resuming keeps the one registered subagent"
+        );
+    });
 
     // Subagent responds to follow-up
     let request = fake.pending_completions_for(&model).pop().unwrap();
@@ -6869,6 +6951,7 @@ async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppCont
         thread.set_subagent_context(SubagentContext {
             parent_thread_id: acp_v2::SessionId::new("parent-id"),
             depth: MAX_SUBAGENT_DEPTH - 1,
+            outcomes: Vec::new(),
         });
         thread
     });
@@ -7258,7 +7341,7 @@ async fn test_subagent_auto_compaction(cx: &mut TestAppContext) {
         }
         test.fake.send_last_event(
             &test.model,
-            LanguageModelCompletionEvent::Stop(StopReason::Refusal),
+            LanguageModelCompletionEvent::Stop(StopReason::Refusal(None)),
         );
         test.fake.end_last(&test.model);
         assert_eq!(
@@ -7346,6 +7429,101 @@ async fn test_subagent_context_limit_exceeded_without_partial_output(cx: &mut Te
     assert!(test.fake.is_stream_closed(&test.model, &request));
     test.fake.end_stream(&test.model, &request);
     assert_eq!(test.fake.pending_completions(), Vec::new());
+}
+
+#[gpui::test]
+async fn test_native_subagent_reports_and_restores_each_runs_outcome(cx: &mut TestAppContext) {
+    let test = SubagentCompactionTest::new(cx).await;
+    test.configure_compaction(false, 1_000_000, None, cx);
+    let session_id = test.handle.id();
+    let subagent = test._agent.read_with(cx, |agent, _| {
+        agent.sessions[&session_id].acp_thread.upgrade().unwrap()
+    });
+    subagent.read_with(cx, |subagent, _| {
+        let association = subagent
+            .subagent_association()
+            .expect("a native subagent has an association");
+        assert_eq!(association.title.as_deref(), Some("subagent"));
+        assert!(association.can_cancel);
+    });
+
+    let send = test.send("first task", cx);
+    let request = test.fake.pending_completions().pop().unwrap();
+    test.fake.send_text(&test.model, &request, "done");
+    test.fake.end_stream(&test.model, &request);
+    assert_eq!(send.await.unwrap(), "done");
+    let first_run_end = subagent.read_with(cx, |subagent, _| subagent.entries().len());
+
+    // The run itself stops as cancelled, but its tool call reports a failure.
+    let send = test.send("second task", cx);
+    let request = test.fake.pending_completions().pop().unwrap();
+    test.update_usage(1_000_000, cx);
+    let error = send.await.unwrap_err().to_string();
+    test.fake.end_stream(&test.model, &request);
+    cx.run_until_parked();
+    let second_run_end = subagent.read_with(cx, |subagent, _| subagent.entries().len());
+
+    let mut failure = acp_v2::Error::internal_error();
+    failure.message = error;
+    let idle = |stop_reason: acp_v2::StopReason| {
+        acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new().stop_reason(stop_reason))
+    };
+    let expected = vec![
+        SubagentOutcome {
+            entry_count: first_run_end,
+            stop_reason: acp_v2::StopReason::EndTurn,
+        },
+        SubagentOutcome {
+            entry_count: second_run_end,
+            stop_reason: acp_v2::StopReason::Error(acp_v2::ErrorStopReason::new().error(failure)),
+        },
+    ];
+    let assert_reported = |subagent: &Entity<AcpThread>, cx: &mut TestAppContext| {
+        subagent.read_with(cx, |subagent, _| {
+            for (entry_ix, outcome) in [(0, &expected[0]), (first_run_end, &expected[1])] {
+                assert_eq!(
+                    subagent.subagent_outcome_after(entry_ix),
+                    Some(&idle(outcome.stop_reason.clone())),
+                    "the run starting at {entry_ix}"
+                );
+            }
+            assert_eq!(
+                subagent.foreground_state(),
+                Some(&idle(expected[1].stop_reason.clone()))
+            );
+        });
+    };
+    test.thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.subagent_outcomes(), expected.as_slice())
+    });
+    assert_reported(&subagent, cx);
+
+    let project = test
+        .thread
+        .read_with(cx, |thread, _| thread.project.clone());
+    let SubagentCompactionTest {
+        _agent: agent,
+        _acp_thread,
+        parent,
+        thread,
+        environment,
+        handle,
+        ..
+    } = test;
+    drop((_acp_thread, parent, thread, environment, handle, subagent));
+    cx.run_until_parked();
+    release_dropped_entities(cx);
+    agent.read_with(cx, |agent, _| assert!(agent.sessions.is_empty()));
+
+    let reloaded = agent
+        .update(cx, |agent, cx| agent.open_thread(session_id, project, cx))
+        .await
+        .unwrap();
+    reloaded.read_with(cx, |subagent, _| {
+        assert_eq!(subagent.entries().len(), second_run_end);
+        assert!(subagent.subagent_association().is_some());
+    });
+    assert_reported(&reloaded, cx);
 }
 
 #[gpui::test]
@@ -7694,7 +7872,6 @@ async fn test_edit_file_tool_deny_rule_blocks_edit(cx: &mut TestAppContext) {
     });
     let action_log = cx.update(|cx| thread.read(cx).action_log.clone());
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::EditFileTool::new(
         project.clone(),
         thread.downgrade(),
@@ -7748,7 +7925,6 @@ async fn test_delete_path_tool_deny_rule_blocks_deletion(cx: &mut TestAppContext
 
     let action_log = cx.new(|_cx| action_log::ActionLog::new(project.clone()));
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::DeletePathTool::new(project, action_log));
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
@@ -7800,7 +7976,6 @@ async fn test_move_path_tool_denies_if_destination_denied(cx: &mut TestAppContex
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::MovePathTool::new(project));
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
@@ -7856,7 +8031,6 @@ async fn test_move_path_tool_denies_if_source_denied(cx: &mut TestAppContext) {
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::MovePathTool::new(project));
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
@@ -7914,7 +8088,6 @@ async fn test_copy_path_tool_deny_rule_blocks_copy(cx: &mut TestAppContext) {
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::CopyPathTool::new(project));
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
@@ -7958,7 +8131,6 @@ async fn test_web_search_tool_deny_rule_blocks_search(cx: &mut TestAppContext) {
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::WebSearchTool);
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
@@ -8020,7 +8192,6 @@ async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppConte
     });
     let action_log = thread.read_with(cx, |thread, _cx| thread.action_log().clone());
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::EditFileTool::new(
         project,
         thread.downgrade(),
@@ -8088,7 +8259,6 @@ async fn test_edit_file_tool_allow_still_prompts_for_local_settings(cx: &mut Tes
     });
     let action_log = thread.read_with(cx, |thread, _cx| thread.action_log().clone());
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::EditFileTool::new(
         project,
         thread.downgrade(),
@@ -8137,7 +8307,6 @@ async fn test_fetch_tool_deny_rule_blocks_url(cx: &mut TestAppContext) {
 
     let http_client = gpui::http_client::FakeHttpClient::with_200_response();
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
@@ -8181,7 +8350,6 @@ async fn test_fetch_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) 
 
     let http_client = gpui::http_client::FakeHttpClient::with_200_response();
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
@@ -8222,7 +8390,6 @@ async fn test_fetch_tool_prompts_for_ungranted_host(cx: &mut TestAppContext) {
 
     let http_client = gpui::http_client::FakeHttpClient::with_200_response();
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
@@ -8270,7 +8437,6 @@ async fn test_fetch_tool_granted_host_skips_prompt(cx: &mut TestAppContext) {
 
     let http_client = gpui::http_client::FakeHttpClient::with_200_response();
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
@@ -8312,7 +8478,6 @@ async fn test_fetch_tool_refuses_loopback_without_unsandboxed(cx: &mut TestAppCo
 
     let http_client = gpui::http_client::FakeHttpClient::with_200_response();
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
@@ -8354,7 +8519,6 @@ async fn test_fetch_tool_unsandboxed_lifts_restrictions(cx: &mut TestAppContext)
 
     let http_client = gpui::http_client::FakeHttpClient::with_200_response();
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
@@ -8415,7 +8579,6 @@ async fn test_fetch_tool_refuses_redirect_to_loopback(cx: &mut TestAppContext) {
             .unwrap())
     });
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, _rx) = crate::ToolCallEventStream::test();
 
@@ -8474,7 +8637,6 @@ async fn test_fetch_tool_reauthorizes_redirect_to_new_host(cx: &mut TestAppConte
             .unwrap())
     });
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 
@@ -8542,7 +8704,6 @@ async fn test_fetch_tool_follows_same_host_redirect(cx: &mut TestAppContext) {
         }
     });
 
-    #[allow(clippy::arc_with_non_send_sync)]
     let tool = Arc::new(crate::FetchTool::new(http_client));
     let (event_stream, mut rx) = crate::ToolCallEventStream::test();
 

@@ -8,8 +8,10 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use cloud_api_types::ExtensionProvides;
 use collections::{BTreeMap, BTreeSet, HashMap};
 use fs::Fs;
-use language::LanguageName;
+use futures::StreamExt as _;
+use language::{LanguageConfig, LanguageName};
 use lsp::LanguageServerName;
+use path::PathExt as _;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use util::paths::PathStyle;
@@ -346,6 +348,138 @@ impl ExtensionManifest {
         } else {
             anyhow::bail!("No extension manifest found for extension {extension_name}")
         }
+    }
+
+    /// Fills in the parts of the manifest that are derived from the extension's
+    /// directory layout (languages, themes, icon themes, snippets, library kind).
+    pub async fn populate_defaults(
+        &mut self,
+        extension_path: &Path,
+        fs: Arc<dyn Fs>,
+    ) -> Result<()> {
+        // For legacy extensions on the v0 schema (aka, using `extension.json`), clear out any existing
+        // contents of the computed fields, since we don't care what the existing values are.
+        if self.schema_version.is_v0() {
+            self.languages.clear();
+            self.grammars.clear();
+            self.themes.clear();
+        }
+
+        let cargo_toml_path = extension_path.join("Cargo.toml");
+        if cargo_toml_path.exists() {
+            self.lib.kind = Some(ExtensionLibraryKind::Rust);
+        }
+
+        let languages_dir = extension_path.join("languages");
+        if fs.is_dir(&languages_dir).await {
+            let mut language_dir_entries = fs
+                .read_dir(&languages_dir)
+                .await
+                .context("listing languages directory")?;
+
+            while let Some(language_dir) = language_dir_entries.next().await {
+                let language_dir = language_dir?;
+                let config_path = language_dir.join(LanguageConfig::FILE_NAME);
+                if fs.is_file(config_path.as_path()).await {
+                    let relative_language_dir = language_dir
+                        .strip_prefix(extension_path)?
+                        .to_rel_path_buf()?;
+                    if !self.languages.contains(&relative_language_dir) {
+                        self.languages.push(relative_language_dir);
+                    }
+                }
+            }
+        }
+
+        let themes_dir = extension_path.join("themes");
+        if fs.is_dir(&themes_dir).await {
+            let mut theme_dir_entries = fs
+                .read_dir(&themes_dir)
+                .await
+                .context("listing themes directory")?;
+
+            while let Some(theme_path) = theme_dir_entries.next().await {
+                let theme_path = theme_path?;
+                if theme_path.extension() == Some("json".as_ref()) {
+                    let relative_theme_path =
+                        theme_path.strip_prefix(extension_path)?.to_rel_path_buf()?;
+                    if !self.themes.contains(&relative_theme_path) {
+                        self.themes.push(relative_theme_path);
+                    }
+                }
+            }
+        }
+
+        let icon_themes_dir = extension_path.join("icon_themes");
+        if fs.is_dir(&icon_themes_dir).await {
+            let mut icon_theme_dir_entries = fs
+                .read_dir(&icon_themes_dir)
+                .await
+                .context("listing icon themes directory")?;
+
+            while let Some(icon_theme_path) = icon_theme_dir_entries.next().await {
+                let icon_theme_path = icon_theme_path?;
+                if icon_theme_path.extension() == Some("json".as_ref()) {
+                    let relative_icon_theme_path = icon_theme_path
+                        .strip_prefix(extension_path)?
+                        .to_rel_path_buf()?;
+                    if !self.icon_themes.contains(&relative_icon_theme_path) {
+                        self.icon_themes.push(relative_icon_theme_path);
+                    }
+                }
+            }
+        };
+        if self.snippets.is_none()
+            && let snippets_json_path = extension_path.join("snippets.json")
+            && fs.is_file(&snippets_json_path).await
+        {
+            self.snippets = Some("snippets.json".into());
+        }
+
+        // For legacy extensions on the v0 schema (aka, using `extension.json`), we want to populate the grammars in
+        // the manifest using the contents of the `grammars` directory.
+        if self.schema_version.is_v0() {
+            let grammars_dir = extension_path.join("grammars");
+            if fs.is_dir(&grammars_dir).await {
+                let mut grammar_dir_entries = fs
+                    .read_dir(&grammars_dir)
+                    .await
+                    .context("listing grammars directory")?;
+
+                while let Some(grammar_path) = grammar_dir_entries.next().await {
+                    let grammar_path = grammar_path?;
+                    if grammar_path.extension() == Some("toml".as_ref()) {
+                        #[derive(Deserialize)]
+                        struct GrammarConfigToml {
+                            pub repository: String,
+                            pub commit: String,
+                            #[serde(default)]
+                            pub path: Option<String>,
+                        }
+
+                        let grammar_config = fs.load(&grammar_path).await?;
+                        let grammar_config: GrammarConfigToml = toml::from_str(&grammar_config)?;
+
+                        let grammar_name = grammar_path
+                            .file_stem()
+                            .and_then(|stem| stem.to_str())
+                            .context("no grammar name")?;
+                        if !self.grammars.contains_key(grammar_name) {
+                            self.grammars.insert(
+                                grammar_name.into(),
+                                GrammarManifestEntry {
+                                    repository: grammar_config.repository,
+                                    rev: grammar_config.commit,
+                                    path: grammar_config.path,
+                                },
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 

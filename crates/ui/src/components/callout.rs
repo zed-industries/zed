@@ -365,8 +365,8 @@ impl Component for Callout {
 
         v_flex()
             .gap_4()
-            .child(example_group(basic_examples).vertical())
-            .child(example_group_with_title("Severity", severity_examples).vertical())
+            .child(example_group(basic_examples))
+            .child(example_group_with_title("Severity", severity_examples))
             .into_any_element()
     }
 }

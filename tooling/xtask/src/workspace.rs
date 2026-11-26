@@ -10,14 +10,28 @@ pub fn load_workspace() -> Result<Metadata> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{BTreeMap, BTreeSet, VecDeque};
+    use std::{
+        collections::{BTreeMap, BTreeSet, VecDeque},
+        fs,
+    };
 
-    use cargo_metadata::DependencyKind;
+    use anyhow::{Context as _, Result};
+    use cargo_metadata::{CargoOpt, DependencyKind, Metadata, MetadataCommand};
 
     use super::load_workspace;
 
-    /// Direct dependencies forbidden in workspace packages, paired with the reason shown on failure.
-    const FORBIDDEN_DIRECT_DEPENDENCIES: &[(&str, &str)] = &[("block", "use `block2` instead")];
+    const FORBIDDEN_OBJC_DEPENDENCIES: &[(&str, &str)] = &[
+        ("block", "use `block2` instead"),
+        (
+            "cocoa",
+            "use `objc2-app-kit` and `objc2-foundation` instead",
+        ),
+        ("cocoa-foundation", "use `objc2-foundation` instead"),
+        ("metal", "use `objc2-metal` and `objc2-quartz-core` instead"),
+        ("objc", "use `objc2` instead"),
+        ("objc-foundation", "use `objc2-foundation` instead"),
+        ("objc_id", "use `objc2::rc::Retained` instead"),
+    ];
 
     /// Crates that must not depend on each other, directly or transitively:
     /// such edges chain large UI crates one after another and serialize the
@@ -39,31 +53,152 @@ mod tests {
     ];
 
     #[test]
-    fn no_forbidden_direct_dependencies() {
-        let workspace = load_workspace().expect("failed to load cargo metadata");
-        let mut violations = Vec::new();
-
-        for package in workspace.workspace_packages() {
-            for dependency in &package.dependencies {
-                let Some((_, reason)) = FORBIDDEN_DIRECT_DEPENDENCIES
-                    .iter()
-                    .find(|(name, _)| *name == dependency.name)
-                else {
-                    continue;
-                };
-                violations.push(format!(
-                    "{} directly depends on `{}`; {reason}",
-                    package.name, dependency.name
-                ));
-            }
-        }
+    fn no_forbidden_objc_dependencies() -> Result<()> {
+        let workspace = MetadataCommand::new()
+            .features(CargoOpt::AllFeatures)
+            .exec()
+            .context("loading cargo metadata with all workspace features")?;
+        let violations = forbidden_objc_dependency_violations(&workspace)?;
 
         assert_eq!(
             violations,
             Vec::<String>::new(),
-            "forbidden direct dependencies:\n{}",
+            "forbidden Objective-C dependencies:\n{}",
             violations.join("\n"),
         );
+        Ok(())
+    }
+
+    #[test]
+    fn forbidden_objc_dependencies_cover_manifests_and_transitive_packages() -> Result<()> {
+        let fixture = tempfile::tempdir()?;
+        for name in [
+            "block",
+            "cocoa",
+            "cocoa-foundation",
+            "objc",
+            "objc-foundation",
+            "objc_id",
+            "block2",
+            "objc2",
+            "objc2-app-kit",
+            "objc2-foundation",
+            "objc2-metal",
+            "objc2-quartz-core",
+            "metal",
+            "intermediate",
+            "workspace",
+        ] {
+            let directory = fixture.path().join(name);
+            fs::create_dir(&directory)?;
+            fs::write(directory.join("lib.rs"), "")?;
+            let dependencies = match name {
+                "metal" => "[dependencies]\nobjc = { path = '../objc' }\n",
+                "intermediate" => {
+                    "[dependencies]\nmetal = { path = '../metal', optional = true }\n"
+                }
+                _ => "",
+            };
+            fs::write(
+                directory.join("Cargo.toml"),
+                format!(
+                    "[package]\nname = '{name}'\nversion = '0.1.0'\nedition = '2024'\n\
+                     [lib]\npath = 'lib.rs'\n{dependencies}"
+                ),
+            )?;
+        }
+        let manifest = fixture.path().join("workspace/Cargo.toml");
+        let allowed = format!(
+            "{}\n{}",
+            fs::read_to_string(&manifest)?,
+            r#"[workspace]
+resolver = "2"
+[dependencies]
+block2 = { path = "../block2" }
+objc2 = { path = "../objc2" }
+objc2-app-kit = { path = "../objc2-app-kit" }
+objc2-foundation = { path = "../objc2-foundation" }
+objc2-metal = { path = "../objc2-metal" }
+objc2-quartz-core = { path = "../objc2-quartz-core" }
+"#,
+        );
+        let forbidden = r#"
+[dependencies.block]
+path = "../block"
+[dependencies.legacy_cocoa]
+package = "cocoa"
+path = "../cocoa"
+[dependencies.cocoa-foundation]
+path = "../cocoa-foundation"
+optional = true
+[dependencies.legacy_metal]
+package = "metal"
+path = "../metal"
+[target.'cfg(any())'.dependencies]
+objc = { path = "../objc" }
+[dev-dependencies]
+objc-foundation = { path = "../objc-foundation" }
+[target.'cfg(any())'.build-dependencies]
+legacy_id = { workspace = true, optional = true }
+[workspace.dependencies]
+legacy_id = { package = "objc_id", path = "../objc_id" }
+objc = "0.1.0"
+unused_cocoa = { package = "cocoa", version = "0.1.0" }
+unused_metal = { package = "metal", version = "0.1.0" }
+unused_objc2 = { package = "objc2", version = "0.1.0" }
+"#;
+        fs::write(&manifest, format!("{allowed}{forbidden}"))?;
+        let mut command = MetadataCommand::new();
+        command
+            .manifest_path(&manifest)
+            .other_options(vec!["--offline".to_owned()]);
+        let mut violations = forbidden_objc_dependency_violations(&command.exec()?)?;
+        violations.sort();
+        assert_eq!(
+            violations,
+            [
+                "Cargo.toml [workspace.dependencies]: `legacy_id` uses `objc_id`; use `objc2::rc::Retained` instead",
+                "Cargo.toml [workspace.dependencies]: `objc` uses `objc`; use `objc2` instead",
+                "Cargo.toml [workspace.dependencies]: `unused_cocoa` uses `cocoa`; use `objc2-app-kit` and `objc2-foundation` instead",
+                "Cargo.toml [workspace.dependencies]: `unused_metal` uses `metal`; use `objc2-metal` and `objc2-quartz-core` instead",
+                "workspace directly depends on `block`; use `block2` instead",
+                "workspace directly depends on `cocoa-foundation`; use `objc2-foundation` instead",
+                "workspace directly depends on `cocoa`; use `objc2-app-kit` and `objc2-foundation` instead",
+                "workspace directly depends on `metal`; use `objc2-metal` and `objc2-quartz-core` instead",
+                "workspace directly depends on `objc-foundation`; use `objc2-foundation` instead",
+                "workspace directly depends on `objc_id`; use `objc2::rc::Retained` instead",
+                "workspace directly depends on `objc`; use `objc2` instead",
+            ],
+            "including renamed optional inactive-target build dependency",
+        );
+        fs::write(
+            &manifest,
+            format!(
+                "{allowed}\n[target.'cfg(any())'.dependencies]\n\
+                 intermediate = {{ path = '../intermediate', optional = true }}\n\
+                 [features]\nlegacy = ['dep:intermediate', 'intermediate/metal']\n"
+            ),
+        )?;
+        assert_eq!(
+            forbidden_objc_dependency_violations(&command.exec()?)?,
+            Vec::<String>::new(),
+        );
+        command.features(CargoOpt::AllFeatures);
+        let mut violations = forbidden_objc_dependency_violations(&command.exec()?)?;
+        violations.sort();
+        assert_eq!(
+            violations,
+            [
+                "dependency graph contains `metal`; use `objc2-metal` and `objc2-quartz-core` instead",
+                "dependency graph contains `objc`; use `objc2` instead",
+            ],
+        );
+        fs::write(&manifest, allowed)?;
+        assert_eq!(
+            forbidden_objc_dependency_violations(&command.exec()?)?,
+            Vec::<String>::new(),
+        );
+        Ok(())
     }
 
     #[test]
@@ -140,6 +275,66 @@ mod tests {
              break the dependency (e.g. by extracting shared code into a lower-level crate) \
              instead of joining these crates into one serial build chain",
         );
+    }
+
+    fn forbidden_objc_dependency_violations(workspace: &Metadata) -> Result<Vec<String>> {
+        let mut violations = Vec::new();
+        let mut reported_dependencies = BTreeSet::new();
+        for package in workspace.workspace_packages() {
+            for dependency in &package.dependencies {
+                let Some((_, reason)) = FORBIDDEN_OBJC_DEPENDENCIES
+                    .iter()
+                    .find(|(name, _)| *name == dependency.name)
+                else {
+                    continue;
+                };
+                violations.push(format!(
+                    "{} directly depends on `{}`; {reason}",
+                    package.name, dependency.name
+                ));
+                reported_dependencies.insert(dependency.name.as_str());
+            }
+        }
+        for package in &workspace.packages {
+            let Some((_, reason)) = FORBIDDEN_OBJC_DEPENDENCIES
+                .iter()
+                .find(|(name, _)| *name == package.name.as_str())
+            else {
+                continue;
+            };
+            if reported_dependencies.insert(package.name.as_str()) {
+                violations.push(format!(
+                    "dependency graph contains `{}`; {reason}",
+                    package.name,
+                ));
+            }
+        }
+
+        let manifest_path = workspace.workspace_root.join("Cargo.toml");
+        let contents = fs::read_to_string(&manifest_path)
+            .with_context(|| format!("failed to read {manifest_path}"))?;
+        let manifest = toml::from_str::<toml::Value>(&contents)
+            .with_context(|| format!("failed to parse {manifest_path}"))?;
+        let dependencies = manifest
+            .get("workspace")
+            .and_then(|workspace| workspace.get("dependencies"))
+            .and_then(toml::Value::as_table);
+        for (alias, dependency) in dependencies.into_iter().flatten() {
+            let name = dependency
+                .get("package")
+                .and_then(toml::Value::as_str)
+                .unwrap_or(alias);
+            let Some((_, reason)) = FORBIDDEN_OBJC_DEPENDENCIES
+                .iter()
+                .find(|(forbidden, _)| *forbidden == name)
+            else {
+                continue;
+            };
+            violations.push(format!(
+                "Cargo.toml [workspace.dependencies]: `{alias}` uses `{name}`; {reason}"
+            ));
+        }
+        Ok(violations)
     }
 
     fn dependency_path<'a>(

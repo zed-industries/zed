@@ -66,14 +66,6 @@ struct StickyItemsElement {
     rest_decorations: SmallVec<[AnyElement; 1]>,
 }
 
-impl IntoElement for StickyItemsElement {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Element for StickyItemsElement {
     type RequestLayoutState = ();
     type PrepaintState = ();

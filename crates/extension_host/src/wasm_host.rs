@@ -64,7 +64,6 @@ pub struct WasmExtension {
     tx: UnboundedSender<ExtensionCall>,
     pub manifest: Arc<ExtensionManifest>,
     pub work_dir: Arc<Path>,
-    #[allow(unused)]
     pub zed_api_version: Version,
     _task: Arc<Task<Result<(), gpui_tokio::JoinError>>>,
 }
@@ -942,10 +941,10 @@ impl WasmExtension {
 }
 
 impl WasmState {
-    fn on_main_thread<T, Fn>(&self, f: Fn) -> impl 'static + Future<Output = T>
+    fn on_main_thread<T, AsyncFn>(&self, f: AsyncFn) -> impl 'static + Future<Output = T>
     where
         T: 'static + Send,
-        Fn: 'static + Send + for<'a> FnOnce(&'a mut AsyncApp) -> LocalBoxFuture<'a, T>,
+        AsyncFn: 'static + Send + AsyncFnOnce(&mut AsyncApp) -> T,
     {
         let (return_tx, return_rx) = oneshot::channel();
         self.host

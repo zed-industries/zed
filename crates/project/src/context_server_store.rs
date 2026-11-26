@@ -417,28 +417,6 @@ impl ContextServerStore {
     }
 
     #[cfg(feature = "test-support")]
-    pub fn test_maintain_server_loop(
-        context_server_factory: Option<ContextServerFactory>,
-        registry: Entity<ContextServerDescriptorRegistry>,
-        worktree_store: Entity<WorktreeStore>,
-        weak_project: Option<WeakEntity<Project>>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        Self::new_internal(
-            true,
-            context_server_factory,
-            registry,
-            worktree_store,
-            weak_project,
-            ContextServerStoreState::Local {
-                downstream_client: None,
-                is_headless: false,
-            },
-            cx,
-        )
-    }
-
-    #[cfg(feature = "test-support")]
     pub fn set_context_server_factory(&mut self, factory: ContextServerFactory) {
         self.context_server_factory = Some(factory);
     }
@@ -1167,13 +1145,29 @@ impl ContextServerStore {
     }
 
     /// Merges context server settings from all visible worktrees so that servers defined
-    /// in any project folder in a multi-root workspace are picked up.
+    /// in any project folder in a multi-root workspace are picked up. With no visible
+    /// worktrees, falls back to user settings.
     fn resolve_all_context_server_settings(
         worktree_store: &Entity<WorktreeStore>,
         cx: &App,
     ) -> HashMap<Arc<str>, ContextServerSettingsEntry> {
         let mut merged = HashMap::default();
-        for worktree in worktree_store.read(cx).visible_worktrees(cx) {
+        let mut visible_worktrees = worktree_store.read(cx).visible_worktrees(cx).peekable();
+        if visible_worktrees.peek().is_none() {
+            // Without this, user servers are missing until the first worktree is added,
+            // and never appear in a window that has no folder.
+            for (id, settings) in &ProjectSettings::get(None, cx).context_servers {
+                merged.insert(
+                    id.clone(),
+                    ContextServerSettingsEntry {
+                        worktree_id: None,
+                        settings: settings.clone(),
+                    },
+                );
+            }
+            return merged;
+        }
+        for worktree in visible_worktrees {
             let worktree_id = worktree.read(cx).id();
             let location = settings::SettingsLocation {
                 worktree_id,

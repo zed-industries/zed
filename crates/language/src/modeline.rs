@@ -240,7 +240,7 @@ fn parse_vim_settings(content: &str, settings: &mut ModelineSettings) {
     fn split_colon_unescape(input: &str) -> Vec<String> {
         let mut split = Vec::new();
         let mut str = String::new();
-        let mut chars = input.chars().peekable();
+        let mut chars = input.chars();
         while let Some(c) = chars.next() {
             if c == '\\' {
                 match chars.next() {
