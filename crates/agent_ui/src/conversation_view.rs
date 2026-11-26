@@ -7182,6 +7182,17 @@ pub(crate) mod tests {
         let subagent = cx.update(|cx| {
             create_test_acp_subagent(parent_session_id, "child", connection, project, cx)
         });
+        subagent.update(cx, |subagent, cx| {
+            subagent
+                .update_subagent_association(
+                    &acp_v2::SubagentUpdate::new("child").capabilities(
+                        acp_v2::SubagentSessionCapabilities::new()
+                            .cancel(acp_v2::SessionCancelCapabilities::new()),
+                    ),
+                    cx,
+                )
+                .expect("ACP subagent")
+        });
         let work = |id: &str, cx: &mut TestAppContext| {
             subagent
                 .update(cx, |subagent, cx| {
@@ -7253,10 +7264,11 @@ pub(crate) mod tests {
                 SubagentCardState::for_subagent_tool_call(tool_call, Some(subagent.read(cx)), cx)
             })
         };
-        let assert_card = |status, end, cx: &mut TestAppContext| {
+        let assert_card = |status, can_stop, end, cx: &mut TestAppContext| {
             let card = card(cx);
             assert_eq!(card.status, status);
             assert_eq!(card.error, None);
+            assert_eq!(card.can_stop, can_stop);
             assert_eq!(card.entries, Some(SubagentEntries { start: 0, end }));
         };
         assert_eq!(card(cx).status, SubagentStatus::Failed);
@@ -7265,10 +7277,10 @@ pub(crate) mod tests {
             acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
             cx,
         );
-        assert_card(SubagentStatus::Running, Some(0), cx);
+        assert_card(SubagentStatus::Running, true, Some(0), cx);
         retry_work(cx);
         report(idle(acp_v2::StopReason::EndTurn), cx);
-        assert_card(SubagentStatus::Completed, Some(1), cx);
+        assert_card(SubagentStatus::Completed, false, Some(1), cx);
 
         // A later message to the subagent starts a run of its own.
         subagent.update(cx, |subagent, cx| {
@@ -7281,7 +7293,7 @@ pub(crate) mod tests {
             )),
             cx,
         );
-        assert_card(SubagentStatus::Completed, Some(1), cx);
+        assert_card(SubagentStatus::Completed, false, Some(1), cx);
     }
 
     #[gpui::test]
