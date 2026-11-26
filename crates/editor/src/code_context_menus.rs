@@ -1249,6 +1249,9 @@ impl CompletionsMenu {
         };
         let completions = self.completions.borrow();
         let multiline_docs = match completions[mat.candidate_id].documentation.as_ref() {
+            Some(CompletionDocumentation::NonInteractiveMarkdown(source)) => {
+                div().child(markdown::MarkdownLabel(source.clone()))
+            }
             Some(CompletionDocumentation::MultiLinePlainText(text)) => div().child(text.clone()),
             Some(CompletionDocumentation::SingleLineAndMultiLinePlainText {
                 plain_text: Some(text),

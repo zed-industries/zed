@@ -509,9 +509,13 @@ impl TerminalElement {
                 if cell.is_wide_char_spacer() {
                     continue;
                 }
+                let character = match cell.character() {
+                    '\t' => ' ',
+                    character => character,
+                };
 
                 // Skip spaces that follow cells with extras (emoji variation sequences)
-                if cell.character() == ' ' && previous_cell_had_extras {
+                if character == ' ' && previous_cell_had_extras {
                     previous_cell_had_extras = false;
                     continue;
                 }
@@ -538,7 +542,7 @@ impl TerminalElement {
                         let cell_point = LayoutPoint::new(display_line, point.column as i32);
                         if Self::collect_block_element_regions(
                             cell_point,
-                            cell.character(),
+                            character,
                             cell_style.color,
                             &mut block_element_regions,
                         ) {
@@ -557,7 +561,7 @@ impl TerminalElement {
                                 && batch.start_point.column + batch.cell_count as i32
                                     == cell_point.column
                             {
-                                batch.append_char(cell.character());
+                                batch.append_char(character);
                                 if let Some(chars) = zero_width_chars {
                                     batch.append_zero_width_chars(chars);
                                 }
@@ -567,7 +571,7 @@ impl TerminalElement {
                                 batched_runs.push(old_batch);
                                 let mut new_batch = BatchedTextRun::new_from_char(
                                     cell_point,
-                                    cell.character(),
+                                    character,
                                     cell_style,
                                     text_style.font_size,
                                 );
@@ -580,7 +584,7 @@ impl TerminalElement {
                             // Start new batch
                             let mut new_batch = BatchedTextRun::new_from_char(
                                 cell_point,
-                                cell.character(),
+                                character,
                                 cell_style,
                                 text_style.font_size,
                             );
@@ -1341,9 +1345,10 @@ impl Element for TerminalElement {
 
                 let background_color = theme.colors().terminal_background;
 
+                let mouse_input_mode = self.terminal_view.read(cx).mouse_input_mode();
                 let (hover_tooltip, hover_match) = self.terminal.update(cx, |terminal, cx| {
                     terminal.set_size(dimensions);
-                    terminal.sync(window, cx);
+                    terminal.sync(mouse_input_mode, window, cx);
 
                     if window.modifiers().secondary(cx)
                         && bounds.contains(&window.mouse_position())
@@ -1651,7 +1656,12 @@ impl Element for TerminalElement {
                             }
 
                             this.update(cx, |term, cx| {
-                                term.try_modifiers_change(&event.modifiers, window, cx)
+                                term.try_modifiers_change(
+                                    &event.modifiers,
+                                    mouse_input_mode,
+                                    window,
+                                    cx,
+                                )
                             });
                         }
                     });
@@ -1881,7 +1891,7 @@ impl InputHandler for TerminalInputHandler {
 }
 
 pub fn is_blank(cell: &Cell) -> bool {
-    if cell.character() != ' ' {
+    if !matches!(cell.character(), ' ' | '\t') {
         return false;
     }
 
@@ -2996,6 +3006,24 @@ mod tests {
             0,
             "Should have no cells when all are skipped"
         );
+    }
+
+    #[gpui::test]
+    async fn test_layout_grid_draws_tab_cells_as_spaces(cx: &mut TestAppContext) {
+        let (project, _, window) = crate::tests::init_test_with_window(cx).await;
+        let (_, terminal, _) =
+            crate::tests::add_display_only_terminal(&project, window, true, true, cx);
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        terminal.update(&mut cx, |terminal, cx| {
+            terminal.write_output(b" ab\r\t\n\x1b[41m ab\x1b[0m\r\t", cx);
+        });
+        cx.run_until_parked();
+        let cells = terminal.read_with(&cx, |terminal, _| terminal.last_content().cells.clone());
+        let (_, runs, _) = cx.update(|_, cx| {
+            TerminalElement::layout_grid(cells.iter(), 0, &TextStyle::default(), None, 0., cx)
+        });
+        let texts = runs.iter().map(|run| run.text.as_str()).collect::<Vec<_>>();
+        assert_eq!(texts, ["ab", " ab"]);
     }
 
     #[test]

@@ -82,6 +82,7 @@ pub fn original_repo_path_from_common_dir(common_dir: &Path) -> Option<PathBuf> 
 
 fn linked_worktree_git_dir(worktree_path: &Path) -> Result<PathBuf> {
     let dot_git_path = worktree_path.join(".git");
+    anyhow::ensure!(dot_git_path.is_file(), "{dot_git_path:?} is not a file");
     let git_file = std::fs::read_to_string(&dot_git_path)
         .with_context(|| format!("failed to read {}", dot_git_path.display()))?;
     let git_dir = git_file
@@ -242,15 +243,7 @@ pub struct Branch {
 pub struct BranchesScanResult {
     pub branches: Vec<Branch>,
     pub error: Option<SharedString>,
-}
-
-impl From<Vec<Branch>> for BranchesScanResult {
-    fn from(branches: Vec<Branch>) -> Self {
-        Self {
-            branches,
-            error: None,
-        }
-    }
+    pub remote_default_branch: Option<SharedString>,
 }
 
 impl Branch {
@@ -1122,6 +1115,10 @@ pub trait GitRepository: Send + Sync {
 
     fn set_trusted(&self, trusted: bool);
     fn is_trusted(&self) -> bool;
+
+    fn git_binary_path(&self) -> Option<PathBuf> {
+        None
+    }
 }
 
 pub enum DiffType {
@@ -1656,6 +1653,10 @@ impl GitRepository for RealGitRepository {
                     path
                 };
 
+                if !path.is_file() {
+                    log::warn!("failed to read commit template {path:?}: not a file");
+                    return Ok(None);
+                }
                 let template = match std::fs::read_to_string(&path) {
                     Ok(s) if !s.trim().is_empty() => Some(s),
                     Err(err) => {
@@ -1879,7 +1880,13 @@ impl GitRepository for RealGitRepository {
     fn merge_message(&self) -> BoxFuture<'_, Option<String>> {
         let path = self.path().join("MERGE_MSG");
         self.executor
-            .spawn(async move { std::fs::read_to_string(&path).ok() })
+            .spawn(async move {
+                if path.is_file() {
+                    std::fs::read_to_string(&path).ok()
+                } else {
+                    None
+                }
+            })
             .boxed()
     }
 
@@ -2176,6 +2183,7 @@ impl GitRepository for RealGitRepository {
                     "%(committerdate:unix)",
                     "%(authorname)",
                     "%(contents:subject)",
+                    "%(symref)",
                 ]
                 .join("%00");
                 let args = vec![
@@ -2197,6 +2205,7 @@ impl GitRepository for RealGitRepository {
 
                 let input = String::from_utf8_lossy(&output.stdout);
                 let mut branches = parse_branch_input(&input)?;
+                let remote_default_branch = parse_remote_default_branch(&input);
                 if branches.is_empty() {
                     let args = vec!["symbolic-ref", "--quiet", "HEAD"];
 
@@ -2216,7 +2225,11 @@ impl GitRepository for RealGitRepository {
                     }
                 }
 
-                Ok(BranchesScanResult { branches, error })
+                Ok(BranchesScanResult {
+                    branches,
+                    error,
+                    remote_default_branch,
+                })
             })
             .boxed()
     }
@@ -3200,26 +3213,8 @@ impl GitRepository for RealGitRepository {
                     .filter_map(|line| line.split_once('\t'))
                     .collect();
 
-                if let Some(target) = refs.get("refs/remotes/upstream/HEAD") {
-                    let strip_prefix = if include_remote_name {
-                        "refs/remotes/"
-                    } else {
-                        "refs/remotes/upstream/"
-                    };
-                    if let Some(branch) = target.strip_prefix(strip_prefix) {
-                        return Ok(Some(branch.into()));
-                    }
-                }
-
-                if let Some(target) = refs.get("refs/remotes/origin/HEAD") {
-                    let strip_prefix = if include_remote_name {
-                        "refs/remotes/"
-                    } else {
-                        "refs/remotes/origin/"
-                    };
-                    if let Some(branch) = target.strip_prefix(strip_prefix) {
-                        return Ok(Some(branch.into()));
-                    }
+                if let Some(branch) = remote_head_branch(&refs, include_remote_name) {
+                    return Ok(Some(branch));
                 }
 
                 let local_branch_exists =
@@ -3515,6 +3510,10 @@ impl GitRepository for RealGitRepository {
     fn is_trusted(&self) -> bool {
         self.is_trusted.load(std::sync::atomic::Ordering::Acquire)
     }
+
+    fn git_binary_path(&self) -> Option<PathBuf> {
+        Some(self.any_git_binary_path.clone())
+    }
 }
 
 async fn run_commit_data_reader(
@@ -3690,6 +3689,22 @@ fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
         }
     }));
     args
+}
+
+pub fn untrusted_git_command<S: AsRef<OsStr>>(
+    git_binary_path: &Path,
+    working_directory: &Path,
+    executor: BackgroundExecutor,
+    args: &[S],
+) -> util::command::Command {
+    GitBinary::new(
+        git_binary_path.to_path_buf(),
+        working_directory.to_path_buf(),
+        working_directory.to_path_buf(),
+        executor,
+        false,
+    )
+    .build_command(args)
 }
 
 pub(crate) struct GitBinary {
@@ -4117,6 +4132,36 @@ impl MapSeekTarget<RepoPath> for RepoPathDescendants<'_> {
             self.0.cmp(key)
         }
     }
+}
+
+fn parse_remote_default_branch(input: &str) -> Option<SharedString> {
+    let symrefs = input
+        .split('\n')
+        .filter_map(|line| {
+            let mut fields = line.split('\x00');
+            let ref_name = fields.nth(3)?;
+            let symref = fields.nth(5)?;
+            (!symref.is_empty()).then_some((ref_name, symref))
+        })
+        .collect::<HashMap<_, _>>();
+    remote_head_branch(&symrefs, true)
+}
+
+fn remote_head_branch(
+    refs: &HashMap<&str, &str>,
+    include_remote_name: bool,
+) -> Option<SharedString> {
+    ["upstream", "origin"].into_iter().find_map(|remote| {
+        let target = refs.get(format!("refs/remotes/{remote}/HEAD").as_str())?;
+        let strip_prefix = if include_remote_name {
+            "refs/remotes/".to_string()
+        } else {
+            format!("refs/remotes/{remote}/")
+        };
+        target
+            .strip_prefix(strip_prefix.as_str())
+            .map(SharedString::from)
+    })
 }
 
 fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
@@ -6955,6 +7000,68 @@ mod tests {
         assert_eq!(
             repo.default_branch(true).await.unwrap(),
             Some("origin/main".into())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_branch_scan_reads_the_remote_default_branch(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some(PathBuf::from("git")),
+            cx.executor(),
+        )
+        .unwrap();
+        fs::write(repo_dir.path().join("message"), b"Latin-1 subject \xe9\n").unwrap();
+        git_command(
+            repo_dir.path(),
+            [
+                "-c",
+                "i18n.commitEncoding=ISO-8859-1",
+                "commit",
+                "--quiet",
+                "--allow-empty",
+                "--file",
+                "message",
+            ],
+        );
+
+        let mut remote_default_branches = Vec::new();
+        for remote in ["origin", "upstream"] {
+            git_command(
+                repo_dir.path(),
+                ["update-ref", &format!("refs/remotes/{remote}/main"), "HEAD"],
+            );
+            git_command(
+                repo_dir.path(),
+                [
+                    "symbolic-ref",
+                    &format!("refs/remotes/{remote}/HEAD"),
+                    &format!("refs/remotes/{remote}/main"),
+                ],
+            );
+            remote_default_branches.push((
+                repo.branches().await.unwrap().remote_default_branch,
+                repo.default_branch(true).await.unwrap(),
+            ));
+        }
+        assert_eq!(
+            remote_default_branches,
+            [
+                (
+                    Some(SharedString::from("origin/main")),
+                    Some(SharedString::from("origin/main")),
+                ),
+                (
+                    Some(SharedString::from("upstream/main")),
+                    Some(SharedString::from("upstream/main")),
+                ),
+            ]
         );
     }
 

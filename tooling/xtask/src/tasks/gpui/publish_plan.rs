@@ -30,7 +30,7 @@ impl GitRepository {
             .trim_matches('/')
             .split_once('/')
             .context("repository URL must contain an owner and repository name")?;
-        let repo = repo.strip_suffix(".git").unwrap_or(repo);
+        let repo = repo.trim_suffix(".git");
         ensure!(
             !owner.is_empty() && !repo.is_empty() && !repo.contains('/'),
             "expected an owner/repo path, got {repository}"

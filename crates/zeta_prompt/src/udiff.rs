@@ -36,15 +36,11 @@ pub fn strip_diff_path_prefix<'a>(diff: &'a str, prefix: &str) -> Cow<'a, str> {
     for line in diff.lines() {
         match DiffLine::parse(line) {
             DiffLine::OldPath { path } => {
-                let stripped = path
-                    .strip_prefix(&prefix_with_slash)
-                    .unwrap_or(path.as_ref());
+                let stripped = path.trim_prefix(&prefix_with_slash);
                 result.push_str(&format!("--- a/{}\n", stripped));
             }
             DiffLine::NewPath { path } => {
-                let stripped = path
-                    .strip_prefix(&prefix_with_slash)
-                    .unwrap_or(path.as_ref());
+                let stripped = path.trim_prefix(&prefix_with_slash);
                 result.push_str(&format!("+++ b/{}\n", stripped));
             }
             _ => {
@@ -750,7 +746,7 @@ impl<'a> Display for DiffLine<'a> {
 fn parse_header_path<'a>(strip_prefix: &'static str, header: &'a str) -> Cow<'a, str> {
     if !header.contains(['"', '\\']) {
         let path = header.split_ascii_whitespace().next().unwrap_or(header);
-        return Cow::Borrowed(path.strip_prefix(strip_prefix).unwrap_or(path));
+        return Cow::Borrowed(path.trim_prefix(strip_prefix));
     }
 
     let mut path = String::with_capacity(header.len());
