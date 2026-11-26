@@ -331,8 +331,8 @@ impl RemoteRunningKernel {
                             };
                             let message = match message {
                                 Ok(message) => message,
-                                Err(error) => {
-                                    log::warn!("Ignoring unsupported Jupyter message: {error}");
+                                Err(_) => {
+                                    log::warn!("Ignoring malformed or unsupported Jupyter message");
                                     continue;
                                 }
                             };
