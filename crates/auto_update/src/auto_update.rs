@@ -31,6 +31,7 @@ use std::{
 };
 use util::command::new_command;
 use workspace::Workspace;
+pub use zed_actions::auto_update::Check;
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
 
@@ -100,8 +101,6 @@ fn linux_rsync_install_hint() -> &'static str {
 actions!(
     auto_update,
     [
-        /// Checks for available updates.
-        Check,
         /// Dismisses the update error message.
         DismissMessage,
         /// Opens the release notes for the current version in a browser.

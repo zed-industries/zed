@@ -21,6 +21,7 @@ log.workspace = true
 parking_lot.workspace = true
 path.workspace = true
 sqlformat.workspace = true
+thiserror.workspace = true
 thread_local = "1.1.4"
 uuid.workspace = true
 

@@ -138,13 +138,36 @@ const FALLBACK_DB_NAME: &str = "FALLBACK_MEMORY_DB";
 
 const DB_FILE_NAME: &str = "db.sqlite";
 
-pub static ALL_FILE_DB_FAILED: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(false));
+static ALL_FILE_DB_FAILED: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(false));
 
-pub static FILE_DB_MIGRATED_BY_NEWER_VERSION: AtomicBool = AtomicBool::new(false);
+static FILE_DB_MIGRATED_BY_NEWER_VERSION: AtomicBool = AtomicBool::new(false);
+
+/// Why a database file wasn't loaded and an in-memory database replaced it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileDbFailure {
+    /// A newer version of the app migrated the release channel's database.
+    NewerVersion,
+    Other,
+}
+
+pub fn file_db_failure() -> Option<FileDbFailure> {
+    if FILE_DB_MIGRATED_BY_NEWER_VERSION.load(Ordering::Acquire) {
+        Some(FileDbFailure::NewerVersion)
+    } else if ALL_FILE_DB_FAILED.load(Ordering::Acquire) {
+        Some(FileDbFailure::Other)
+    } else {
+        None
+    }
+}
 
 /// A type that can be used as a database scope for path construction.
 pub trait DbScope {
     fn scope_name(&self) -> &str;
+
+    /// Whether all release channels share this scope's database.
+    fn is_shared(&self) -> bool {
+        false
+    }
 }
 
 impl DbScope for ReleaseChannel {
@@ -159,6 +182,10 @@ pub struct GlobalDbScope;
 impl DbScope for GlobalDbScope {
     fn scope_name(&self) -> &str {
         "global"
+    }
+
+    fn is_shared(&self) -> bool {
+        true
     }
 }
 
@@ -182,6 +209,7 @@ pub async fn open_db<M: Migrator + 'static>(
         return open_fallback_db::<M>().await;
     }
 
+    let shared = scope.is_shared();
     let db_path = db_path(db_dir, scope);
 
     let connection = maybe!(async {
@@ -190,7 +218,7 @@ pub async fn open_db<M: Migrator + 'static>(
                 .context("Could not create db directory")
                 .log_err()?;
         }
-        open_main_db::<M>(&db_path).await
+        open_main_db::<M>(&db_path, shared).await
     })
     .await;
 
@@ -205,7 +233,7 @@ pub async fn open_db<M: Migrator + 'static>(
     open_fallback_db::<M>().await
 }
 
-async fn open_main_db<M: Migrator>(db_path: &Path) -> Option<ThreadSafeConnection> {
+async fn open_main_db<M: Migrator>(db_path: &Path, shared: bool) -> Option<ThreadSafeConnection> {
     log::trace!("Opening database {}", db_path.display());
     ThreadSafeConnection::builder::<M>(db_path.to_string_lossy().as_ref(), true)
         .with_db_initialization_query(DB_INITIALIZE_QUERY)
@@ -213,7 +241,8 @@ async fn open_main_db<M: Migrator>(db_path: &Path) -> Option<ThreadSafeConnectio
         .build()
         .await
         .inspect_err(|error| {
-            if error.downcast_ref::<UnknownMigrationsError>().is_some() {
+            // Only the release channel's database holds the workspace.
+            if !shared && error.is::<UnknownMigrationsError>() {
                 FILE_DB_MIGRATED_BY_NEWER_VERSION.store(true, Ordering::Release);
             }
         })
@@ -302,13 +331,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::atomic::Ordering, thread};
+    use std::thread;
 
     use release_channel::ReleaseChannel;
     use sqlez::domain::Domain;
     use sqlez_macros::sql;
 
-    use crate::{FILE_DB_MIGRATED_BY_NEWER_VERSION, open_db};
+    use crate::{FileDbFailure, GlobalDbScope, file_db_failure, open_db};
 
     // Test bad migration panics
     #[gpui::test]
@@ -394,12 +423,17 @@ mod tests {
             .prefix("DbTests")
             .tempdir()
             .unwrap();
+        let newer_db = open_db::<NewerDB>(tempdir.path(), GlobalDbScope).await;
+        assert!(newer_db.persistent());
+        let older_db = open_db::<OlderDB>(tempdir.path(), GlobalDbScope).await;
+        assert!(!older_db.persistent());
+        assert_eq!(file_db_failure(), Some(FileDbFailure::Other));
+
         let newer_db = open_db::<NewerDB>(tempdir.path(), ReleaseChannel::Dev).await;
         assert!(newer_db.persistent());
-
         let older_db = open_db::<OlderDB>(tempdir.path(), ReleaseChannel::Dev).await;
         assert!(!older_db.persistent());
-        assert!(FILE_DB_MIGRATED_BY_NEWER_VERSION.load(Ordering::Acquire));
+        assert_eq!(file_db_failure(), Some(FileDbFailure::NewerVersion));
 
         let newer_db = open_db::<NewerDB>(tempdir.path(), ReleaseChannel::Dev).await;
         assert!(newer_db.persistent());

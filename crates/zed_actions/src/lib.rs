@@ -429,6 +429,19 @@ pub mod project_panel {
         ]
     );
 }
+
+pub mod auto_update {
+    use gpui::actions;
+
+    actions!(
+        auto_update,
+        [
+            /// Checks for available updates.
+            Check,
+        ]
+    );
+}
+
 pub mod feedback {
     use gpui::actions;
 
