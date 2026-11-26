@@ -1704,8 +1704,7 @@ impl std::str::FromStr for DelayMs {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         s.trim()
-            .strip_suffix("ms")
-            .unwrap_or(s.trim())
+            .trim_suffix("ms")
             .parse::<u64>()
             .map(DelayMs)
             .with_context(|| format!("failed to parse delay duration: {s}"))

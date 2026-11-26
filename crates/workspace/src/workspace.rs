@@ -4603,7 +4603,13 @@ impl Workspace {
         }
     }
 
-    /// Closes the active item across all panes.
+    /// Closes the active item, along with every other item for the same file,
+    /// across all panes.
+    ///
+    /// Items are matched across panes by `single_file_project_path`, so only
+    /// items that stand for a single file are closed together.
+    /// Any other item, such as a multibuffer, whose project path is just the
+    /// file under its cursor, is closed on its own in the active pane.
     pub fn close_item_in_all_panes(
         &mut self,
         action: &CloseItemInAllPanes,
@@ -4617,7 +4623,7 @@ impl Workspace {
         let save_intent = action.save_intent.unwrap_or(SaveIntent::Close);
         let close_pinned = action.close_pinned;
 
-        if let Some(project_path) = active_item.project_path(cx) {
+        if let Some(project_path) = active_item.single_file_project_path(cx) {
             self.close_items_with_project_path(
                 &project_path,
                 save_intent,
@@ -6631,11 +6637,10 @@ impl Workspace {
 
     pub fn focused_pane(&self, window: &Window, cx: &App) -> Entity<Pane> {
         for dock in self.all_docks() {
-            if dock.focus_handle(cx).contains_focused(window, cx)
-                && let Some(pane) = dock
-                    .read(cx)
-                    .active_panel()
-                    .and_then(|panel| panel.pane(cx))
+            // A zoomed panel renders outside its dock.
+            if let Some(panel) = dock.read(cx).active_panel()
+                && panel.panel_focus_handle(cx).contains_focused(window, cx)
+                && let Some(pane) = panel.pane(cx)
             {
                 return pane;
             }
@@ -19016,6 +19021,67 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_close_item_in_all_panes_closes_invalid_items(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "file.bin": "" }))
+            .await;
+
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let pane_a = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let pane_b =
+            workspace.update_in(cx, |workspace, window, cx| workspace.add_pane(window, cx));
+
+        assert_eq!(pane_a.read_with(cx, |pane, _| pane.items_len()), 0);
+        assert_eq!(pane_b.read_with(cx, |pane, _| pane.items_len()), 0);
+
+        let invalid_item_view = |cx: &mut VisualTestContext| {
+            cx.update(|window, cx| {
+                let absolute_path = path!("/root/file.bin").as_ref();
+                let (worktree, path) = project.read(cx).find_worktree(absolute_path, cx).unwrap();
+                let worktree_id = worktree.read(cx).id();
+                let project_path = ProjectPath { worktree_id, path };
+
+                cx.new(|cx| {
+                    InvalidItemView::new(
+                        absolute_path,
+                        true,
+                        &anyhow::anyhow!("binary file"),
+                        window,
+                        cx,
+                    )
+                    .with_project_path(worktree, project_path)
+                })
+            })
+        };
+
+        let item = invalid_item_view(cx);
+        pane_a.update_in(cx, |pane, window, cx| {
+            pane.add_item(Box::new(item), true, true, None, window, cx)
+        });
+
+        let item = invalid_item_view(cx);
+        pane_b.update_in(cx, |pane, window, cx| {
+            pane.add_item(Box::new(item), true, true, None, window, cx)
+        });
+
+        assert_eq!(pane_a.read_with(cx, |pane, _| pane.items_len()), 1);
+        assert_eq!(pane_b.read_with(cx, |pane, _| pane.items_len()), 1);
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.close_item_in_all_panes(&CloseItemInAllPanes::default(), window, cx)
+        });
+        cx.executor().run_until_parked();
+
+        assert_eq!(pane_a.read_with(cx, |pane, _| pane.items_len()), 0);
+        assert_eq!(pane_b.read_with(cx, |pane, _| pane.items_len()), 0);
+    }
+
+    #[gpui::test]
     async fn test_restoring_pinned_tabs_when_items_fail_to_deserialize(cx: &mut TestAppContext) {
         init_test(cx);
         cx.update(|cx| {
@@ -19075,6 +19141,42 @@ mod tests {
             pinned_count, 2,
             "an unpinned item failing to restore should not unpin anything"
         );
+    }
+
+    #[gpui::test]
+    async fn test_restoring_pinned_tabs_past_max_tabs(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.workspace.max_tabs = std::num::NonZero::new(1);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "test.txt": "" })).await;
+        let project = Project::test(fs, ["root".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let (item, missing) = ("TestItem", "Unrestorable");
+        for (kinds, pinned_count, expected) in [
+            (vec![item; 3], 3, (3, 3)),
+            // A pinned item that fails to restore must not shield the tab that shifts into its place.
+            (vec![missing, item, item, item], 1, (1, 0)),
+        ] {
+            let children = kinds
+                .iter()
+                .enumerate()
+                .map(|(id, kind)| SerializedItem::new(kind, id as u64, false, false))
+                .collect();
+            let serialized_pane = SerializedPane::new(children, true, pinned_count);
+            let pane = restore_pane(&workspace, serialized_pane, cx).await;
+            let restored = pane.read_with(cx, |pane, _| (pane.items_len(), pane.pinned_count()));
+            assert_eq!(restored, expected);
+        }
     }
 
     #[gpui::test]

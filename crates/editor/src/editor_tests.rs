@@ -25406,6 +25406,36 @@ async fn test_completion_reuse(cx: &mut TestAppContext) {
     cx.assert_editor_state("obj.abˇb");
     check_displayed_completions(vec!["ab", "abc"], &mut cx);
 
+    let (release_stale_response, stale_response_released) = oneshot::channel();
+    let mut stale_response_released = Some(stale_response_released);
+    let (stale_request_received, mut stale_requests) = mpsc::unbounded();
+    cx.set_request_handler::<lsp::request::Completion, _, _>(move |_, _, _| {
+        stale_request_received.unbounded_send(()).ok();
+        let stale_response_released = stale_response_released.take();
+        async move {
+            if let Some(stale_response_released) = stale_response_released {
+                stale_response_released.await.ok();
+            }
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: String::from("a_only"),
+                    ..lsp::CompletionItem::default()
+                },
+            ])))
+        }
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.backspace(&Backspace, window, cx);
+    });
+    stale_requests.next().await;
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("b", window, cx);
+    });
+    release_stale_response.send(()).ok();
+    cx.run_until_parked();
+    cx.assert_editor_state("obj.abˇb");
+    check_displayed_completions(vec!["ab", "abc"], &mut cx);
+
     // Backspace to delete "b" - since query was "ab" and is now "a", new request is made.
     cx.update_editor(|editor, window, cx| {
         editor.backspace(&Backspace, window, cx);

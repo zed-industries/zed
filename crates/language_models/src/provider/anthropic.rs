@@ -410,6 +410,7 @@ impl LanguageModelClient for AnthropicLanguageModelProvider {
                 .thinking_types
                 .as_ref()
                 .filter(|_| request_id == config.id),
+            anthropic::supports_per_message_effort(&config.id),
             AnthropicPromptCacheMode::Automatic,
             &PROVIDER_ID,
         ) {
@@ -454,6 +455,7 @@ impl LanguageModelClient for AnthropicLanguageModelProvider {
                 .thinking_types
                 .as_ref()
                 .filter(|_| request_id == config.id),
+            anthropic::supports_per_message_effort(&config.id),
             AnthropicPromptCacheMode::Automatic,
             &PROVIDER_ID,
         );
@@ -514,6 +516,7 @@ impl LanguageModelClient for AnthropicLanguageModelProvider {
             config.max_output_tokens,
             config.mode.clone(),
             config.thinking_types.as_ref(),
+            anthropic::supports_per_message_effort(&config.id),
             AnthropicPromptCacheMode::Automatic,
             &PROVIDER_ID,
         ) {

@@ -426,13 +426,14 @@ pub fn init(cx: &mut App) {
         });
 
         workspace.register_action(|workspace, _: &SearchSubmit, window, cx| {
-            let vim = workspace
-                .focused_pane(window, cx)
-                .read(cx)
-                .active_item()
+            let vim = Vim::pane_with_focus(workspace, window, cx)
+                .and_then(|pane| pane.read(cx).active_item())
                 .and_then(|item| item.act_as::<Editor>(cx))
                 .and_then(|editor| editor.read(cx).addon::<VimAddon>().cloned());
-            let Some(vim) = vim else { return };
+            let Some(vim) = vim else {
+                cx.propagate();
+                return;
+            };
             vim.entity.update(cx, |vim, cx| {
                 if !vim.search.cmd_f_search {
                     cx.defer_in(window, |vim, window, cx| vim.search_submit(window, cx))
@@ -1057,9 +1058,12 @@ impl Vim {
     }
 
     pub fn pane(&self, window: &Window, cx: &Context<Self>) -> Option<Entity<Pane>> {
-        let pane = self
-            .workspace(window, cx)
-            .map(|workspace| workspace.read(cx).focused_pane(window, cx))?;
+        let workspace = self.workspace(window, cx)?;
+        Self::pane_with_focus(workspace.read(cx), window, cx)
+    }
+
+    fn pane_with_focus(workspace: &Workspace, window: &Window, cx: &App) -> Option<Entity<Pane>> {
+        let pane = workspace.focused_pane(window, cx);
         // `focused_pane` falls back to the center pane when a dock panel
         // without its own pane (e.g. the Agent panel) has focus. Guard
         // against that so vim search/match commands don't steal focus.

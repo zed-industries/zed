@@ -625,6 +625,10 @@ impl X11Client {
                         XDPEvent::CursorTheme(_) | XDPEvent::CursorSize(_) => {
                             // noop, X11 manages this for us.
                         }
+                        XDPEvent::TextScaleFactor(_) => {
+                            // noop, the desktop already folds this into `Xft.dpi`, which
+                            // the scale factor comes from.
+                        }
                     }
                 }
             })
@@ -805,7 +809,7 @@ impl X11Client {
                     window.refresh(RequestFrameOptions {
                         require_presentation: true,
                         force_render: false,
-                        signal_at: None,
+                        signal_at: PlatformFrameSignal::capture(Instant::now),
                         signal_source: FrameRequestSource::NativeCallback,
                     });
                 }

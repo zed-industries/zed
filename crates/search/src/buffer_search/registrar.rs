@@ -109,7 +109,7 @@ pub fn register_pane_search_actions(div: Div, pane: Entity<Pane>) -> Div {
     registrar.into_div()
 }
 
-/// Register actions for an active pane.
+/// Register actions for the focused pane.
 impl SearchActionsRegistrar for Workspace {
     fn register_handler<A: Action>(&mut self, callback: impl ActionExecutor<A>) {
         self.register_action(move |workspace, action: &A, window, cx| {
@@ -118,7 +118,7 @@ impl SearchActionsRegistrar for Workspace {
                 return;
             }
 
-            let pane = workspace.active_pane();
+            let pane = workspace.focused_pane(window, cx);
             let callback = callback.clone();
             pane.update(cx, |this, cx| {
                 this.toolbar().update(cx, move |this, cx| {

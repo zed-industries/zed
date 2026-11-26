@@ -968,6 +968,28 @@ fragment float4 surface_fragment(SurfaceFragmentInput input [[stage_in]],
   return ycbcrToRGBTransform * ycbcr;
 }
 
+struct NativeViewVertexOutput {
+  float4 position [[position]];
+};
+
+vertex NativeViewVertexOutput native_view_vertex(
+    uint vertex_id [[vertex_id]], uint native_view_id [[instance_id]],
+    constant SurfaceBounds *native_views [[buffer(SurfaceInputIndex_Surfaces)]],
+    constant Size_DevicePixels *viewport_size
+    [[buffer(GlobalInputIndex_ViewportSize)]]) {
+  float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
+  SurfaceBounds native_view = native_views[native_view_id];
+  ClippedVertex clipped = clip_to_mask(unit_vertex, native_view.bounds,
+                                       native_view.content_mask.bounds);
+  return NativeViewVertexOutput{
+      to_device_position_impl(clipped.position, viewport_size)};
+}
+
+// The pipeline does not blend, so this erases what was drawn beneath the view.
+fragment float4 native_view_fragment(NativeViewVertexOutput input [[stage_in]]) {
+  return float4(0.);
+}
+
 float4 hsla_to_rgba(Hsla hsla) {
   float h = hsla.h * 6.0; // Now, it's an angle but scaled in [0, 6) range
   float s = hsla.s;

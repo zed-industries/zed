@@ -506,17 +506,11 @@ fn anthropic_model_ids_match(available: &str, selected: &str) -> bool {
     available == selected || anthropic_dated_model_id_matches_base(available, selected)
 }
 
-fn anthropic_model_alias_base(mut model_id: &str) -> &str {
-    if let Some(stripped) = model_id.strip_suffix("-latest") {
-        model_id = stripped;
-    }
-    if let Some(stripped) = model_id.strip_suffix("-thinking") {
-        model_id = stripped;
-    }
-    if let Some(stripped) = model_id.strip_suffix("-1m-context") {
-        model_id = stripped;
-    }
+fn anthropic_model_alias_base(model_id: &str) -> &str {
     model_id
+        .trim_suffix("-latest")
+        .trim_suffix("-thinking")
+        .trim_suffix("-1m-context")
 }
 
 fn anthropic_dated_model_id_matches_base(available: &str, selected: &str) -> bool {
