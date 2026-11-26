@@ -2954,7 +2954,6 @@ impl OutlinePanel {
     ) -> AnyElement {
         let settings = OutlinePanelSettings::get_global(cx);
         let indicator = settings.folder_indicator;
-        let file_icons = settings.file_icons;
         let indicators = FileIcons::get_folder_indicators(indicator, is_expanded, path, cx);
         let chevron = indicators.chevron.map(|path| {
             self.expand_collapse_icon(
@@ -2967,7 +2966,7 @@ impl OutlinePanel {
         let icon = indicators
             .icon
             .map(|path| Icon::from_path(path).color(color).into_any_element());
-        let (leading, trailing) = if file_icons || indicator == FolderIndicator::Both {
+        let (leading, trailing) = if indicator == FolderIndicator::Both {
             (
                 chevron.unwrap_or_else(empty_icon),
                 Some(icon.unwrap_or_else(empty_icon)),
