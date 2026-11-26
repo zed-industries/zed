@@ -1133,8 +1133,7 @@ impl EditorElement {
         let cursor_count =
             remote_heads.len() + local_selections.len() + usize::from(pending_selection.is_some());
         let mut cursors = remote_heads
-            .iter()
-            .copied()
+            .into_iter()
             .chain(
                 local_selections
                     .iter()
@@ -1518,8 +1517,7 @@ impl EditorElement {
         scrollbar_layout_information: &ScrollbarLayoutInformation,
         content_offset: gpui::Point<Pixels>,
         scroll_position: gpui::Point<ScrollOffset>,
-        visible_row_range: Range<DisplayRow>,
-        scrollbar_cursors: &mut Option<ScrollbarCursors>,
+        visible_row_range: &Range<DisplayRow>,
         right_margin: Pixels,
         editor_width: Pixels,
         window: &mut Window,
@@ -1542,6 +1540,7 @@ impl EditorElement {
 
         let editor_settings = EditorSettings::get_global(cx);
         let scrollbar_settings = editor_settings.scrollbar;
+        let mut scrollbar_cursors = None;
         let show_scrollbars = match scrollbar_settings.show {
             ShowScrollbar::Auto => {
                 let editor = self.editor.read(cx);
@@ -1569,7 +1568,7 @@ impl EditorElement {
                 // Cursors out of sight
                 scrollbar_cursors
                     .get_or_insert_with(|| {
-                        self.collect_scrollbar_cursors(snapshot, &visible_row_range, cx)
+                        self.collect_scrollbar_cursors(snapshot, visible_row_range, cx)
                     })
                     .any_non_visible
             }
@@ -1589,7 +1588,7 @@ impl EditorElement {
             .then_some(content_offset)
             .unwrap_or_default();
 
-        Some(EditorScrollbars::from_scrollbar_axes(
+        let mut scrollbars = EditorScrollbars::from_scrollbar_axes(
             ScrollbarAxes {
                 horizontal: scrollbar_settings.axes.horizontal
                     && self.editor.read(cx).show_scrollbars.horizontal,
@@ -1605,7 +1604,13 @@ impl EditorElement {
             show_scrollbars,
             self.editor.read(cx).scroll_manager.active_scrollbar_state(),
             window,
-        ))
+        );
+        if scrollbar_settings.cursors && scrollbars.visible && scrollbars.vertical.is_some() {
+            scrollbars.cursor_markers = scrollbar_cursors
+                .unwrap_or_else(|| self.collect_scrollbar_cursors(snapshot, visible_row_range, cx))
+                .markers;
+        }
+        Some(scrollbars)
     }
 
     fn layout_minimap(
@@ -6210,8 +6215,10 @@ impl EditorElement {
                     ));
 
                     if axis == ScrollbarAxis::Vertical {
-                        let fast_markers =
-                            self.collect_fast_scrollbar_markers(layout, scrollbar_layout);
+                        let fast_markers = self.collect_fast_scrollbar_markers(
+                            &scrollbars_layout.cursor_markers,
+                            scrollbar_layout,
+                        );
                         // Refresh slow scrollbar markers in the background. Below, we
                         // paint whatever markers have already been computed.
                         self.refresh_slow_scrollbar_markers(layout, scrollbar_layout, window, cx);
@@ -6400,11 +6407,10 @@ impl EditorElement {
 
     fn collect_fast_scrollbar_markers(
         &self,
-        layout: &EditorLayout,
+        cursor_markers: &[(DisplayPoint, Hsla)],
         scrollbar_layout: &ScrollbarLayout,
     ) -> Vec<PaintQuad> {
-        let cursor_ranges = layout
-            .scrollbar_cursor_markers
+        let cursor_ranges = cursor_markers
             .iter()
             .map(|(point, color)| ColoredRange {
                 start: point.row(),
@@ -9673,33 +9679,17 @@ impl Element for EditorElement {
                     let effective_editor_width =
                         frozen_scroll_state.map_or(editor_width, |settled| settled.editor_width);
 
-                    let mut scrollbar_cursors = None;
                     let scrollbars_layout = self.layout_scrollbars(
                         &snapshot,
                         &effective_scrollbar_layout_information,
                         content_offset,
                         scroll_position,
-                        visible_row_range.clone(),
-                        &mut scrollbar_cursors,
+                        &visible_row_range,
                         right_margin,
                         effective_editor_width,
                         window,
                         cx,
                     );
-
-                    let draws_cursor_markers = EditorSettings::get_global(cx).scrollbar.cursors
-                        && scrollbars_layout.as_ref().is_some_and(|scrollbars| {
-                            scrollbars.visible && scrollbars.vertical.is_some()
-                        });
-                    let scrollbar_cursor_markers = if draws_cursor_markers {
-                        scrollbar_cursors
-                            .unwrap_or_else(|| {
-                                self.collect_scrollbar_cursors(&snapshot, &visible_row_range, cx)
-                            })
-                            .markers
-                    } else {
-                        Vec::new()
-                    };
 
                     let gutter_settings = EditorSettings::get_global(cx).gutter;
 
@@ -10087,7 +10077,6 @@ impl Element for EditorElement {
                         inline_code_actions,
                         blocks,
                         spacer_blocks,
-                        scrollbar_cursor_markers,
                         visible_cursors,
                         navigation_overlay_paint_commands,
                         selections,
@@ -10299,7 +10288,6 @@ pub struct EditorLayout {
     highlighted_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
     highlighted_gutter_ranges: Vec<(Range<DisplayPoint>, Hsla)>,
     redacted_ranges: Vec<Range<DisplayPoint>>,
-    scrollbar_cursor_markers: Vec<(DisplayPoint, Hsla)>,
     visible_cursors: Vec<CursorLayout>,
     navigation_overlay_paint_commands: Vec<NavigationOverlayPaintCommand>,
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
@@ -10379,6 +10367,7 @@ struct EditorScrollbars {
     pub vertical: Option<ScrollbarLayout>,
     pub horizontal: Option<ScrollbarLayout>,
     pub visible: bool,
+    pub cursor_markers: Vec<(DisplayPoint, Hsla)>,
 }
 
 impl EditorScrollbars {
@@ -10448,6 +10437,7 @@ impl EditorScrollbars {
             vertical: create_scrollbar_layout(ScrollbarAxis::Vertical),
             horizontal: create_scrollbar_layout(ScrollbarAxis::Horizontal),
             visible: show_scrollbars,
+            cursor_markers: Vec::new(),
         }
     }
 
@@ -13117,6 +13107,87 @@ mod tests {
         assert_eq!(cursors.markers.len(), 0);
         assert!(cursors.any_non_visible);
         assert!(!scrollbar_cursors(101, 0..200).any_non_visible);
+    }
+
+    #[gpui::test]
+    fn test_scrollbar_cursor_markers(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let window = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple(&"a\n".repeat(200), cx);
+            Editor::new(EditorMode::full(), buffer, None, window, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        let editor = window.root(cx).unwrap();
+        let style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
+        let element = EditorElement::new(&editor, style);
+
+        // Let the scrollbar auto-hide, so that only a cursor out of sight keeps it shown.
+        cx.update(|window, cx| {
+            cx.set_global(ui::scrollbars::ScrollbarAutoHide(true));
+            editor.update(cx, |editor, cx| {
+                editor.scroll_manager.show_scrollbars(window, cx)
+            });
+        });
+        cx.executor().advance_clock(Duration::from_secs(2));
+        cx.run_until_parked();
+
+        let layout_scrollbars = |cursor_row: u32, cx: &mut VisualTestContext| {
+            let snapshot = editor.update_in(cx, |editor, window, cx| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_ranges([Point::new(cursor_row, 0)..Point::new(cursor_row, 0)]);
+                });
+                editor.snapshot(window, cx)
+            });
+            let editor_bounds = Bounds::new(point(px(0.), px(0.)), size(px(500.), px(500.)));
+            let layout_information = ScrollbarLayoutInformation {
+                editor_bounds,
+                scroll_range: size(px(500.), px(4000.)),
+                glyph_grid_cell: size(px(10.), px(20.)),
+            };
+            let mut scrollbars = None;
+            // Laying out scrollbars inserts hitboxes, which is only allowed while drawing.
+            cx.draw(editor_bounds.origin, editor_bounds.size, |window, cx| {
+                scrollbars = element.layout_scrollbars(
+                    &snapshot,
+                    &layout_information,
+                    gpui::Point::default(),
+                    gpui::Point::default(),
+                    &(DisplayRow(0)..DisplayRow(10)),
+                    px(0.),
+                    editor_bounds.size.width,
+                    window,
+                    cx,
+                );
+                gpui::Empty
+            });
+            scrollbars.unwrap()
+        };
+
+        let scrollbars = layout_scrollbars(0, cx);
+        assert!(!scrollbars.visible);
+        assert!(scrollbars.cursor_markers.is_empty());
+
+        let scrollbars = layout_scrollbars(150, cx);
+        assert!(scrollbars.visible);
+        assert_eq!(
+            scrollbars
+                .cursor_markers
+                .iter()
+                .map(|(position, _)| position.row())
+                .collect::<Vec<_>>(),
+            [DisplayRow(150)]
+        );
+
+        cx.update(|_, cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.scrollbar.get_or_insert_default().cursors = Some(false);
+                });
+            });
+        });
+        let scrollbars = layout_scrollbars(150, cx);
+        assert!(scrollbars.visible);
+        assert!(scrollbars.cursor_markers.is_empty());
     }
 
     #[gpui::test]
