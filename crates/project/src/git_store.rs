@@ -11727,13 +11727,13 @@ fn blame_at_head(
             .with_context(|| format!("Failed to blame {:?}", repo_path.as_ref()))?;
         let buffer_text = (!is_unchanged).then(|| content.to_string());
         let entries =
-            map_head_blame_through_diff(&blame.entries, &head.text, buffer_text.as_deref());
+            map_head_blame_through_diff(blame.entries, &head.text, buffer_text.as_deref());
         Ok(entries.map(|entries| Blame { entries, ..blame }))
     })
 }
 
 fn map_head_blame_through_diff(
-    head_entries: &[git::blame::BlameEntry],
+    head_entries: Vec<git::blame::BlameEntry>,
     head_text: &str,
     buffer_text: Option<&str>,
 ) -> Option<Vec<git::blame::BlameEntry>> {
@@ -11742,7 +11742,7 @@ fn map_head_blame_through_diff(
         return None;
     }
     let Some(buffer_text) = buffer_text else {
-        return Some(head_entries.to_vec());
+        return Some(head_entries);
     };
 
     let mut mapped = Vec::new();
@@ -11823,7 +11823,7 @@ mod tests {
         buffer_text: Option<&str>,
         blame: &[(u8, std::ops::Range<u32>)],
     ) -> Option<Vec<(u8, std::ops::Range<u32>)>> {
-        map_head_blame_through_diff(&head_blame(blame), head_text, buffer_text).map(commit_rows)
+        map_head_blame_through_diff(head_blame(blame), head_text, buffer_text).map(commit_rows)
     }
 
     fn commit_rows(entries: Vec<git::blame::BlameEntry>) -> Vec<(u8, std::ops::Range<u32>)> {
