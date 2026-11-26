@@ -501,7 +501,9 @@ impl Render for BufferSearchBar {
             }))
             .when(replacement, |this| {
                 this.on_action(cx.listener(Self::toggle_replace))
-                    .on_action(cx.listener(Self::replace_next))
+            })
+            .when(should_show_replace_input, |this| {
+                this.on_action(cx.listener(Self::replace_next))
                     .on_action(cx.listener(Self::replace_all))
             })
             .when(case, |this| {
@@ -679,6 +681,32 @@ impl BufferSearchBar {
         registrar.register_handler(ForDeployed(|this, action: &ToggleReplace, window, cx| {
             if this.supported_options(cx).replacement {
                 this.toggle_replace(action, window, cx);
+            } else {
+                cx.propagate();
+            }
+        }));
+        registrar.register_handler(ForDeployed(|this, action: &ReplaceNext, window, cx| {
+            if this.supported_options(cx).replacement
+                && this.replace_enabled
+                && this
+                    .active_searchable_item
+                    .as_ref()
+                    .is_some_and(|item| item.item_focus_handle(cx).contains_focused(window, cx))
+            {
+                this.replace_next(action, window, cx);
+            } else {
+                cx.propagate();
+            }
+        }));
+        registrar.register_handler(ForDeployed(|this, action: &ReplaceAll, window, cx| {
+            if this.supported_options(cx).replacement
+                && this.replace_enabled
+                && this
+                    .active_searchable_item
+                    .as_ref()
+                    .is_some_and(|item| item.item_focus_handle(cx).contains_focused(window, cx))
+            {
+                this.replace_all(action, window, cx);
             } else {
                 cx.propagate();
             }
@@ -1890,16 +1918,18 @@ mod tests {
         display_map::DisplayRow, test::editor_test_context::EditorTestContext,
     };
     use futures::stream::StreamExt as _;
-    use gpui::{FocusHandle, Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
+    use gpui::{FocusHandle, Hsla, NoAction, TestAppContext, UpdateGlobal, VisualTestContext};
     use language::{Buffer, Point};
-    #[cfg(target_os = "macos")]
-    use project::Project;
+    use project::{FakeFs, Project};
     use settings::{SearchSettingsContent, SettingsStore};
     use unindent::Unindent as _;
     use util_macros::perf;
     #[cfg(target_os = "macos")]
-    use workspace::{AppState, MultiWorkspace, Workspace};
-    use workspace::{item::Item, searchable::SearchableItem};
+    use workspace::{AppState, Workspace};
+    use workspace::{
+        MultiWorkspace, Pane, dock::DockPosition, dock::PanelEvent, dock::test::TestPanel,
+        item::Item, searchable::SearchableItem,
+    };
 
     fn init_globals(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -3023,6 +3053,127 @@ mod tests {
         for "find" or "find and replace" operations on strings, or for input validation.
         "#
             .unindent()
+        );
+    }
+
+    #[gpui::test]
+    async fn test_replace_with_editor_focused(cx: &mut TestAppContext) {
+        init_globals(cx);
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |multi, _| multi.workspace().clone());
+        let search_bar = workspace.update_in(cx, |workspace, window, cx| {
+            let search_bar = cx.new(|cx| BufferSearchBar::new(None, window, cx));
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.toolbar().update(cx, |toolbar, cx| {
+                    toolbar.add_item(search_bar.clone(), window, cx);
+                });
+            });
+            search_bar
+        });
+        let editor = workspace.update_in(cx, |workspace, window, cx| {
+            let editor = cx.new(|cx| Editor::single_line(window, cx));
+            editor.update(cx, |editor, cx| editor.set_text("a a a a", window, cx));
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+            editor
+        });
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.deploy(&Deploy::replace(), None, window, cx);
+            search_bar.replacement_editor.update(cx, |editor, cx| {
+                editor.set_text("b", window, cx);
+            });
+        });
+        search_bar
+            .update_in(cx, |search_bar, window, cx| {
+                search_bar.search("a", None, true, window, cx)
+            })
+            .await
+            .unwrap();
+        editor.update_in(cx, |editor, window, cx| {
+            editor.focus_handle(cx).focus(window, cx)
+        });
+
+        cx.dispatch_action(ReplaceNext);
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "a a a b"
+        );
+        cx.dispatch_action(ReplaceAll);
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "b b b b"
+        );
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.toggle_replace(&ToggleReplace, window, cx);
+            search_bar.replacement_editor.update(cx, |editor, cx| {
+                editor.set_text("a", window, cx);
+            });
+        });
+        search_bar
+            .update_in(cx, |search_bar, window, cx| {
+                search_bar.search("b", None, true, window, cx)
+            })
+            .await
+            .unwrap();
+        cx.dispatch_action(ReplaceNext);
+        cx.dispatch_action(ReplaceAll);
+        editor.update_in(cx, |editor, window, cx| {
+            editor.focus_handle(cx).focus(window, cx)
+        });
+        cx.dispatch_action(ReplaceNext);
+        cx.dispatch_action(ReplaceAll);
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "b b b b"
+        );
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.toggle_replace(&ToggleReplace, window, cx)
+        });
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let pane = cx.new(|cx| {
+                Pane::new(
+                    workspace.weak_handle(),
+                    workspace.project().clone(),
+                    Default::default(),
+                    None,
+                    Box::new(NoAction),
+                    false,
+                    window,
+                    cx,
+                )
+            });
+            let panel = cx.new(|cx| TestPanel {
+                pane: Some(pane),
+                ..TestPanel::new(DockPosition::Bottom, 100, cx)
+            });
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.focus_panel::<TestPanel>(window, cx);
+            panel
+        });
+        cx.dispatch_action(ReplaceAll);
+        cx.dispatch_action(ToggleReplace);
+        assert!(search_bar.read_with(cx, |search_bar, _| search_bar.replace_enabled));
+        panel.update(cx, |_, cx| cx.emit(PanelEvent::ZoomIn));
+        cx.dispatch_action(ReplaceAll);
+        cx.dispatch_action(ToggleReplace);
+        assert!(search_bar.read_with(cx, |search_bar, _| search_bar.replace_enabled));
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "b b b b"
+        );
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Left, 100, cx));
+            workspace.add_panel(panel, window, cx);
+            workspace.focus_panel::<TestPanel>(window, cx);
+        });
+        cx.dispatch_action(ReplaceAll);
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.text(cx)),
+            "b b b b"
         );
     }
 

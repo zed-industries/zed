@@ -859,12 +859,17 @@ mod test {
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
-    use editor::{DisplayPoint, HighlightKey, display_map::DisplayRow};
+    use editor::{DisplayPoint, Editor, HighlightKey, MultiBufferOffset, display_map::DisplayRow};
+    use gpui::{
+        App, AppContext as _, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+        IntoElement, Render, Window,
+    };
 
     use indoc::indoc;
     use itertools::Itertools;
     use search::BufferSearchBar;
     use settings::SettingsStore;
+    use workspace::{ModalView, ToolbarItemView as _};
 
     #[test]
     fn test_replacement_parse_escaped_dollar() {
@@ -1173,6 +1178,55 @@ mod test {
         cx.simulate_keystrokes("*");
         cx.run_until_parked();
         cx.assert_state("one two ˇone two one", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_search_submit_without_vim_editor(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        let editor = cx.workspace(|workspace, window, cx| {
+            let editor = cx.new(|cx| Editor::single_line(window, cx));
+            editor.update(cx, |editor, cx| editor.set_text("one one one", window, cx));
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+            editor
+        });
+        cx.dispatch_action(zed_actions::buffer_search::Deploy::find());
+        cx.simulate_keystrokes("o n e");
+        cx.run_until_parked();
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        let selection = cx.update_entity(editor, |editor, _, cx| {
+            editor
+                .selections
+                .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
+                .range()
+        });
+        assert_eq!(selection, MultiBufferOffset(0)..MultiBufferOffset(3));
+    }
+
+    #[gpui::test]
+    async fn test_search_submit_outside_pane(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        let editor = cx.workspace(|workspace, window, cx| {
+            let editor = cx.new(|cx| Editor::single_line(window, cx));
+            editor.update(cx, |editor, cx| editor.set_text("one one one", window, cx));
+            let search_bar = cx.new(|cx| {
+                let mut search_bar = BufferSearchBar::new(None, window, cx);
+                search_bar.set_active_pane_item(Some(&editor), window, cx);
+                search_bar.show(window, cx);
+                search_bar
+            });
+            workspace.toggle_modal(window, cx, |_, _| SearchBarModal(search_bar));
+            editor
+        });
+        cx.simulate_keystrokes("o n e");
+        cx.simulate_keystrokes("enter");
+        let selection = cx.update_entity(editor, |editor, _, cx| {
+            editor
+                .selections
+                .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
+                .range()
+        });
+        assert_eq!(selection, MultiBufferOffset(0)..MultiBufferOffset(3));
     }
 
     #[gpui::test]
@@ -1804,5 +1858,23 @@ mod test {
                 "Vim search opens with regex mode"
             );
         });
+    }
+
+    struct SearchBarModal(Entity<BufferSearchBar>);
+
+    impl EventEmitter<DismissEvent> for SearchBarModal {}
+
+    impl ModalView for SearchBarModal {}
+
+    impl Focusable for SearchBarModal {
+        fn focus_handle(&self, cx: &App) -> FocusHandle {
+            self.0.focus_handle(cx)
+        }
+    }
+
+    impl Render for SearchBarModal {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.0.clone()
+        }
     }
 }

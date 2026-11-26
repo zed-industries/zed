@@ -6637,11 +6637,10 @@ impl Workspace {
 
     pub fn focused_pane(&self, window: &Window, cx: &App) -> Entity<Pane> {
         for dock in self.all_docks() {
-            if dock.focus_handle(cx).contains_focused(window, cx)
-                && let Some(pane) = dock
-                    .read(cx)
-                    .active_panel()
-                    .and_then(|panel| panel.pane(cx))
+            // A zoomed panel renders outside its dock.
+            if let Some(panel) = dock.read(cx).active_panel()
+                && panel.panel_focus_handle(cx).contains_focused(window, cx)
+                && let Some(pane) = panel.pane(cx)
             {
                 return pane;
             }
