@@ -7286,6 +7286,11 @@ pub(crate) mod tests {
         subagent.update(cx, |subagent, cx| {
             subagent.push_user_content_block(None, "Next task".into(), cx)
         });
+        report(
+            acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+            cx,
+        );
+        assert_card(SubagentStatus::Completed, false, Some(1), cx);
         work("next", cx);
         report(
             idle(acp_v2::StopReason::Error(

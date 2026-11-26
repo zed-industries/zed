@@ -246,20 +246,13 @@ impl SubagentCardState {
         else {
             return card;
         };
-        let session_id = subagent.session_id();
         let next_run_start = subagent
             .entries()
             .iter()
             .enumerate()
             .skip(end + 1)
-            .find_map(|(ix, entry)| match entry {
-                AgentThreadEntry::UserMessage(_) => Some(ix),
-                AgentThreadEntry::SessionMessage(message) => matches!(
-                    message.side(session_id),
-                    SessionMessageSide::Incoming { .. }
-                )
-                .then_some(ix),
-                _ => None,
+            .find_map(|(ix, entry)| {
+                matches!(entry, AgentThreadEntry::UserMessage(_)).then_some(ix)
             });
         let end = next_run_start
             .unwrap_or(subagent.entries().len())
