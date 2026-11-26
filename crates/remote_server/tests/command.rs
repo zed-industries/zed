@@ -12,12 +12,14 @@ use std::borrow::Cow;
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::PermissionsExt as _;
+use std::sync::Arc;
 use std::time::Duration;
 use util::shell::{Shell, ShellKind};
 use util::shell_builder::ShellBuilder;
 
 #[test]
 fn tcp_command_keeps_adapter_logs_out_of_dap() -> Result<()> {
+    let executor = gpui::BackgroundExecutor::new(Arc::new(gpui::ThreadedDispatcher::new()));
     smol::block_on(smol::future::race(
         async {
             let listener = TcpListener::bind("127.0.0.1:0").await?;
@@ -40,7 +42,7 @@ fn tcp_command_keeps_adapter_logs_out_of_dap() -> Result<()> {
             let server = async {
                 let (mut stream, _) = listener.accept().await?;
                 while !marker.exists() {
-                    smol::Timer::after(Duration::from_millis(10)).await;
+                    executor.timer(Duration::from_millis(10)).await;
                 }
                 let mut received = vec![0; request.len()];
                 stream.read_exact(&mut received).await?;
@@ -62,7 +64,7 @@ fn tcp_command_keeps_adapter_logs_out_of_dap() -> Result<()> {
             Ok(())
         },
         async {
-            smol::Timer::after(Duration::from_secs(10)).await;
+            executor.timer(Duration::from_secs(10)).await;
             anyhow::bail!("TCP helper did not finish")
         },
     ))
