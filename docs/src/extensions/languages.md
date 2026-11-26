@@ -12,6 +12,8 @@ Language support in Zed has several components:
 - Queries
 - Language servers
 
+For an end-to-end example, see the [language extension tutorial](#language-extension-tutorial).
+
 ## Language Metadata
 
 Each language supported by Zed must be defined in a subdirectory inside the `languages` directory of your extension.
@@ -649,3 +651,210 @@ languages = ["JavaScript", "HTML", "CSS"]
 "HTML" = "html"
 "CSS" = "css"
 ```
+
+## Tutorial: Build a Language Extension {#language-extension-tutorial}
+
+Build a Protocol Buffers extension that provides syntax highlighting through Tree-sitter and code navigation through [Protols](https://github.com/coder3101/protols). This example uses a language server installed on your system so you can focus on the extension's structure and the language server command.
+
+### 1. Install the Prerequisites {#tutorial-prerequisites}
+
+Install [Rust with rustup](https://www.rust-lang.org/tools/install), then install the WebAssembly target and Protols:
+
+```sh
+rustup target add wasm32-wasip2
+cargo install protols
+protols --version
+```
+
+Zed downloads the [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) when it builds an extension with a grammar. You do not need to install Tree-sitter or the grammar separately.
+
+### 2. Create the Extension Manifest {#tutorial-extension-manifest}
+
+Create this directory structure:
+
+```text
+proto-extension/
+  extension.toml
+  Cargo.toml
+  src/
+    lib.rs
+  languages/
+    proto/
+      config.toml
+      highlights.scm
+```
+
+Add the following to `extension.toml`:
+
+```toml
+id = "proto"
+name = "Proto"
+version = "0.1.0"
+schema_version = 1
+authors = ["Your Name <you@example.com>"]
+description = "Protocol Buffers support with Protols."
+repository = "https://github.com/your-name/proto-extension"
+
+[grammars.proto]
+repository = "https://github.com/coder3101/tree-sitter-proto"
+rev = "a6caac94b5aa36b322b5b70040d5b67132f109d0"
+
+[language_servers.protols]
+name = "Protols"
+languages = ["Proto"]
+```
+
+The `[grammars.proto]` entry tells Zed which repository to clone and which revision to build. Pin a full commit SHA so the grammar stays compatible with your queries. The entry's `proto` key must match the `grammar` value in `config.toml`.
+
+The `[language_servers.protols]` entry registers a language server with the ID `protols`. Its `languages` value must match the language's `name` in `config.toml`.
+
+### 3. Configure the Language and Highlighting {#tutorial-language-configuration}
+
+Add the following to `languages/proto/config.toml`:
+
+```toml
+name = "Proto"
+grammar = "proto"
+path_suffixes = ["proto"]
+line_comments = ["// "]
+```
+
+Add the following to `languages/proto/highlights.scm`:
+
+```scheme
+[
+  "syntax"
+  "package"
+  "import"
+  "message"
+  "enum"
+  "service"
+  "rpc"
+  "returns"
+] @keyword
+
+[
+  (type)
+  (message_name)
+  (enum_name)
+  (service_name)
+  (rpc_name)
+] @type
+
+[
+  (string)
+  "\"proto3\""
+] @string
+
+(int_lit) @number
+(comment) @comment
+```
+
+This query uses node names from the grammar revision pinned in `extension.toml`. If you change the grammar revision, check that your queries still match its syntax tree.
+
+### 4. Start the Language Server {#tutorial-language-server}
+
+Add the following to `Cargo.toml`:
+
+```toml
+[package]
+name = "proto-extension"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+zed_extension_api = "0.7.0"
+```
+
+Use the latest [`zed_extension_api` version](https://crates.io/crates/zed_extension_api) that supports the Zed versions you are targeting.
+
+Add the following to `src/lib.rs`:
+
+```rust
+use zed_extension_api as zed;
+
+struct ProtoExtension;
+
+impl zed::Extension for ProtoExtension {
+    fn new() -> Self {
+        Self
+    }
+
+    fn language_server_command(
+        &mut self,
+        _language_server_id: &zed::LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> zed::Result<zed::Command> {
+        let command = worktree.which("protols").ok_or_else(|| {
+            "protols not found in PATH; install it with `cargo install protols`".to_string()
+        })?;
+
+        Ok(zed::Command {
+            command,
+            args: vec!["--stdio".to_string()],
+            env: worktree.shell_env(),
+        })
+    }
+}
+
+zed::register_extension!(ProtoExtension);
+```
+
+When Zed opens a Proto file, it calls `language_server_command`. The `worktree.which` call finds `protols` in the worktree's `PATH`. The returned command starts the server with standard input and output as its Language Server Protocol transport. Zed manages the server process after starting it.
+
+### 5. Install and Test the Extension {#tutorial-install-and-test}
+
+Open the Extensions page and click `Install Dev Extension`, or run {#action zed::InstallDevExtension}. Select the `proto-extension` directory. Zed compiles the Rust code to WebAssembly, downloads and compiles the grammar, and loads the extension.
+
+This example uses the `proto` extension ID. If you have the published Proto extension installed, the dev extension overrides it. Reinstall the published extension when you finish testing if you want to return to it.
+
+Create `example.proto` in a workspace with the following contents:
+
+```proto
+syntax = "proto3";
+
+package tutorial;
+
+message Greeting {
+  string recipient = 1;
+}
+
+message GreetingRequest {
+  Greeting greeting = 1;
+}
+```
+
+Check that keywords, types, and strings have syntax highlighting. This verifies the language configuration, grammar, and highlighting query.
+
+To test the language server, place the cursor on `Greeting` in `GreetingRequest` and run {#action editor::GoToDefinition}. Zed moves to the `Greeting` message declaration.
+
+### 6. Rebuild After Changes {#tutorial-rebuild}
+
+Click `Rebuild` for the extension on the Extensions page, or run {#action zed::RebuildDevExtension}, after changing the manifest, Rust code, language configuration, or queries. Zed rebuilds and reloads the dev extension without requiring a restart.
+
+If the extension does not work, check Zed.log with {#action zed::OpenLog}. For compiler and extension output in the terminal, close Zed and relaunch it with `zed --foreground`.
+
+Common failures include:
+
+- **The WebAssembly target is missing:** Run `rustup target add wasm32-wasip2`, then rebuild the dev extension.
+- **Zed cannot find Protols:** Run `protols --version` in the same environment as your workspace. Install Protols if needed, then reopen the workspace so Zed can refresh its environment.
+- **A highlighting query fails to compile:** Check Zed.log for the invalid node or capture name. Use node names from the grammar revision pinned in `extension.toml`.
+- **The language server does not start:** Confirm that `languages` in `extension.toml` exactly matches `name` in `config.toml`, then inspect Zed.log for the server error.
+
+### 7. Install the Server from the Extension {#tutorial-server-installation}
+
+Requiring users to install a language server works for local development, but published extensions often download it instead. The extension API supports both common distribution methods:
+
+- For GitHub releases, use [`latest_github_release`](https://docs.rs/zed_extension_api/latest/zed_extension_api/fn.latest_github_release.html) and [`download_file`](https://docs.rs/zed_extension_api/latest/zed_extension_api/fn.download_file.html). The [GLSL extension](https://github.com/zed-industries/zed/tree/main/extensions/glsl) shows how to select a platform-specific asset, cache the binary, and report installation progress.
+- For npm packages, use [`npm_package_latest_version`](https://docs.rs/zed_extension_api/latest/zed_extension_api/fn.npm_package_latest_version.html) and [`npm_install_package`](https://docs.rs/zed_extension_api/latest/zed_extension_api/fn.npm_install_package.html). The [HTML extension](https://github.com/zed-industries/zed/tree/main/extensions/html) shows how to install a server and run it with Zed's Node.js runtime.
+
+Only download or update the server when needed, and cache the executable path. Users can restrict these operations through [extension capabilities](./capabilities.md).
+
+### What's Next {#tutorial-whats-next}
+
+- Pass user settings to your server with [`language_server_initialization_options` and `language_server_workspace_configuration`](https://docs.rs/zed_extension_api/latest/zed_extension_api/trait.Extension.html).
+- Add more Tree-sitter queries for outlines, indentation, brackets, and text objects using the reference sections above.
+- When your extension is ready for others, follow the [publishing guide](./publishing/publishing-guide.md).
