@@ -4,10 +4,9 @@ use crate::{
     LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest,
 };
-use anyhow::anyhow;
+use anyhow::{Result, anyhow};
 use futures::{FutureExt, channel::mpsc, future::BoxFuture, stream::StreamExt};
 use gpui::{App, AsyncApp, Entity, Task};
-use http_client::Result;
 use parking_lot::Mutex;
 use std::collections::VecDeque;
 
@@ -332,12 +331,4 @@ impl FakeProviderState {
             .unbounded_send(event)
             .unwrap();
     }
-}
-
-#[derive(Debug, PartialEq)]
-pub struct ToolUseRequest {
-    pub request: LanguageModelRequest,
-    pub name: String,
-    pub description: String,
-    pub schema: serde_json::Value,
 }

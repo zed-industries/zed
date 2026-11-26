@@ -88,13 +88,10 @@ impl Component for ButtonLink {
     fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
         v_flex()
             .gap_6()
-            .child(
-                example_group(vec![single_example(
-                    "Simple",
-                    ButtonLink::new("zed.dev", "https://zed.dev").into_any_element(),
-                )])
-                .vertical(),
-            )
+            .child(example_group(vec![single_example(
+                "Simple",
+                ButtonLink::new("zed.dev", "https://zed.dev").into_any_element(),
+            )]))
             .into_any_element()
     }
 }

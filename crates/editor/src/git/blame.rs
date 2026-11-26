@@ -106,8 +106,14 @@ pub struct GitBlame {
     kind: GitBlameKind,
 }
 
+pub const MAX_RELATIVE_TIMESTAMP: &str = "2 years, 11 months ago";
+
 pub trait BlameRenderer {
     fn max_author_length(&self) -> usize;
+
+    fn max_timestamp_width(&self, _: &App) -> usize {
+        MAX_RELATIVE_TIMESTAMP.len()
+    }
 
     fn blame_entry_non_text_width(&self, _: &Window, _: &App) -> Pixels {
         Pixels::ZERO

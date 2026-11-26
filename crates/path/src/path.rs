@@ -17,7 +17,9 @@ use std::{
 #[cfg(windows)]
 use tendril::fmt::{Format, WTF8};
 
-use crate::path_component::{Component, Components, Prefix, PrefixExt, iter_after};
+use crate::path_component::{
+    Component, Components, PathBufExt, Prefix, PrefixExt, iter_after, rsplit_file_at_dot,
+};
 use crate::rel_path::{RelPath, StripPrefixError};
 
 pub mod abs_path;
@@ -121,63 +123,11 @@ impl PathStyle {
         *self == PathStyle::Unix
     }
 
-    pub fn join(self, left: impl AsRef<Path>, right: impl AsRef<Path>) -> Option<String> {
-        let right = right.as_ref();
-        if self.has_root(right) {
-            return None;
-        }
-        let right = right.to_str()?;
-        let left = left.as_ref().to_str()?;
-        if left.is_empty() {
-            Some(right.into())
-        } else {
-            Some(format!(
-                "{left}{}{right}",
-                if left.ends_with(self.primary_separator()) {
-                    ""
-                } else {
-                    self.primary_separator()
-                }
-            ))
-        }
-    }
+    pub fn join(self, left: impl AsRef<Path>, right: impl AsRef<Path>) -> PathBuf {
+        let mut buf = left.as_ref().to_path_buf();
+        buf.styled_push(right.as_ref(), self);
 
-    pub fn join_path(
-        self,
-        left: impl AsRef<Path>,
-        right: impl AsRef<Path>,
-    ) -> anyhow::Result<PathBuf> {
-        let left = left
-            .as_ref()
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("Path contains invalid UTF-8"))?;
-        let right = self.normalize_separators(right);
-        let right_string = right
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("Path contains invalid UTF-8"))?;
-        let joined = self
-            .join(left, right_string)
-            .ok_or_else(|| anyhow::anyhow!("Path must be relative: {right:?}"))?;
-        Ok(self.normalize_lexically(&joined))
-    }
-
-    pub fn join_path_preserving_components(
-        self,
-        left: impl AsRef<Path>,
-        right: impl AsRef<Path>,
-    ) -> anyhow::Result<PathBuf> {
-        let left = left
-            .as_ref()
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("Path contains invalid UTF-8"))?;
-        let right = right.as_ref();
-        let right_string = right
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("Path contains invalid UTF-8"))?;
-        let joined = self
-            .join(left, right_string)
-            .ok_or_else(|| anyhow::anyhow!("Path must be relative: {right:?}"))?;
-        Ok(PathBuf::from(&joined))
+        buf
     }
 
     pub fn normalize_separators(&self, path: impl AsRef<Path>) -> PathBuf {
@@ -249,6 +199,18 @@ impl PathStyle {
         )
         .map(|c| c.as_path())
         .ok_or(StripPrefixError)
+    }
+
+    pub fn file_stem<'a>(&self, path: &'a Path) -> Option<&'a OsStr> {
+        self.file_name(path)
+            .map(rsplit_file_at_dot)
+            .and_then(|(before, after)| before.or(after))
+    }
+
+    pub fn extension<'a>(&self, path: &'a Path) -> Option<&'a OsStr> {
+        self.file_name(path)
+            .map(rsplit_file_at_dot)
+            .and_then(|(before, after)| before.and(after))
     }
 }
 
@@ -336,35 +298,111 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_join_path_uses_path_style_separator() {
-        let posix_path = PathStyle::Unix
-            .join_path(Path::new("/home/user/dev"), "worktrees")
-            .unwrap();
-        let windows_path = PathStyle::Windows
-            .join_path(Path::new("C:\\Users\\user\\dev"), "worktrees")
-            .unwrap();
+    fn test_join() {
+        let unix_paths_and_joined = [
+            ("", "foo", "foo"),
+            ("foo", "bar", "foo/bar"),
+            ("foo/", "bar", "foo/bar"),
+            ("foo//", "bar", "foo//bar"),
+            ("foo/.", "bar", "foo/./bar"),
+            ("foo./.", "bar", "foo././bar"),
+            ("foo", "", "foo/"),
+            ("foo", ".", "foo/."),
+            ("foo", "..", "foo/.."),
+            ("foo", "/", "/"),
+            ("/foo/bar", "/", "/"),
+            ("/foo/bar", "/baz", "/baz"),
+            ("/foo/bar", "./baz", "/foo/bar/./baz"),
+        ];
+        for (left, right, joined) in unix_paths_and_joined {
+            assert_eq!(
+                PathStyle::Unix.join(left, right).as_os_str(),
+                OsStr::new(joined),
+                "join({left:?}, {right:?})"
+            );
+        }
 
-        assert_eq!(posix_path, PathBuf::from("/home/user/dev/worktrees"));
-        assert_eq!(
-            windows_path.to_string_lossy(),
-            "C:\\Users\\user\\dev\\worktrees"
-        );
-    }
-
-    #[test]
-    fn test_join_path_preserving_components() {
-        let posix_path = PathStyle::Unix
-            .join_path_preserving_components(Path::new("/home/user/symlink"), "../worktrees")
-            .unwrap();
-        let windows_path = PathStyle::Windows
-            .join_path_preserving_components(Path::new(r"C:\Users\user\symlink"), r"..\worktrees")
-            .unwrap();
-
-        assert_eq!(posix_path, PathBuf::from("/home/user/symlink/../worktrees"));
-        assert_eq!(
-            windows_path.to_string_lossy(),
-            r"C:\Users\user\symlink\..\worktrees"
-        );
+        let windows_paths_and_joined = [
+            ("", "foo", "foo"),
+            ("foo", "bar", r"foo\bar"),
+            ("foo/", "bar", r"foo/bar"),
+            (r"foo\", "bar", r"foo\bar"),
+            ("foo//", "bar", r"foo//bar"),
+            (r"foo\\", "bar", r"foo\\bar"),
+            ("foo/.", "bar", r"foo/.\bar"),
+            ("foo./.", "bar", r"foo./.\bar"),
+            (r"foo\.", "bar", r"foo\.\bar"),
+            (r"foo.\.", "bar", r"foo.\.\bar"),
+            ("foo", "", r"foo\"),
+            ("foo", ".", r"foo\."),
+            ("foo", "..", r"foo\.."),
+            ("foo", "/", "/"),
+            ("foo", r"\", r"\"),
+            ("/foo/bar", "/", "/"),
+            (r"\foo\bar", r"\", r"\"),
+            ("/foo/bar", "/baz", "/baz"),
+            ("/foo/bar", r"\baz", r"\baz"),
+            ("/foo/bar", "./baz", r"/foo/bar\./baz"),
+            ("/foo/bar", r".\baz", r"/foo/bar\.\baz"),
+            // a rooted `right` replaces everything in `left` after its prefix
+            (r"\foo", r"\bar", r"\bar"),
+            ("c:\\", "windows", "c:\\windows"),
+            ("c:", "windows", "c:windows"),
+            (r"a\b\c", "d", r"a\b\c\d"),
+            (r"\a\b\c", "d", r"\a\b\c\d"),
+            (r"a\b", r"c\d", r"a\b\c\d"),
+            (r"a\b", r"\c\d", r"\c\d"),
+            (r"a\b", ".", r"a\b\."),
+            (r"a\b", r"..\c", r"a\b\..\c"),
+            (r"a\b", "C:a.txt", "C:a.txt"),
+            (r"a\b", r"C:\a.txt", r"C:\a.txt"),
+            (r"C:\a", r"C:\b.txt", r"C:\b.txt"),
+            (r"C:\a\b\c", "C:d", "C:d"),
+            (r"C:a\b\c", "C:d", "C:d"),
+            ("C:", r"a\b\c", r"C:a\b\c"),
+            ("C:", r"..\a", r"C:..\a"),
+            // UNC
+            (r"\\server\share\foo", "bar", r"\\server\share\foo\bar"),
+            (r"\\server\share\foo", "C:baz", "C:baz"),
+            (r"\\server\share\foo", r"\bar", r"\\server\share\bar"),
+            // verbatim
+            (r"\\?\C:\a\b", r"C:c\d", r"C:c\d"),
+            (r"\\?\C:a\b", r"C:c\d", r"C:c\d"),
+            (r"\\?\C:\a\b", r"C:\c\d", r"C:\c\d"),
+            (r"\\?\foo\bar", "baz", r"\\?\foo\bar\baz"),
+            (
+                r"\\?\UNC\server\share\foo",
+                "bar",
+                r"\\?\UNC\server\share\foo\bar",
+            ),
+            (r"\\?\UNC\server\share", r"C:\a", r"C:\a"),
+            (r"\\?\UNC\server\share", "C:a", "C:a"),
+            (r"\\?\UNC\server", "foo", r"\\?\UNC\server\foo"),
+            (r"C:\a", r"\\?\UNC\server\share", r"\\?\UNC\server\share"),
+            (r"\\?\C:", "foo", r"\\?\C:\foo"),
+            (r"\\?\C:\bar", "../foo", r"\\?\C:\foo"),
+            (r"\\?\C:\bar", "../../foo", r"\\?\C:\foo"),
+            (r"\\?\C:\", "../foo", r"\\?\C:\foo"),
+            (r"\\?\C:", r"D:\foo/./", r"D:\foo/./"),
+            (r"\\?\C:", r"\\?\D:\foo\.\", r"\\?\D:\foo\.\"),
+            (r"\\?\A:\x\y", "/foo", r"\\?\A:\foo"),
+            (r"\\?\A:", r"..\foo\.", r"\\?\A:\foo"),
+            (r"\\?\A:\x\y", r".\foo\.", r"\\?\A:\x\y\foo"),
+            (r"\\?\A:\x\y", r"", r"\\?\A:\x\y\"),
+            (r"\\?\C:\foo", r"\bar", r"\\?\C:\bar"),
+            // device namespace
+            (r"\\.\foo\bar", "baz", r"\\.\foo\bar\baz"),
+            (r"\\.\foo\bar", "C:a", "C:a"),
+            (r"\\.\foo", r"..\bar", r"\\.\foo\..\bar"),
+            (r"\\.\device\foo", r"\bar", r"\\.\device\bar"),
+        ];
+        for (left, right, joined) in windows_paths_and_joined {
+            assert_eq!(
+                PathStyle::Windows.join(left, right).as_os_str(),
+                OsStr::new(joined),
+                "join({left:?}, {right:?})"
+            );
+        }
     }
 
     #[test]
@@ -647,6 +685,83 @@ mod tests {
 
         for (path, filename) in windows_paths_and_filenames {
             assert_eq!(PathStyle::Windows.file_name(path), filename.map(OsStr::new));
+        }
+    }
+
+    #[test]
+    fn test_path_style_file_stem_and_extension() {
+        let unix_paths_and_stems_and_extensions = [
+            ("foo", Some("foo"), None),
+            ("foo.", Some("foo"), Some("")),
+            (".foo", Some(".foo"), None),
+            ("foo.txt", Some("foo"), Some("txt")),
+            ("/tmp/archive.tar.gz", Some("archive.tar"), Some("gz")),
+            ("foo.bar.", Some("foo.bar"), Some("")),
+            (".x.y.z", Some(".x.y"), Some("z")),
+            ("a/.rustfmt.toml", Some(".rustfmt"), Some("toml")),
+            ("a.b/c.md", Some("c"), Some("md")),
+            ("", None, None),
+            ("/", None, None),
+            (".", None, None),
+            ("..", None, None),
+            ("foo/.", Some("foo"), None),
+            ("foo/..", None, None),
+            ("/foo/bar/", Some("bar"), None),
+            ("/etc/passwd", Some("passwd"), None),
+        ];
+
+        for (path, expected_stem, expected_extension) in unix_paths_and_stems_and_extensions {
+            let path = Path::new(path);
+            assert_eq!(
+                PathStyle::Unix.file_stem(path),
+                expected_stem.map(OsStr::new),
+                "file_stem({path:?})"
+            );
+            assert_eq!(
+                PathStyle::Unix.extension(path),
+                expected_extension.map(OsStr::new),
+                "extension({path:?})"
+            );
+        }
+
+        let windows_paths_and_stems_and_extensions = [
+            (
+                r"C:\Users\user\Documents\report.docx",
+                Some("report"),
+                Some("docx"),
+            ),
+            (
+                r"C:\Users\user\Downloads\archive.tar.gz",
+                Some("archive.tar"),
+                Some("gz"),
+            ),
+            (r"C:\Users\user\.gitignore", Some(".gitignore"), None),
+            (r"C:\Users\user\config.", Some("config"), Some("")),
+            (r"C:\Users\user\README", Some("README"), None),
+            (r"D:\projects\my.app\src\main.rs", Some("main"), Some("rs")),
+            ("C:/Users/user/report.txt", Some("report"), Some("txt")),
+            (
+                r"\\server\share\reports\2024.summary.xlsx",
+                Some("2024.summary"),
+                Some("xlsx"),
+            ),
+            (r"\\?\C:\Users\user\report.txt", Some("report"), Some("txt")),
+            (r"C:\Users\user\.", Some("user"), None),
+            (r"C:\Users\user\..", None, None),
+        ];
+
+        for (path, expected_stem, expected_extension) in windows_paths_and_stems_and_extensions {
+            let path = Path::new(path);
+            assert_eq!(
+                PathStyle::Windows.file_stem(path),
+                expected_stem.map(OsStr::new),
+                "file_stem({path:?})"
+            );
+            assert_eq!(
+                PathStyle::Windows.extension(path),
+                expected_extension.map(OsStr::new),
+                "extension({path:?})"
+            );
         }
     }
 

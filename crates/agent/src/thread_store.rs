@@ -1,5 +1,5 @@
 use crate::{DbThread, DbThreadMetadata, ThreadsDatabase};
-use agent_client_protocol::schema::v2 as acp_v2;
+use agent_client_protocol::v2::schema as acp_v2;
 use anyhow::{Result, anyhow};
 use futures::{FutureExt, future::Shared};
 use gpui::{App, Context, Entity, Global, Task, prelude::*};
@@ -167,6 +167,8 @@ mod tests {
             speed: None,
             thinking_enabled: false,
             thinking_effort: None,
+            thread_only: false,
+            profile_downgraded_for_restricted_workspace: false,
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,

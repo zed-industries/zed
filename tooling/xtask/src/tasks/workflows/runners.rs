@@ -17,6 +17,9 @@ pub const MAC_DEFAULT: Runner = Runner("namespace-profile-mac-large");
 pub const MAC_BUNDLER: Runner = Runner("namespace-profile-mac-large-xcode26");
 pub const MAC_SMALL: Runner = Runner("namespace-profile-mac-small");
 pub const WINDOWS_DEFAULT: Runner = Runner("self-32vcpu-windows-2022");
+// GitHub-hosted. The only runner whose Windows build has the Process Security
+// Environment API that the Windows sandbox is built on.
+pub const WINDOWS_11_ARM: Runner = Runner("windows-11-arm");
 
 pub struct Runner(&'static str);
 
@@ -46,6 +49,16 @@ impl Arch {
         match self {
             Arch::X86_64 => LINUX_X86_BUNDLER,
             Arch::AARCH64 => LINUX_ARM_BUNDLER,
+        }
+    }
+
+    // Snapcraft can only build a snap for the architecture of its host. These
+    // are GitHub-hosted because snapd needs systemd, which the Namespace runner
+    // images don't run.
+    pub fn linux_snap_builder(&self) -> Runner {
+        match self {
+            Arch::X86_64 => Runner("ubuntu-24.04"),
+            Arch::AARCH64 => Runner("ubuntu-24.04-arm"),
         }
     }
 }

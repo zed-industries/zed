@@ -1386,6 +1386,34 @@ fn test_injection_grouped_by_host(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_max_start_depth_does_not_carry_over_to_later_queries(cx: &mut App) {
+    fn highlights_query(grammar: &Grammar) -> Option<&Query> {
+        grammar
+            .highlights_config
+            .as_ref()
+            .map(|config| &config.query)
+    }
+
+    let (buffer, syntax_map) = test_edit_sequence("Rust", &["fn a() { b(c); }"], cx);
+    let capture_count = || {
+        syntax_map
+            .captures(0..buffer.len(), &buffer, highlights_query)
+            .count()
+    };
+
+    let expected_capture_count = capture_count();
+    assert!(expected_capture_count > 0);
+
+    drop(syntax_map.matches_with_options(
+        0..buffer.len(),
+        &buffer,
+        TreeSitterOptions::max_start_depth(1),
+        highlights_query,
+    ));
+    assert_eq!(capture_count(), expected_capture_count);
+}
+
+#[gpui::test]
 fn test_syntax_map_languages_loading_with_erb(cx: &mut App) {
     let text = r#"
         <body>

@@ -332,6 +332,7 @@ pub async fn run_repair(
                 // Turn 1: Original teacher prompt
                 anthropic::Message {
                     role: anthropic::Role::User,
+                    output_config: None,
                     content: vec![anthropic::RequestContent::Text {
                         text: teacher_prompt.input.clone(),
                         cache_control: None,
@@ -340,6 +341,7 @@ pub async fn run_repair(
                 // Turn 2: Original teacher response
                 anthropic::Message {
                     role: anthropic::Role::Assistant,
+                    output_config: None,
                     content: vec![anthropic::RequestContent::Text {
                         text: teacher_response.clone(),
                         cache_control: None,
@@ -348,6 +350,7 @@ pub async fn run_repair(
                 // Turn 3: Repair critique and instructions
                 anthropic::Message {
                     role: anthropic::Role::User,
+                    output_config: None,
                     content: vec![anthropic::RequestContent::Text {
                         text: repair_message,
                         cache_control: None,

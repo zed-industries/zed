@@ -6,10 +6,11 @@
 //! while leaving application lifecycle, windowing, and input to each platform backend.
 
 mod dispatcher;
+pub mod display_link;
 pub mod keychain;
 mod metal_atlas;
 pub mod metal_renderer;
-pub mod thermal;
+pub mod process_info;
 
 #[cfg(feature = "font-kit")]
 mod open_type;

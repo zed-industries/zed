@@ -89,6 +89,7 @@ When focus is in the message editor, you can also use {#kb agent::ScrollOutputPa
 
 Thread titles are auto-generated based on the content of the conversation.
 But you can also edit them manually by clicking the title and typing, or regenerate them by clicking the "Regenerate Thread Title" button in the ellipsis menu in the top right of the panel.
+To stop Zed Agent thread titles from being generated automatically, set `agent.auto_generate_thread_titles` to `false`. Threads then use the first line of your first message as their title.
 
 ### Following the Agent {#following-the-agent}
 
@@ -165,6 +166,10 @@ Configure automatic compaction with `agent.auto_compact`. See [Agent Settings](.
 
 After you've configured your LLM providers—either via [API access](./use-api-access.md) or through [Zed-hosted models](../account/zed-hosted-models.md)—you can switch between their models by clicking on the model selector on the message editor or by using the {#kb agent::ToggleModelSelector} keybinding.
 
+Picking a model in the Zed Agent also saves it as `agent.default_model`, so new threads start with it. Thinking, effort, and fast mode changes are saved too when the thread is on your default model.
+
+To change the model, profile, or thinking effort for the current thread only, pick it with {#kb menu::SecondaryConfirm} instead of `Enter`, or hold `Cmd` on macOS (`Ctrl` on Linux and Windows) while you click it. The thread is then thread-only: nothing you change in it is saved as a default, and a dot appears next to the selectors. To leave thread-only mode, click the dot and choose Reset to Defaults ({#action agent::ResetThreadToDefaults}) to go back to your defaults, or Save as Default ({#action agent::SaveThreadAsDefaults}) to make what the thread is on your new defaults.
+
 > The same model can be offered via multiple providers - for example, Claude Sonnet 4.5 is available via Zed Pro, OpenRouter, Anthropic directly, and more.
 > Make sure you've selected the correct model **_provider_** for the model you'd like to use, delineated by the logo to the left of the model in the model selector.
 
@@ -172,7 +177,7 @@ After you've configured your LLM providers—either via [API access](./use-api-a
 
 You can mark specific models as favorites either through the model selector, by clicking on the star icon button that appears as you hover the model, or through your settings via the `agent.favorite_models` settings key.
 
-Cycle through your favorites with {#kb agent::CycleFavoriteModels} without opening the model selector.
+Cycle through your favorites with {#kb agent::CycleFavoriteModels} without opening the model selector. This also saves the model as your default, unless the thread is thread-only.
 
 ## Using Tools and Profiles {#using-tools}
 

@@ -18,6 +18,9 @@ pub struct StreamingFuzzyMatcher {
     raw_query: String,
     matches: Vec<SearchMatch>,
     matrix: SearchMatrix,
+    /// Collected on the first fuzzy pass, which a query that matches exactly
+    /// before completing a line never reaches.
+    buffer_lines: Option<BufferLines>,
 }
 
 /// A match candidate: the matched byte range plus the 0-based
@@ -45,6 +48,7 @@ impl StreamingFuzzyMatcher {
             raw_query: String::new(),
             matches: Vec::new(),
             matrix: SearchMatrix::new(buffer_line_count + 1),
+            buffer_lines: None,
         }
     }
 
@@ -162,9 +166,13 @@ impl StreamingFuzzyMatcher {
 
         self.matrix.resize_rows(new_query_line_count + 1);
 
+        let buffer_lines = self
+            .buffer_lines
+            .get_or_insert_with(|| BufferLines::new(&self.snapshot));
+
         // Process only the new query lines
         for row in old_query_line_count..new_query_line_count {
-            let query_line = self.query_lines[row].trim();
+            let mut query_line = QueryLine::new(self.query_lines[row].trim());
             let leading_deletion_cost = (row + 1) as u32 * DELETION_COST;
 
             self.matrix.set(
@@ -173,10 +181,7 @@ impl StreamingFuzzyMatcher {
                 SearchState::new(leading_deletion_cost, SearchDirection::Up),
             );
 
-            let mut buffer_lines = self.snapshot.as_rope().chunks().lines();
-            let mut col = 0;
-            while let Some(buffer_line) = buffer_lines.next() {
-                let buffer_line = buffer_line.trim();
+            for (col, buffer_line) in buffer_lines.iter().enumerate() {
                 let up = SearchState::new(
                     self.matrix
                         .get(row, col + 1)
@@ -192,9 +197,9 @@ impl StreamingFuzzyMatcher {
                     SearchDirection::Left,
                 );
                 let diagonal = SearchState::new(
-                    if query_line == buffer_line {
+                    if query_line.text == buffer_line {
                         self.matrix.get(row, col).cost
-                    } else if fuzzy_eq(query_line, buffer_line) {
+                    } else if query_line.fuzzy_eq(buffer_line) {
                         self.matrix.get(row, col).cost + REPLACEMENT_COST
                     } else {
                         self.matrix
@@ -206,7 +211,6 @@ impl StreamingFuzzyMatcher {
                 );
                 self.matrix
                     .set(row + 1, col + 1, up.min(left).min(diagonal));
-                col += 1;
             }
         }
 
@@ -365,17 +369,134 @@ fn find_exact_matches(snapshot: &TextBufferSnapshot, query: &str) -> Vec<Range<u
     matches
 }
 
-fn fuzzy_eq(left: &str, right: &str) -> bool {
-    const THRESHOLD: f64 = 0.8;
+/// The trimmed text of every buffer line, collected once so that each query
+/// line is compared against it without walking the rope again.
+struct BufferLines {
+    text: String,
+    line_ends: Vec<usize>,
+}
 
-    let min_levenshtein = left.len().abs_diff(right.len());
-    let min_normalized_levenshtein =
-        1. - (min_levenshtein as f64 / cmp::max(left.len(), right.len()) as f64);
-    if min_normalized_levenshtein < THRESHOLD {
-        return false;
+impl BufferLines {
+    fn new(snapshot: &TextBufferSnapshot) -> Self {
+        let mut text = String::with_capacity(snapshot.len());
+        let mut line_ends = Vec::with_capacity(snapshot.max_point().row as usize + 1);
+        let mut lines = snapshot.as_rope().chunks().lines();
+        while let Some(line) = lines.next() {
+            text.push_str(line.trim());
+            line_ends.push(text.len());
+        }
+        Self { text, line_ends }
     }
 
-    strsim::normalized_levenshtein(left, right) >= THRESHOLD
+    fn iter(&self) -> impl Iterator<Item = &str> {
+        let mut start = 0;
+        self.line_ends.iter().map(move |&end| {
+            let line = &self.text[start..end];
+            start = end;
+            line
+        })
+    }
+}
+
+/// A trimmed query line, prepared for comparison against many buffer lines.
+struct QueryLine<'a> {
+    text: &'a str,
+    /// For each ASCII byte, a bitmap `word_count` words long of the positions
+    /// in `text` that hold it. Empty when `text` is empty or isn't ASCII.
+    byte_positions: Vec<u64>,
+    word_count: usize,
+    vertical_deltas: Vec<(u64, u64)>,
+}
+
+impl<'a> QueryLine<'a> {
+    fn new(text: &'a str) -> Self {
+        let word_count = text.len().div_ceil(64);
+        let mut byte_positions = Vec::new();
+        if text.is_ascii() {
+            byte_positions.resize(128 * word_count, 0);
+            for (index, byte) in text.bytes().enumerate() {
+                byte_positions[byte as usize * word_count + index / 64] |= 1 << (index % 64);
+            }
+        }
+        Self {
+            text,
+            byte_positions,
+            word_count,
+            vertical_deltas: Vec::new(),
+        }
+    }
+
+    fn fuzzy_eq(&mut self, other: &str) -> bool {
+        const THRESHOLD: f64 = 0.8;
+
+        let max_len = cmp::max(self.text.len(), other.len());
+        let min_levenshtein = self.text.len().abs_diff(other.len());
+        let min_normalized_levenshtein = 1. - (min_levenshtein as f64 / max_len as f64);
+        if min_normalized_levenshtein < THRESHOLD {
+            return false;
+        }
+
+        if self.byte_positions.is_empty() || !other.is_ascii() {
+            return strsim::normalized_levenshtein(self.text, other) >= THRESHOLD;
+        }
+        // Rounding up keeps the lower bound returned by the early exit from
+        // passing for a pair whose distance doesn't, since `1. - THRESHOLD`
+        // isn't exact in binary.
+        let max_distance = ((1. - THRESHOLD) * max_len as f64).ceil() as usize;
+        let levenshtein = self.levenshtein(other.as_bytes(), max_distance);
+        1. - (levenshtein as f64 / max_len as f64) >= THRESHOLD
+    }
+
+    /// Computes the Levenshtein distance from a non-empty ASCII `text` to an
+    /// ASCII `other` with Myers' bit-vector algorithm in Hyyrö's block
+    /// formulation. One step per byte of `other` advances a whole column of
+    /// the distance matrix, 64 rows per word, by tracking only the +1/-1
+    /// differences between adjacent cells.
+    ///
+    /// Each remaining byte lowers the distance by at most one, so this stops
+    /// and returns a lower bound once the result must exceed `max_distance`.
+    fn levenshtein(&mut self, other: &[u8], max_distance: usize) -> usize {
+        let word_count = self.word_count;
+        let last_row = 1 << ((self.text.len() - 1) % 64);
+        self.vertical_deltas.clear();
+        self.vertical_deltas.resize(word_count, (u64::MAX, 0));
+
+        let mut distance = self.text.len();
+        for (index, &byte) in other.iter().enumerate() {
+            let lower_bound = distance.saturating_sub(other.len() - index);
+            if lower_bound > max_distance {
+                return lower_bound;
+            }
+            let positions = &self.byte_positions[byte as usize * word_count..][..word_count];
+            let mut positive_carry = 1;
+            let mut negative_carry = 0;
+            for (word, (vertical_positive, vertical_negative)) in
+                self.vertical_deltas.iter_mut().enumerate()
+            {
+                let matches = positions[word] | negative_carry;
+                let diagonal_zero = ((matches & *vertical_positive)
+                    .wrapping_add(*vertical_positive)
+                    ^ *vertical_positive)
+                    | matches
+                    | *vertical_negative;
+                let horizontal_positive =
+                    *vertical_negative | !(diagonal_zero | *vertical_positive);
+                let horizontal_negative = diagonal_zero & *vertical_positive;
+                if word + 1 == word_count {
+                    distance += (horizontal_positive & last_row != 0) as usize;
+                    distance -= (horizontal_negative & last_row != 0) as usize;
+                }
+
+                let shifted_positive = (horizontal_positive << 1) | positive_carry;
+                let shifted_negative = (horizontal_negative << 1) | negative_carry;
+                positive_carry = horizontal_positive >> 63;
+                negative_carry = horizontal_negative >> 63;
+                *vertical_positive = shifted_negative | !(diagonal_zero | shifted_positive);
+                *vertical_negative = shifted_positive & diagonal_zero;
+            }
+        }
+        distance
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -636,6 +757,45 @@ mod tests {
                 "            .field(\"name\", &self.name)"
             ))
         );
+    }
+
+    #[gpui::test(iterations = 100)]
+    fn test_fuzzy_eq_matches_strsim(mut rng: StdRng) {
+        assert!(QueryLine::new("abcde").fuzzy_eq("abcdé"));
+        assert!(QueryLine::new("abcdé").fuzzy_eq("abcde"));
+        let alphabet: &[char] = if rng.random_bool(0.5) {
+            &['a', 'b', 'c', ' ']
+        } else {
+            &['a', 'b', 'é', '😀']
+        };
+        for _ in 0..50 {
+            let mut left = Vec::new();
+            left.resize_with(rng.random_range(1..200), || {
+                *alphabet.choose(&mut rng).unwrap()
+            });
+            let mut right = left.clone();
+            for _ in 0..rng.random_range(0..=left.len() / 4) {
+                let index = rng.random_range(0..=right.len());
+                let character = *alphabet.choose(&mut rng).unwrap();
+                match rng.random_range(0..3) {
+                    0 => right.insert(index, character),
+                    1 if index < right.len() => drop(right.remove(index)),
+                    _ if index < right.len() => right[index] = character,
+                    _ => {}
+                }
+            }
+            let left = left.into_iter().collect::<String>();
+            let right = right.into_iter().collect::<String>();
+
+            let max_len = cmp::max(left.len(), right.len());
+            let min_levenshtein = left.len().abs_diff(right.len());
+            assert_eq!(
+                QueryLine::new(&left).fuzzy_eq(&right),
+                1. - (min_levenshtein as f64 / max_len as f64) >= 0.8
+                    && strsim::normalized_levenshtein(&left, &right) >= 0.8,
+                "left: {left:?}, right: {right:?}"
+            );
+        }
     }
 
     #[gpui::test(iterations = 100)]

@@ -1,4 +1,4 @@
-use agent_client_protocol::schema::v2 as acp;
+use agent_client_protocol::v2::schema as acp;
 use anyhow::{Context as _, Result, bail};
 use file_icons::FileIcons;
 use serde::{Deserialize, Serialize};
@@ -605,13 +605,13 @@ enum DecodePercentEscapes {
 }
 
 fn parse_line_range(fragment: &str) -> Result<RangeInclusive<u32>> {
-    let range = fragment.strip_prefix("L").unwrap_or(fragment);
+    let range = fragment.trim_prefix("L");
 
     let (start, end) = if let Some((start, end)) = range.split_once(":") {
         (start, end)
     } else if let Some((start, end)) = range.split_once("-") {
         // Also handle L10-20 or L10-L20 format
-        (start, end.strip_prefix("L").unwrap_or(end))
+        (start, end.trim_prefix("L"))
     } else {
         // Single line number like L1872 - treat as a range of one line
         (range, range)
@@ -873,7 +873,7 @@ mod tests {
         for value in ["", "session/ \0 雪 😀"] {
             let wire = serde_json::json!({
                 "Thread": {
-                    "id": agent_client_protocol::schema::v1::SessionId::new(value),
+                    "id": agent_client_protocol::v1::schema::SessionId::new(value),
                     "name": "Thread",
                 },
             });

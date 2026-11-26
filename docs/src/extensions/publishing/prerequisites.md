@@ -65,11 +65,11 @@ Note that maintainers will raise non-compliance during the publishing process. S
 
 ## MCP Server Extensions
 
-> MCP server extensions will be deprecated in favor of the MCP registry in the future; progress for this is tracked in [#59351](https://github.com/zed-industries/zed/issues/59351). Please make sure to also publish your server to the registry to ensure it can be used with future versions of Zed.
+MCP server extensions are being deprecated in favor of the MCP registry. Progress is tracked in [#59351](https://github.com/zed-industries/zed/issues/59351).
 
-- Only provide one MCP server and nothing else.
-- Make sure your extension ID indicates it is an MCP server (e.g., by prefixing it with `mcp-server-` or suffixing it with `-mcp-server`).
-- Do not bundle the MCP server with the extension. Download it or check for it in the user's environment through the [Zed Rust Extension API](https://docs.rs/zed_extension_api/latest/zed_extension_api/).
+As a consequence and to ease migration efforts, new MCP extension submissions will not be accepted at this time.
+
+Authors wishing to publish support for their MCP will have to follow along in the linked issue. Details on making registry-published MCP servers available in Zed will be shared as the migration progresses.
 
 ## Agent Server and Slash Command Extensions
 

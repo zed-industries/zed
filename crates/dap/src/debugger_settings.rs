@@ -1,5 +1,5 @@
 use dap_types::SteppingGranularity;
-use settings::{RegisterSetting, Settings, SettingsContent};
+use settings::{IntoGpui, RegisterSetting, Settings, SettingsContent};
 
 #[derive(Debug, RegisterSetting)]
 pub struct DebuggerSettings {
@@ -31,6 +31,14 @@ pub struct DebuggerSettings {
     ///
     /// Default: Bottom
     pub dock: settings::DockPosition,
+    /// Default width of the debug panel in pixels when docked to the left or right.
+    ///
+    /// Default: 300
+    pub default_width: gpui::Pixels,
+    /// Default height of the debug panel in pixels when docked to the bottom.
+    ///
+    /// Default: 300
+    pub default_height: gpui::Pixels,
 }
 
 impl Settings for DebuggerSettings {
@@ -46,6 +54,8 @@ impl Settings for DebuggerSettings {
             log_dap_communications: content.log_dap_communications.unwrap(),
             format_dap_log_messages: content.format_dap_log_messages.unwrap(),
             dock: content.dock.unwrap(),
+            default_width: content.default_width.unwrap().into_gpui(),
+            default_height: content.default_height.unwrap().into_gpui(),
         }
     }
 }

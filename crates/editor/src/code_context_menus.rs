@@ -1009,8 +1009,10 @@ impl CompletionsMenu {
                                 label_match.string == completion.label.filter_text()
                             })
                             .or_else(|| {
-                                (completion.filter_text() == completion.label.filter_text())
-                                    .then_some(mat)
+                                // Some servers change labels during resolve despite our advertised capabilities.
+                                // Match offsets index mat.string: the candidate text, not the user's query.
+                                // Reuse those offsets only if that text equals the displayed label's filter slice.
+                                (mat.string == completion.label.filter_text()).then_some(mat)
                             })
                             .into_iter()
                             .flat_map(|string_match| {
@@ -1247,6 +1249,9 @@ impl CompletionsMenu {
         };
         let completions = self.completions.borrow();
         let multiline_docs = match completions[mat.candidate_id].documentation.as_ref() {
+            Some(CompletionDocumentation::NonInteractiveMarkdown(source)) => {
+                div().child(markdown::MarkdownLabel(source.clone()))
+            }
             Some(CompletionDocumentation::MultiLinePlainText(text)) => div().child(text.clone()),
             Some(CompletionDocumentation::SingleLineAndMultiLinePlainText {
                 plain_text: Some(text),
@@ -1548,7 +1553,8 @@ impl CompletionsMenu {
                 .retain(|string_match| !completions[string_match.candidate_id].is_snippet_kind());
         }
 
-        matches.sort_unstable_by_key(|string_match| {
+        // The key allocates, so build it once per match.
+        matches.sort_by_cached_key(|string_match| {
             let completion = &completions[string_match.candidate_id];
 
             let sort_text = match &completion.source {

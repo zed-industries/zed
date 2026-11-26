@@ -2,7 +2,7 @@ use std::{ops::Range, sync::Arc};
 
 use acp_thread::{AcpThread, AgentThreadEntry, AssistantMessageChunk, ToolCall};
 use agent::ThreadStore;
-use agent_client_protocol::schema::v2 as acp_v2;
+use agent_client_protocol::v2::schema as acp_v2;
 use agent_settings::AgentSettings;
 use collections::{HashMap, HashSet};
 use editor::{
@@ -439,7 +439,7 @@ impl EntryViewState {
                                 let element = create_terminal(
                                     self.workspace.clone(),
                                     self.project.clone(),
-                                    terminal.clone(),
+                                    terminal,
                                     window,
                                     cx,
                                 )
@@ -932,7 +932,7 @@ mod tests {
     use std::sync::Arc;
 
     use acp_thread::{AgentConnection, StubAgentConnection};
-    use agent_client_protocol::schema::{v1 as acp_v1, v2 as acp_v2};
+    use agent_client_protocol::{v1::schema as acp_v1, v2::schema as acp_v2};
     use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
     use editor::RowInfo;
     use fs::FakeFs;

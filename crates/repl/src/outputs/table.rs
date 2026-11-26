@@ -55,8 +55,7 @@
 //! display(df)
 //! ```
 use gpui::{AnyElement, ClipboardItem, TextRun};
-use runtimelib::datatable::TableSchema;
-use runtimelib::media::datatable::TabularDataResource;
+use jupyter_protocol::media::datatable::{FieldType, TableSchema, TabularDataResource};
 use serde_json::Value;
 use settings::Settings;
 use theme_settings::ThemeSettings;
@@ -143,7 +142,7 @@ impl TableView {
             Some(data) => data,
             None => &Vec::new(),
         };
-        let schema = table.schema.clone();
+        let schema = &table.schema;
 
         let mut markdown = format!(
             "| {} |\n",
@@ -162,18 +161,15 @@ impl TableView {
         }
         markdown.push_str("|\n");
 
-        let body = data
-            .iter()
-            .map(|record: &Value| {
-                let row_content = schema
-                    .fields
-                    .iter()
-                    .map(|field| MarkdownEscaped(&cell_content(record, &field.name)).to_string())
-                    .collect::<Vec<_>>();
+        let body = data.iter().map(|record: &Value| {
+            let row_content = schema
+                .fields
+                .iter()
+                .map(|field| MarkdownEscaped(&cell_content(record, &field.name)).to_string())
+                .collect::<Vec<_>>();
 
-                row_content.join(" | ")
-            })
-            .collect::<Vec<String>>();
+            row_content.join(" | ")
+        });
 
         for row in body {
             markdown.push_str(&format!("| {} |\n", row));
@@ -200,16 +196,16 @@ impl TableView {
             .zip(self.widths.iter())
             .map(|(field, width)| {
                 let container = match field.field_type {
-                    runtimelib::datatable::FieldType::String => div(),
+                    FieldType::String => div(),
 
-                    runtimelib::datatable::FieldType::Number
-                    | runtimelib::datatable::FieldType::Integer
-                    | runtimelib::datatable::FieldType::Date
-                    | runtimelib::datatable::FieldType::Time
-                    | runtimelib::datatable::FieldType::Datetime
-                    | runtimelib::datatable::FieldType::Year
-                    | runtimelib::datatable::FieldType::Duration
-                    | runtimelib::datatable::FieldType::Yearmonth => v_flex().items_end(),
+                    FieldType::Number
+                    | FieldType::Integer
+                    | FieldType::Date
+                    | FieldType::Time
+                    | FieldType::Datetime
+                    | FieldType::Year
+                    | FieldType::Duration
+                    | FieldType::Yearmonth => v_flex().items_end(),
 
                     _ => div(),
                 };

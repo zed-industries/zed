@@ -99,7 +99,7 @@ try {
         expression: `(async () => {
             const check = (condition, message) => { if (!condition) throw new Error(message); };
             check(crossOriginIsolated, "Shared-memory isolation headers are required");
-            const fixture = await import("/http_client_test.js");
+            const fixture = await import("/http-client-test.js");
             const bindings = await fixture.default();
             check(bindings.memory.buffer instanceof SharedArrayBuffer, "Wasm memory must be shared");
             let waitForbidden = false;

@@ -1,5 +1,6 @@
 use crate::{FontId, GlyphId, Pixels, PlatformTextSystem, Point, SharedString, Size, point, px};
-use collections::FxHashMap;
+use collections::{FxHashMap, FxHashSet};
+use itertools::Itertools;
 use smallvec::SmallVec;
 use std::{
     borrow::Borrow,
@@ -195,9 +196,10 @@ impl LineLayout {
         text: &str,
         wrap_width: Pixels,
         max_lines: Option<usize>,
+        scratch: &mut WrapScratch,
     ) -> SmallVec<[WrapBoundary; 1]> {
         let mut boundaries = SmallVec::new();
-        let mut first_non_whitespace_ix = None;
+        let mut current_segment: Option<Range<usize>> = None;
         let mut last_candidate_ix = None;
         let mut last_candidate_x = px(0.);
         let mut last_boundary = WrapBoundary {
@@ -205,44 +207,63 @@ impl LineLayout {
             glyph_ix: 0,
         };
         let mut last_boundary_x = px(0.);
-        let mut prev_ch = '\0';
+        // Shaping can combine characters across a line break opportunity, so we ignore those
+        // break opportunities that would separate them.
+        let WrapScratch {
+            glyph_indices,
+            break_indices,
+        } = scratch;
+        glyph_indices.clear();
+        glyph_indices.extend(
+            self.runs
+                .iter()
+                .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.index)),
+        );
+        break_indices.clear();
+        break_indices
+            .extend(LineWrapper::break_indices(text).filter(|index| glyph_indices.contains(index)));
         let mut glyphs = self
             .runs
             .iter()
             .enumerate()
             .flat_map(move |(run_ix, run)| {
                 run.glyphs.iter().enumerate().map(move |(glyph_ix, glyph)| {
-                    let character = text[glyph.index..].chars().next().unwrap();
                     (
                         WrapBoundary { run_ix, glyph_ix },
-                        character,
+                        glyph.index,
                         glyph.position.x,
                     )
                 })
             })
+            .dedup_by(|(_, previous_index, ..), (_, index, ..)| previous_index == index)
             .peekable();
 
-        while let Some((boundary, ch, x)) = glyphs.next() {
-            if ch == '\n' {
+        while let Some((boundary, index, x)) = glyphs.next() {
+            let byte = text.as_bytes()[index];
+            if byte == b'\n' {
                 continue;
             }
 
-            // Here is very similar to `LineWrapper::wrap_line` to determine text wrapping,
-            // but there are some differences, so we have to duplicate the code here.
-            if LineWrapper::is_word_char(ch) {
-                if prev_ch == ' ' && ch != ' ' && first_non_whitespace_ix.is_some() {
+            if byte != b' '
+                && current_segment
+                    .as_ref()
+                    .is_none_or(|segment| !segment.contains(&index))
+            {
+                // Detect transitions between line-break segments rather than matching glyph
+                // indices directly, to accommodate RTL text. Workaround for the lack of complete
+                // UAX #9 support.
+                let segment = break_indices.partition_point(|break_index| *break_index <= index);
+                if current_segment.is_some() {
                     last_candidate_ix = Some(boundary);
                     last_candidate_x = x;
                 }
-            } else {
-                if ch != ' ' && first_non_whitespace_ix.is_some() {
-                    last_candidate_ix = Some(boundary);
-                    last_candidate_x = x;
-                }
-            }
-
-            if ch != ' ' && first_non_whitespace_ix.is_none() {
-                first_non_whitespace_ix = Some(boundary);
+                let start = segment
+                    .checked_sub(1)
+                    .and_then(|previous| break_indices.get(previous))
+                    .copied()
+                    .unwrap_or(0);
+                let end = break_indices.get(segment).copied().unwrap_or(text.len());
+                current_segment = Some(start..end);
             }
 
             let next_x = glyphs.peek().map_or(self.width, |(_, _, x)| *x);
@@ -265,7 +286,6 @@ impl LineLayout {
                 }
                 boundaries.push(last_boundary);
             }
-            prev_ch = ch;
         }
 
         boundaries
@@ -296,7 +316,6 @@ pub struct WrapBoundary {
 
 impl WrappedLineLayout {
     /// The length of the underlying text, in utf8 bytes.
-    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.unwrapped_layout.len
     }
@@ -368,7 +387,7 @@ impl WrappedLineLayout {
 
     fn _index_for_position(
         &self,
-        mut position: Point<Pixels>,
+        position: Point<Pixels>,
         line_height: Pixels,
         closest: bool,
     ) -> Result<usize, usize> {
@@ -427,7 +446,7 @@ impl WrappedLineLayout {
     /// Returns the pixel position for the given byte index.
     pub fn position_for_index(&self, index: usize, line_height: Pixels) -> Option<Point<Pixels>> {
         let mut line_start_ix = 0;
-        let mut line_end_indices = self
+        let line_end_indices = self
             .wrap_boundaries
             .iter()
             .map(|wrap_boundary| {
@@ -455,13 +474,33 @@ impl WrappedLineLayout {
     }
 }
 
+/// Moves the layouts in `unused` that are held outside the cache into `cache`, and drops
+/// the rest. The two never share a key, so only the smaller map's entries are moved.
+fn keep_held_layouts<V>(
+    cache: &mut FxHashMap<Arc<CacheKey>, Arc<V>>,
+    unused: &mut FxHashMap<Arc<CacheKey>, Arc<V>>,
+) {
+    unused.retain(|_, layout| Arc::strong_count(layout) > 1);
+    if unused.len() > cache.len() {
+        std::mem::swap(cache, unused);
+    }
+    cache.extend(unused.drain());
+}
+
 pub(crate) struct LineLayoutCache {
     state: RefCell<LineLayoutCacheState>,
+    wrap_scratch: RefCell<WrapScratch>,
     platform_text_system: Arc<dyn PlatformTextSystem>,
     /// Advances when [`TextSystem::add_fonts`] successfully changes the font database.
     font_generation: Arc<AtomicUsize>,
     /// Records the generation represented by both frame caches.
     cached_font_generation: AtomicUsize,
+}
+
+#[derive(Default)]
+struct WrapScratch {
+    glyph_indices: FxHashSet<usize>,
+    break_indices: Vec<usize>,
 }
 
 #[derive(Default)]
@@ -493,6 +532,7 @@ impl LineLayoutCache {
         let cached_font_generation = font_generation.load(Ordering::Acquire);
         Self {
             state: RefCell::default(),
+            wrap_scratch: RefCell::default(),
             platform_text_system,
             font_generation,
             cached_font_generation: AtomicUsize::new(cached_font_generation),
@@ -560,10 +600,20 @@ impl LineLayoutCache {
             current_frame,
         } = &mut *self.state.borrow_mut();
         std::mem::swap(previous_frame, current_frame);
-        current_frame.lines.clear();
-        current_frame.wrapped_lines.clear();
+        // Text that kept its measurement isn't shaped again, so the layouts it holds must
+        // stay cached. Wrapped lines go first, since they hold their unwrapped lines.
+        keep_held_layouts(
+            &mut previous_frame.wrapped_lines,
+            &mut current_frame.wrapped_lines,
+        );
+        keep_held_layouts(&mut previous_frame.lines, &mut current_frame.lines);
         current_frame.used_lines.clear();
         current_frame.used_wrapped_lines.clear();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn last_frame_wrapped_line_count(&self) -> usize {
+        self.state.borrow().previous_frame.used_wrapped_lines.len()
     }
 
     pub fn layout_wrapped_line<Text>(
@@ -584,6 +634,7 @@ impl LineLayoutCache {
             font_size,
             runs,
             wrap_width,
+            max_lines,
             force_width: None,
         } as &dyn AsCacheKeyRef;
 
@@ -607,7 +658,12 @@ impl LineLayoutCache {
             let text = SharedString::from(text);
             let unwrapped_layout = self.layout_line::<&SharedString>(&text, font_size, runs, None);
             let wrap_boundaries = if let Some(wrap_width) = wrap_width {
-                unwrapped_layout.compute_wrap_boundaries(text.as_ref(), wrap_width, max_lines)
+                unwrapped_layout.compute_wrap_boundaries(
+                    text.as_ref(),
+                    wrap_width,
+                    max_lines,
+                    &mut self.wrap_scratch.borrow_mut(),
+                )
             } else {
                 SmallVec::new()
             };
@@ -621,6 +677,7 @@ impl LineLayoutCache {
                 font_size,
                 runs: SmallVec::from(runs),
                 wrap_width,
+                max_lines,
                 force_width: None,
             });
 
@@ -652,6 +709,7 @@ impl LineLayoutCache {
             font_size,
             runs,
             wrap_width: None,
+            max_lines: None,
             force_width,
         } as &dyn AsCacheKeyRef;
 
@@ -685,6 +743,7 @@ impl LineLayoutCache {
                 font_size,
                 runs: SmallVec::from(runs),
                 wrap_width: None,
+                max_lines: None,
                 force_width,
             });
             let layout = Arc::new(layout);
@@ -760,6 +819,7 @@ struct CacheKey {
     font_size: Pixels,
     runs: SmallVec<[FontRun; 1]>,
     wrap_width: Option<Pixels>,
+    max_lines: Option<usize>,
     force_width: Option<Pixels>,
 }
 
@@ -769,6 +829,7 @@ struct CacheKeyRef<'a> {
     font_size: Pixels,
     runs: &'a [FontRun],
     wrap_width: Option<Pixels>,
+    max_lines: Option<usize>,
     force_width: Option<Pixels>,
 }
 
@@ -793,6 +854,7 @@ impl AsCacheKeyRef for CacheKey {
             font_size: self.font_size,
             runs: self.runs.as_slice(),
             wrap_width: self.wrap_width,
+            max_lines: self.max_lines,
             force_width: self.force_width,
         }
     }
@@ -825,7 +887,52 @@ impl AsCacheKeyRef for CacheKeyRef<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::GlyphId;
+    use crate::{GlyphId, NoopTextSystem, TextRun, TextSystem, WindowTextSystem, font};
+
+    #[test]
+    fn shape_line_shares_its_text_with_the_layout_cache() {
+        let text_system =
+            WindowTextSystem::new(Arc::new(TextSystem::new(Arc::new(NoopTextSystem::new()))));
+        // Long enough to be stored on the heap rather than inline.
+        let text = SharedString::from("let value = compute_something(argument_one, argument_two);");
+        let runs = [TextRun {
+            len: text.len(),
+            font: font(".ZedMono"),
+            ..Default::default()
+        }];
+
+        text_system.shape_line(text.clone(), px(14.), &runs, None);
+        let state = text_system.line_layout_cache.state.borrow();
+        let (key, _) = state.current_frame.lines.iter().next().unwrap();
+        assert_eq!(key.text.as_ptr(), text.as_ptr());
+    }
+
+    #[test]
+    fn layouts_held_outside_the_cache_outlive_frames_that_dont_use_them() {
+        let text_system =
+            WindowTextSystem::new(Arc::new(TextSystem::new(Arc::new(NoopTextSystem::new()))));
+        let shape = |text: &'static str| {
+            let runs = [TextRun {
+                len: text.len(),
+                font: font(".ZedMono"),
+                ..Default::default()
+            }];
+            text_system
+                .shape_text(text.into(), px(14.), &runs, Some(px(100.)), None)
+                .unwrap()
+                .remove(0)
+                .layout
+        };
+
+        let held = shape("held");
+        let dropped = Arc::downgrade(&shape("dropped").unwrapped_layout);
+        for _ in 0..3 {
+            text_system.finish_frame();
+        }
+
+        assert!(Arc::ptr_eq(&shape("held"), &held));
+        assert!(dropped.upgrade().is_none());
+    }
 
     fn glyph_at(x: f32, index: usize) -> ShapedGlyph {
         ShapedGlyph {
@@ -856,6 +963,87 @@ mod tests {
             .iter()
             .map(|g| f32::from(g.position.x))
             .collect()
+    }
+
+    #[test]
+    fn test_wrap_preserves_shaped_clusters() {
+        let mut layout = make_layout(vec![
+            glyph_at(0., 0),
+            glyph_at(5., 0),
+            glyph_at(10., 3),
+            glyph_at(15., 3),
+        ]);
+        layout.width = px(20.);
+        layout.len = "你好".len();
+        assert_eq!(
+            layout
+                .compute_wrap_boundaries("你好", px(15.), None, &mut WrapScratch::default())
+                .as_slice(),
+            &[WrapBoundary {
+                run_ix: 0,
+                glyph_ix: 2
+            }],
+        );
+
+        let mut layout = make_layout(vec![glyph_at(0., 0), glyph_at(10., 0)]);
+        layout.width = px(20.);
+        layout.len = 1;
+        assert!(
+            layout
+                .compute_wrap_boundaries("a", px(10.), None, &mut WrapScratch::default())
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn test_wrap_right_to_left_text() {
+        for (text, indices, expected_boundaries) in [
+            ("אבג דהו", vec![11, 9, 7, 6, 4, 2, 0], vec![4]),
+            ("a אבג b", vec![0, 1, 6, 4, 2, 8, 9], vec![2, 6]),
+        ] {
+            let mut layout = make_layout(
+                indices
+                    .iter()
+                    .enumerate()
+                    .map(|(position, index)| glyph_at(position as f32 * 10., *index))
+                    .collect(),
+            );
+            layout.width = px(indices.len() as f32 * 10.);
+            layout.len = text.len();
+            assert_eq!(
+                layout.compute_wrap_boundaries(text, px(40.), None, &mut WrapScratch::default()),
+                expected_boundaries
+                    .into_iter()
+                    .map(|glyph_ix| WrapBoundary {
+                        run_ix: 0,
+                        glyph_ix
+                    })
+                    .collect::<SmallVec<[WrapBoundary; 1]>>(),
+                "{text:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_wrap_ignores_breaks_inside_shaped_clusters() {
+        let text = "x a-bcde";
+        let mut layout = make_layout(
+            [0, 1, 2, 5, 6, 7]
+                .into_iter()
+                .map(|index| glyph_at(index as f32 * 10., index))
+                .collect(),
+        );
+        layout.width = px(80.);
+        layout.len = text.len();
+        assert_eq!(
+            layout
+                .compute_wrap_boundaries(text, px(60.), None, &mut WrapScratch::default())
+                .as_slice(),
+            &[WrapBoundary {
+                run_ix: 0,
+                glyph_ix: 2
+            }],
+        );
     }
 
     #[test]
@@ -939,5 +1127,38 @@ mod tests {
 
         let positions = glyph_x_positions(&layout);
         assert_eq!(positions, vec![0.5, 0.5]);
+    }
+
+    #[test]
+    fn test_wrap_ignores_the_sign_of_a_zero_wrap_width_in_the_cache() {
+        let runs = [FontRun {
+            len: 2,
+            font_id: FontId(1),
+        }];
+
+        let cold_cache = LineLayoutCache::new(Arc::new(NoopTextSystem::new()), Arc::default());
+        let cold = cold_cache.layout_wrapped_line("ab", px(0.), &runs, Some(px(0.)), None);
+
+        let warm_cache = LineLayoutCache::new(Arc::new(NoopTextSystem::new()), Arc::default());
+        warm_cache.layout_wrapped_line("ab", px(0.), &runs, Some(-px(0.)), None);
+        let warm = warm_cache.layout_wrapped_line("ab", px(0.), &runs, Some(px(0.)), None);
+
+        assert_eq!(warm.wrap_boundaries, cold.wrap_boundaries);
+    }
+
+    #[test]
+    fn test_wrap_cache_distinguishes_max_lines() {
+        let text = "one two three four five six";
+        let runs = [FontRun {
+            len: text.len(),
+            font_id: FontId(1),
+        }];
+        let cache = LineLayoutCache::new(Arc::new(NoopTextSystem::new()), Arc::default());
+
+        let unclamped = cache.layout_wrapped_line(text, px(14.), &runs, Some(px(50.)), None);
+        assert!(unclamped.wrap_boundaries.len() > 1);
+
+        let clamped = cache.layout_wrapped_line(text, px(14.), &runs, Some(px(50.)), Some(1));
+        assert!(clamped.wrap_boundaries.is_empty());
     }
 }

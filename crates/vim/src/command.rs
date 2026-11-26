@@ -658,7 +658,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 path: path.into_arc(),
             };
 
-            let _ = workspace.update(cx, |workspace, cx| {
+            workspace.update(cx, |workspace, cx| {
                 workspace
                     .open_path(project_path, None, true, window, cx)
                     .detach_and_log_err(cx);
@@ -995,7 +995,6 @@ struct VimCommand {
                 + 'static,
         >,
     >,
-    has_count: bool,
     has_filename: bool,
 }
 
@@ -1060,11 +1059,6 @@ impl VimCommand {
 
     fn default_range(mut self, range: CommandRange) -> Self {
         self.default_range = Some(range);
-        self
-    }
-
-    fn count(mut self) -> Self {
-        self.has_count = true;
         self
     }
 
@@ -1143,23 +1137,19 @@ impl VimCommand {
     fn get_parsed_query(&self, query: String) -> Option<ParsedQuery> {
         let rest = query
             .strip_prefix(self.prefix)?
-            .to_string()
             .chars()
-            .zip_longest(self.suffix.to_string().chars())
+            .zip_longest(self.suffix.chars())
             .skip_while(|e| e.clone().both().map(|(s, q)| s == q).unwrap_or(false))
             .filter_map(|e| e.left())
             .collect::<String>();
         let has_bang = rest.starts_with('!');
-        let has_space = rest.starts_with("! ") || rest.starts_with(' ');
-        let args = if has_bang {
-            rest.strip_prefix('!')?.trim_start().to_string()
-        } else if rest.is_empty() {
-            "".into()
-        } else {
-            rest.strip_prefix(' ')?.trim_start().to_string()
-        };
+        let rest = rest.trim_prefix('!');
+        let has_space = rest.starts_with(' ');
+        if !has_bang && !has_space && !rest.is_empty() {
+            return None;
+        }
         Some(ParsedQuery {
-            args,
+            args: rest.trim_start().to_string(),
             has_bang,
             has_space,
         })
@@ -1650,13 +1640,12 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             action.range.replace(range.clone());
             Some(Box::new(action))
         }),
-        VimCommand::new(("bn", "ext"), workspace::ActivateNextItem::default()).count(),
-        VimCommand::new(("bN", "ext"), workspace::ActivatePreviousItem::default()).count(),
+        VimCommand::new(("bn", "ext"), workspace::ActivateNextItem::default()),
+        VimCommand::new(("bN", "ext"), workspace::ActivatePreviousItem::default()),
         VimCommand::new(
             ("bp", "revious"),
             workspace::ActivatePreviousItem::default(),
-        )
-        .count(),
+        ),
         VimCommand::new(("bf", "irst"), workspace::ActivateItem(0)),
         VimCommand::new(("br", "ewind"), workspace::ActivateItem(0)),
         VimCommand::new(("bl", "ast"), workspace::ActivateLastItem),
@@ -1664,13 +1653,12 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::str(("ls", ""), "tab_switcher::ToggleAll"),
         VimCommand::new(("new", ""), workspace::NewFileSplitHorizontal),
         VimCommand::new(("vne", "w"), workspace::NewFileSplitVertical),
-        VimCommand::new(("tabn", "ext"), workspace::ActivateNextItem::default()).count(),
+        VimCommand::new(("tabn", "ext"), workspace::ActivateNextItem::default()),
         VimCommand::new(
             ("tabp", "revious"),
             workspace::ActivatePreviousItem::default(),
-        )
-        .count(),
-        VimCommand::new(("tabN", "ext"), workspace::ActivatePreviousItem::default()).count(),
+        ),
+        VimCommand::new(("tabN", "ext"), workspace::ActivatePreviousItem::default()),
         VimCommand::new(
             ("tabc", "lose"),
             workspace::CloseActiveItem {

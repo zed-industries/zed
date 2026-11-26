@@ -38,22 +38,17 @@ pub trait DapCommand: LocalDapCommand {
     type ProtoRequest: 'static + Send;
     type ProtoResponse: 'static + Send;
 
-    #[allow(dead_code)]
     fn client_id_from_proto(request: &Self::ProtoRequest) -> SessionId;
 
-    #[allow(dead_code)]
     fn from_proto(request: &Self::ProtoRequest) -> Self;
 
-    #[allow(unused)]
     fn to_proto(&self, debug_client_id: SessionId, upstream_project_id: u64) -> Self::ProtoRequest;
 
-    #[allow(dead_code)]
     fn response_to_proto(
         debug_client_id: SessionId,
         message: Self::Response,
     ) -> Self::ProtoResponse;
 
-    #[allow(unused)]
     fn response_from_proto(&self, message: Self::ProtoResponse) -> Result<Self::Response>;
 }
 

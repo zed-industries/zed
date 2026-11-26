@@ -544,6 +544,32 @@ impl Editor {
         });
     }
 
+    pub(super) fn remove_invalid_inline_diagnostics(
+        &mut self,
+        buffer_ids: &[BufferId],
+        buffers_removed: bool,
+        snapshot: &MultiBufferSnapshot,
+        cx: &mut Context<Self>,
+    ) {
+        if self.inline_diagnostics.is_empty() {
+            return;
+        }
+        let buffer_ids = buffer_ids.iter().copied().collect::<HashSet<_>>();
+        let previous_len = self.inline_diagnostics.len();
+        self.inline_diagnostics.retain(|(anchor, _)| {
+            anchor
+                .buffer_id()
+                .is_none_or(|buffer_id| !buffer_ids.contains(&buffer_id))
+                || !buffers_removed
+                    && anchor
+                        .raw_text_anchor()
+                        .is_none_or(|text_anchor| snapshot.anchor_in_excerpt(text_anchor).is_some())
+        });
+        if self.inline_diagnostics.len() != previous_len {
+            cx.notify();
+        }
+    }
+
     pub(super) fn pull_diagnostics(
         &mut self,
         buffer_id: BufferId,
@@ -566,23 +592,32 @@ impl Editor {
         let project = self.project()?.downgrade();
         let buffer = self.buffer().read(cx).buffer(buffer_id)?;
 
-        self.pull_diagnostics_task = cx.spawn(async move |_, cx| {
-            cx.background_executor().timer(debounce).await;
-            if let Ok(task) = project.update(cx, |project, cx| {
-                project.lsp_store().update(cx, |lsp_store, cx| {
-                    lsp_store.pull_diagnostics_for_buffer(buffer, cx)
+        self.spawn_lsp_data_tasks(
+            LspDataKind::PullDiagnostics,
+            Some(buffer_id),
+            vec![buffer],
+            cx,
+            |buffer, cx| {
+                let project = project.clone();
+                cx.spawn(async move |_, cx| {
+                    cx.background_executor().timer(debounce).await;
+                    if let Ok(task) = project.update(cx, |project, cx| {
+                        project.lsp_store().update(cx, |lsp_store, cx| {
+                            lsp_store.pull_diagnostics_for_buffer(buffer, cx)
+                        })
+                    }) {
+                        task.await.log_err();
+                    }
+                    project
+                        .update(cx, |project, cx| {
+                            project.lsp_store().update(cx, |lsp_store, cx| {
+                                lsp_store.pull_document_diagnostics_for_buffer_edit(buffer_id, cx);
+                            })
+                        })
+                        .log_err();
                 })
-            }) {
-                task.await.log_err();
-            }
-            project
-                .update(cx, |project, cx| {
-                    project.lsp_store().update(cx, |lsp_store, cx| {
-                        lsp_store.pull_document_diagnostics_for_buffer_edit(buffer_id, cx);
-                    })
-                })
-                .log_err();
-        });
+            },
+        );
 
         Some(())
     }
@@ -613,18 +648,21 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use crate::{
+        Editor,
         actions::{
             ToggleCodeLens, ToggleDiagnostics, ToggleInlayHints, ToggleInlineDiagnostics,
             ToggleSemanticHighlights,
         },
         editor_tests::init_test,
-        test::editor_test_context::EditorTestContext,
+        test::{build_editor_with_project, editor_test_context::EditorTestContext},
     };
-    use gpui::{Action, TestAppContext, UpdateGlobal};
+    use gpui::{Action, AppContext as _, TestAppContext, UpdateGlobal};
     use indoc::indoc;
-    use language::DiagnosticSourceKind;
+    use language::{Capability, DiagnosticSourceKind, Point};
     use lsp::LanguageServerId;
-    use project::project_settings::DiagnosticSeverity;
+    use multi_buffer::{MultiBuffer, PathKey, ToPoint as _};
+    use project::{FakeFs, Project, project_settings::DiagnosticSeverity};
+    use serde_json::json;
     use settings::{DelayMs, SettingsStore};
     use std::sync::{
         Arc,
@@ -916,5 +954,128 @@ mod tests {
                 "ToggleInlineDiagnostics should not be available in editors with inline diagnostics permanently disabled"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_inline_diagnostics_removed_with_excerpts(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let inline = settings
+                        .diagnostics
+                        .get_or_insert_default()
+                        .inline
+                        .get_or_insert_default();
+                    inline.enabled = Some(true);
+                    inline.update_debounce_ms = Some(DelayMs(0));
+                });
+            });
+        });
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "a.rs": "one\ntwo\nthree",
+                "b.rs": "four",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let first_buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let second_buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/b.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(0),
+                first_buffer.clone(),
+                [Point::new(0, 0)..Point::new(2, 5)],
+                0,
+                cx,
+            );
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(1),
+                second_buffer.clone(),
+                [Point::new(0, 0)..Point::new(0, 4)],
+                0,
+                cx,
+            );
+            multibuffer
+        });
+        let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+        let (editor, cx) = cx.add_window_view(|window, cx| {
+            build_editor_with_project(project, multibuffer.clone(), window, cx)
+        });
+        lsp_store.update(cx, |lsp_store, cx| {
+            for (path, row) in [(path!("/dir/a.rs"), 2), (path!("/dir/b.rs"), 0)] {
+                lsp_store
+                    .update_diagnostics(
+                        LanguageServerId(0),
+                        lsp::PublishDiagnosticsParams {
+                            uri: lsp::Uri::from_file_path(path).unwrap(),
+                            version: None,
+                            diagnostics: vec![lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(row, 0),
+                                    lsp::Position::new(row, 3),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                message: lsp::DiagnosticMessage::from(format!("error in {path}")),
+                                ..lsp::Diagnostic::default()
+                            }],
+                        },
+                        None,
+                        DiagnosticSourceKind::Pushed,
+                        &[],
+                        cx,
+                    )
+                    .unwrap();
+            }
+        });
+        cx.run_until_parked();
+        editor.update(cx, |editor, cx| {
+            assert_eq!(inline_diagnostic_rows(editor, cx), vec![2, 3]);
+        });
+
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(0),
+                first_buffer.clone(),
+                [Point::new(0, 0)..Point::new(0, 3)],
+                0,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        editor.update(cx, |editor, cx| {
+            assert_eq!(inline_diagnostic_rows(editor, cx), vec![1]);
+        });
+
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.remove_excerpts_for_buffer(second_buffer.read(cx).remote_id(), cx);
+        });
+        cx.run_until_parked();
+        editor.update(cx, |editor, cx| {
+            assert_eq!(inline_diagnostic_rows(editor, cx), Vec::<u32>::new());
+        });
+    }
+
+    fn inline_diagnostic_rows(editor: &Editor, cx: &gpui::App) -> Vec<u32> {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        editor
+            .inline_diagnostics
+            .iter()
+            .map(|(anchor, _)| anchor.to_point(&snapshot).row)
+            .collect()
     }
 }

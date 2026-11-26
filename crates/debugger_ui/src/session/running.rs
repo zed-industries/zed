@@ -355,9 +355,7 @@ impl Item for SubView {
                     cx.subscribe_in(&new_pane, window, RunningState::handle_pane_event),
                 );
                 debug_assert!(_previous_subscription.is_none());
-                running
-                    .panes
-                    .split(&this_pane, &new_pane, split_direction, cx);
+                running.panes.split(&this_pane, &new_pane, split_direction);
                 anyhow::Ok(new_pane)
             });
 
@@ -610,7 +608,6 @@ fn render_debugger_tab_bar(
                     .on_click(cx.listener(move |pane, _, _, cx| {
                         let is_zoomed = pane.is_zoomed();
                         pane.set_zoomed(!is_zoomed, cx);
-                        cx.notify();
                     }))
                     .tooltip({
                         let focus_handle = focus_handle.clone();
@@ -1346,13 +1343,7 @@ impl RunningState {
             // This prevents the NodeJS REPL from appearing, which is not the desired behavior
             // The expected usage is for users to provide their own Node command, e.g., `node test.js`
             // This allows the NodeJS debug client to attach correctly
-            if args
-                .iter()
-                .filter(|arg| !arg.starts_with("--"))
-                .collect::<Vec<_>>()
-                .len()
-                > 1
-            {
+            if args.iter().filter(|arg| !arg.starts_with("--")).count() > 1 {
                 Some(args.remove(0))
             } else {
                 None
@@ -1632,7 +1623,7 @@ impl RunningState {
                 }
             }
             Event::Remove { .. } => {
-                let _did_find_pane = this.panes.remove(source_pane, cx).is_ok();
+                let _did_find_pane = this.panes.remove(source_pane).is_ok();
                 debug_assert!(_did_find_pane);
                 cx.notify();
             }
@@ -1763,9 +1754,7 @@ impl RunningState {
             return;
         };
 
-        if Some(ThreadId(selected_thread.id)) != self.thread_id {
-            self.select_thread(ThreadId(selected_thread.id), window, cx);
-        }
+        self.select_thread(ThreadId(selected_thread.id), window, cx);
     }
 
     pub fn selected_thread_id(&self) -> Option<ThreadId> {
@@ -2072,9 +2061,9 @@ impl RunningState {
         Member::Axis(group_root)
     }
 
-    pub(crate) fn invert_axies(&mut self, cx: &mut App) {
+    pub(crate) fn invert_axies(&mut self) {
         self.dock_axis = self.dock_axis.invert();
-        self.panes.invert_axies(cx);
+        self.panes.invert_axies();
     }
 }
 

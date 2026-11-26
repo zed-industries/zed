@@ -178,10 +178,11 @@ fn bench_string_matching(criterion: &mut Criterion) {
                         foreground_executor.block_on(fuzzy_nucleo::match_strings_async(
                             &candidates,
                             query,
-                            fuzzy_nucleo::Case::Ignore,
-                            fuzzy_nucleo::LengthPenalty::On,
-                            size,
-                            &cancel,
+                            fuzzy_nucleo::StringMatchOptions {
+                                cancel_flag: Some(&cancel),
+                                case: fuzzy_nucleo::Case::Ignore,
+                                ..Default::default()
+                            },
                             background_executor.clone(),
                         ))
                     },
@@ -304,8 +305,10 @@ fn bench_path_matching(criterion: &mut Criterion) {
                             0,
                             None,
                             query,
-                            case,
-                            size,
+                            fuzzy_nucleo::PathMatchOptions {
+                                case,
+                                ..Default::default()
+                            },
                             PathStyle::Unix,
                         )
                     },

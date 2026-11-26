@@ -26,5 +26,5 @@ theme.workspace = true
 workspace = true
 
 [[bin]]
-name = "docs_preprocessor"
+name = "docs-preprocessor"
 path = "src/main.rs"

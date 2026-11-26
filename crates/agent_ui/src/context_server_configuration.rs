@@ -126,7 +126,9 @@ mod tests {
             settings.context_servers.insert(
                 "slack".into(),
                 ContextServerSettings::Stdio {
-                    enabled: true,
+                    // The modal only reads these settings; an enabled server would be
+                    // spawned as a real process by the worktree-less test projects.
+                    enabled: false,
                     remote: false,
                     command: ContextServerCommand {
                         path: "slack-mcp-server".into(),

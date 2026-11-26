@@ -5,7 +5,7 @@
 
 use futures::AsyncReadExt as _;
 use gpui::Platform as _;
-use gpui_web::WebPlatform;
+use gpui_web::{FetchHttpClient, WebPlatform};
 use http_client::HttpClient as _;
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
@@ -15,7 +15,9 @@ fn main() {}
 #[wasm_bindgen]
 pub async fn test_worker_fetch(url: String) -> Result<(), JsValue> {
     let platform = WebPlatform::new(true);
-    let client = Arc::new(platform.fetch_http_client());
+    let client = Arc::new(FetchHttpClient::new(
+        platform.foreground_executor().to_send(),
+    ));
     let background = platform.background_executor();
     let main_thread = std::thread::current().id();
     let readers = (0..8).map(|_| {

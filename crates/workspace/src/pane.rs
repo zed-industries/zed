@@ -19,11 +19,11 @@ use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{StreamExt, stream::FuturesUnordered};
 use git::{CopyFilePermalink, OpenFilePermalink};
 use gpui::{
-    Action, Anchor, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Div,
+    Action, Anchor, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context,
     DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
     Focusable, KeyContext, MouseButton, NavigationDirection, Pixels, Point, PromptLevel, Render,
     ScrollHandle, Subscription, Task, TaskExt, WeakEntity, WeakFocusHandle, Window, actions,
-    anchored, deferred, prelude::*,
+    prelude::*,
 };
 use itertools::Itertools;
 use language::{Capability, DiagnosticSeverity};
@@ -442,7 +442,6 @@ pub struct Pane {
     display_nav_history_buttons: Option<bool>,
     double_click_dispatch_action: Box<dyn Action>,
     save_modals_spawned: HashSet<EntityId>,
-    close_pane_if_empty: bool,
     pub new_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub split_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pinned_tab_count: usize,
@@ -453,8 +452,6 @@ pub struct Pane {
     /// If a certain project item wants to get recreated with specific data, it can persist its data before the recreation here.
     pub project_item_restoration_data: HashMap<ProjectItemKind, Box<dyn Any + Send>>,
     welcome_page: Option<Entity<crate::welcome::WelcomePage>>,
-
-    pub in_center_group: bool,
 }
 
 pub struct ActivationHistoryEntry {
@@ -615,7 +612,6 @@ impl Pane {
             _subscriptions: subscriptions,
             double_click_dispatch_action,
             save_modals_spawned: HashSet::default(),
-            close_pane_if_empty: true,
             split_item_context_menu_handle: Default::default(),
             new_item_context_menu_handle: Default::default(),
             pinned_tab_count: 0,
@@ -625,7 +621,6 @@ impl Pane {
             diagnostic_summary_update: Task::ready(()),
             project_item_restoration_data: HashMap::default(),
             welcome_page: None,
-            in_center_group: false,
         }
     }
 
@@ -850,18 +845,6 @@ impl Pane {
 
     pub fn set_can_toggle_zoom(&mut self, can_toggle_zoom: bool, cx: &mut Context<Self>) {
         self.can_toggle_zoom = can_toggle_zoom;
-        cx.notify();
-    }
-
-    pub fn set_close_pane_if_empty(&mut self, close_pane_if_empty: bool, cx: &mut Context<Self>) {
-        self.close_pane_if_empty = close_pane_if_empty;
-        cx.notify();
-    }
-
-    pub fn set_can_navigate(&mut self, can_navigate: bool, cx: &mut Context<Self>) {
-        self.toolbar.update(cx, |toolbar, cx| {
-            toolbar.set_can_navigate(can_navigate, cx);
-        });
         cx.notify();
     }
 
@@ -1167,6 +1150,8 @@ impl Pane {
                 {
                     if already_open_view.is_none()
                         && existing_error_view.read(cx).error == invalid_buffer_view.read(cx).error
+                        && existing_error_view.read(cx).active_project_path(cx)
+                            == invalid_buffer_view.read(cx).active_project_path(cx)
                     {
                         already_open_view = Some(existing_error_view);
                     } else {
@@ -1692,7 +1677,7 @@ impl Pane {
         let pinned_item_ids = self.pinned_item_ids();
         let matching_item_ids: Vec<_> = self
             .items()
-            .filter(|item| item.project_path(cx).as_ref() == Some(project_path))
+            .filter(|item| item.single_file_project_path(cx).as_ref() == Some(project_path))
             .map(|item| item.item_id())
             .collect();
         self.close_items(window, cx, save_intent, &move |item_id| {
@@ -2076,13 +2061,7 @@ impl Pane {
                 // Remove the item from the pane.
                 if should_close {
                     pane.update_in(cx, |pane, window, cx| {
-                        pane.remove_item(
-                            item_to_close.item_id(),
-                            false,
-                            pane.close_pane_if_empty,
-                            window,
-                            cx,
-                        );
+                        pane.remove_item(item_to_close.item_id(), false, true, window, cx);
                     })
                     .ok();
                 }
@@ -2939,6 +2918,7 @@ impl Pane {
         let has_file_icon = icon.is_some();
 
         let capability = item.capability(cx);
+        let can_toggle_read_only = item.read_only_toggle_buffer(cx).is_some();
         let tab = Tab::new(ix)
             .position(if is_first_item {
                 TabPosition::First
@@ -3090,7 +3070,7 @@ impl Pane {
                     .gap_1()
                     .children(if let Some(icon) = icon {
                         Some(icon)
-                    } else if !capability.editable() {
+                    } else if can_toggle_read_only && !capability.editable() {
                         Some(read_only_toggle(capability == Capability::Read).into_any_element())
                     } else {
                         None
@@ -3112,9 +3092,10 @@ impl Pane {
                         }
                         None => this,
                     })
-                    .when(capability == Capability::Read && has_file_icon, |this| {
-                        this.child(read_only_toggle(true))
-                    }),
+                    .when(
+                        can_toggle_read_only && capability == Capability::Read && has_file_icon,
+                        |this| this.child(read_only_toggle(true)),
+                    ),
             );
 
         let single_entry_to_resolve = (self.items[ix].buffer_kind(cx) == ItemBufferKind::Singleton)
@@ -3283,7 +3264,7 @@ impl Pane {
                             })
                         };
 
-                        if capability != Capability::ReadOnly {
+                        if can_toggle_read_only && capability != Capability::ReadOnly {
                             let read_only_label = if capability.editable() {
                                 "Make Tab Read-Only"
                             } else {
@@ -3821,12 +3802,6 @@ impl Pane {
             }))
     }
 
-    pub fn render_menu_overlay(menu: &Entity<ContextMenu>) -> Div {
-        div().absolute().bottom_0().right_0().size_0().child(
-            deferred(anchored().anchor(Anchor::TopRight).child(menu.clone())).with_priority(1),
-        )
-    }
-
     pub fn set_zoomed(&mut self, zoomed: bool, cx: &mut Context<Self>) {
         self.zoomed = zoomed;
         cx.notify();
@@ -3887,9 +3862,7 @@ impl Pane {
             None
         };
 
-        if direction != self.drag_split_direction {
-            self.drag_split_direction = direction;
-        }
+        self.drag_split_direction = direction;
     }
 
     pub fn handle_tab_drop(
@@ -4805,8 +4778,18 @@ impl ItemNavHistory {
         self.history.pop(NavigationMode::GoingBack, cx)
     }
 
-    pub fn pop_forward(&mut self, cx: &mut App) -> Option<NavigationEntry> {
-        self.history.pop(NavigationMode::GoingForward, cx)
+    pub(crate) fn push_path(
+        &mut self,
+        project_path: ProjectPath,
+        absolute_path: PathBuf,
+        cx: &mut App,
+    ) {
+        self.history
+            .0
+            .lock()
+            .paths_by_item
+            .insert(self.item.id(), (project_path, Some(absolute_path)));
+        self.push::<()>(None, None, cx);
     }
 }
 
@@ -5201,6 +5184,82 @@ mod tests {
                 self.drop_call_count.set(self.drop_call_count.get() + 1);
             }
             is_dragged_tab
+        }
+    }
+
+    #[gpui::test]
+    async fn test_invalid_item_identity_deduplication(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(util::path!("/root"), serde_json::json!({ "file.bin": "" }))
+            .await;
+        let project = Project::test(fs, [util::path!("/root").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let mut original_item_id = None;
+
+        for replace_identity in [false, false, true] {
+            if replace_identity {
+                project.update(cx, |project, cx| {
+                    let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
+                    project.remove_worktree(worktree_id, cx);
+                });
+                project
+                    .update(cx, |project, cx| {
+                        project.find_or_create_worktree(util::path!("/root"), true, cx)
+                    })
+                    .await
+                    .unwrap();
+            }
+
+            let (item, expected_item_id, project_path) = pane.update_in(cx, |pane, window, cx| {
+                let absolute_path = util::path!("/root/file.bin").as_ref();
+                let (worktree, path) = project.read(cx).find_worktree(absolute_path, cx).unwrap();
+                let project_path = ProjectPath {
+                    worktree_id: worktree.read(cx).id(),
+                    path,
+                };
+                let new_item = cx.new(|cx| {
+                    InvalidItemView::new(
+                        absolute_path,
+                        true,
+                        &anyhow::anyhow!("binary file"),
+                        window,
+                        cx,
+                    )
+                    .with_project_path(worktree, project_path.clone())
+                });
+                let expected_item_id = if replace_identity {
+                    new_item.entity_id()
+                } else {
+                    *original_item_id.get_or_insert(new_item.entity_id())
+                };
+                let item = pane.open_item(
+                    None,
+                    project_path.clone(),
+                    true,
+                    false,
+                    true,
+                    None,
+                    window,
+                    cx,
+                    Box::new(move |_, _, _| new_item.boxed_clone()),
+                );
+                (item, expected_item_id, project_path)
+            });
+            assert_eq!(item.item_id(), expected_item_id);
+            cx.run_until_parked();
+            pane.read_with(cx, |pane, cx| {
+                assert_eq!(
+                    pane.items().map(|item| item.item_id()).collect::<Vec<_>>(),
+                    vec![expected_item_id],
+                );
+                assert_eq!(
+                    pane.active_item().unwrap().project_path(cx),
+                    Some(project_path)
+                );
+            });
         }
     }
 
