@@ -525,11 +525,51 @@ pub(crate) async fn notebook_kernel_choices(
     if let Some(path) = crate::notebook::kernel_setup::installed_python() {
         candidates.push((path, "Zed Python".to_string()));
     }
+    let names: &[&str] = if cfg!(windows) {
+        &["python.exe"]
+    } else {
+        &["python3", "python"]
+    };
+    let mut path_interpreters = Vec::new();
+    if let Some(path) = env::var_os("PATH") {
+        for name in names {
+            if let Some(path) = env::split_paths(&path)
+                .filter(|dir| dir.is_absolute())
+                .map(|dir| dir.join(name))
+                .find(|python| python.is_file())
+            {
+                path_interpreters.push((path, "Python".to_string()));
+            }
+        }
+    }
     let mut data_dirs = dirs::data_dirs();
-    if include_kernelspecs && let Some(prefix) = env::var_os("CONDA_PREFIX") {
-        let dir = PathBuf::from(prefix).join("share/jupyter");
-        if !data_dirs.contains(&dir) {
-            data_dirs.push(dir);
+    if include_kernelspecs {
+        let prefixes = ["CONDA_PREFIX", "VIRTUAL_ENV"]
+            .into_iter()
+            .filter_map(env::var_os)
+            .map(PathBuf::from);
+        let interpreter_prefixes =
+            candidates
+                .iter()
+                .chain(&path_interpreters)
+                .filter_map(|(python, _)| {
+                    let directory = python.parent()?;
+                    if directory.ends_with("bin") || directory.ends_with("Scripts") {
+                        directory.parent().map(std::path::Path::to_owned)
+                    } else if cfg!(windows) {
+                        Some(directory.to_owned())
+                    } else {
+                        None
+                    }
+                });
+        for prefix in prefixes
+            .chain(interpreter_prefixes)
+            .filter(|prefix| prefix.is_absolute())
+        {
+            let dir = prefix.join("share/jupyter");
+            if !data_dirs.contains(&dir) {
+                data_dirs.push(dir);
+            }
         }
     }
     let mut installed = Vec::new();
@@ -548,22 +588,7 @@ pub(crate) async fn notebook_kernel_choices(
             candidates.push((path, spec.kernelspec.display_name.clone()));
         }
     }
-    let names: &[&str] = if cfg!(windows) {
-        &["python.exe"]
-    } else {
-        &["python3", "python"]
-    };
-    if let Some(path) = env::var_os("PATH") {
-        for name in names {
-            if let Some(path) = env::split_paths(&path)
-                .filter(|dir| dir.is_absolute())
-                .map(|dir| dir.join(name))
-                .find(|python| python.is_file())
-            {
-                candidates.push((path, "Python".to_string()));
-            }
-        }
-    }
+    candidates.extend(path_interpreters);
     let mut seen = collections::HashSet::default();
     let mut specs = Vec::new();
     for (path, name) in candidates {

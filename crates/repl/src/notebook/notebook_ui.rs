@@ -503,7 +503,7 @@ impl NotebookEditor {
         });
         anyhow::ensure!(
             trusted,
-            "Notebook execution is disabled in Restricted Mode. Trust this workspace to run Python."
+            "Notebook execution is disabled in Restricted Mode. Trust this workspace to run cells."
         );
         anyhow::ensure!(
             self.source_is_current(cx) && self.sync_errors.is_empty(),
@@ -771,7 +771,7 @@ impl NotebookEditor {
         let selected = run.as_ref().and(self.kernel_specification.clone());
         self.preparing_cell = run.as_ref().map(|run| run.cell_id.clone());
         let fs = self.project.read(cx).fs().clone();
-        self.kernel_notice = Some("Finding a Python kernel…".into());
+        self.kernel_notice = Some("Finding a kernel…".into());
         let prepare = cx.spawn_in(window, async move |this, cx| {
             let result = Self::prepare_kernel(&this, selected, fs, run.as_ref(), cx).await;
             this.update_in(cx, |editor, window, cx| {
@@ -3719,7 +3719,9 @@ mod tests {
         let raw = NOTEBOOK_WITH_ONE_CODE_CELL.replace("python", "R");
         let (editor, cx) = kernel_test_editor(&raw, cx).await;
         set_notebook_flag(true, cx);
-        let (directory, kernelspec) = fake_r_kernelspec();
+        let (_, kernelspec) = fake_r_kernelspec();
+        let directory =
+            std::path::PathBuf::from(path!("/notebooks/.venv/share/jupyter/kernels/fake-r"));
         let fs = editor.read_with(cx, |editor, cx| editor.project.read(cx).fs().as_fake());
         fs.insert_tree(&directory, json!({ "kernel.json": kernelspec.to_string() }))
             .await;
