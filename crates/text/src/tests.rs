@@ -33,7 +33,12 @@ fn test_edit() {
 #[test]
 fn test_offsets_at_version() {
     let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "abc");
-    let anchors = [buffer.anchor_after(1), buffer.anchor_after(2)];
+    let other = Buffer::new(ReplicaId::LOCAL, BufferId::new(2).unwrap(), "abc");
+    let anchors = [
+        other.anchor_after(1),
+        buffer.anchor_after(1),
+        buffer.anchor_after(2),
+    ];
     let original = buffer.version();
     buffer.edit([(1..2, "")]);
     let deleted = buffer.version();
@@ -43,9 +48,9 @@ fn test_offsets_at_version() {
             .offsets_at_version(&anchors, version)
             .collect::<Vec<_>>()
     };
-    assert_eq!(offsets(&original), [Some(1), Some(2)]);
-    assert_eq!(offsets(&deleted), [None, Some(1)]);
-    assert_eq!(offsets(&buffer.version()), [None, Some(3)]);
+    assert_eq!(offsets(&original), [None, Some(1), Some(2)]);
+    assert_eq!(offsets(&deleted), [None, None, Some(1)]);
+    assert_eq!(offsets(&buffer.version()), [None, None, Some(3)]);
 }
 
 #[test]

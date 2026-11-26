@@ -2100,7 +2100,7 @@ impl BufferSnapshot {
         let mut fragments = self.fragments.iter().peekable();
         let mut offset = 0;
         anchors.into_iter().map(move |anchor| {
-            if anchor.is_min() || anchor.is_max() {
+            if anchor.is_min() || anchor.is_max() || !self.can_resolve(anchor) {
                 return None;
             }
             let fragment_id = self.try_fragment_id_for_anchor(anchor)?;
