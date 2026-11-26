@@ -390,6 +390,7 @@ CREATE TABLE extensions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     external_id TEXT NOT NULL,
     name TEXT NOT NULL,
+    description TEXT,
     latest_version TEXT NOT NULL,
     total_download_count INTEGER NOT NULL DEFAULT 0
 );

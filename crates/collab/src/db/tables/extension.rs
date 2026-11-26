@@ -8,6 +8,7 @@ pub struct Model {
     pub id: ExtensionId,
     pub external_id: String,
     pub name: String,
+    pub description: Option<String>,
     pub latest_version: String,
     pub total_download_count: i64,
 }
