@@ -31,6 +31,24 @@ fn test_edit() {
 }
 
 #[test]
+fn test_offsets_at_version() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "abc");
+    let anchors = [buffer.anchor_after(1), buffer.anchor_after(2)];
+    let original = buffer.version();
+    buffer.edit([(1..2, "")]);
+    let deleted = buffer.version();
+    buffer.edit([(0..0, "xy")]);
+    let offsets = |version: &clock::Global| {
+        buffer
+            .offsets_at_version(&anchors, version)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(offsets(&original), [Some(1), Some(2)]);
+    assert_eq!(offsets(&deleted), [None, Some(1)]);
+    assert_eq!(offsets(&buffer.version()), [None, Some(3)]);
+}
+
+#[test]
 fn test_summaries_for_unordered_anchors() {
     let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "ab\ncdef");
     let old_right = buffer.anchor_before(6);

@@ -2089,6 +2089,36 @@ impl BufferSnapshot {
         &self.visible_text
     }
 
+    /// Returns each anchor's offset in the text at `version`, or `None` when the
+    /// anchored text was not visible at that version. Min and max anchors yield
+    /// `None`. Anchors must be in buffer order; one call scans the fragments once.
+    pub fn offsets_at_version<'a>(
+        &'a self,
+        anchors: impl 'a + IntoIterator<Item = &'a Anchor>,
+        version: &'a clock::Global,
+    ) -> impl 'a + Iterator<Item = Option<usize>> {
+        let mut fragments = self.fragments.iter().peekable();
+        let mut offset = 0;
+        anchors.into_iter().map(move |anchor| {
+            if anchor.is_min() || anchor.is_max() {
+                return None;
+            }
+            let fragment_id = self.try_fragment_id_for_anchor(anchor)?;
+            while let Some(fragment) = fragments.peek() {
+                let visible = fragment.was_visible(version, &self.undo_map);
+                if &fragment.id == fragment_id {
+                    return visible
+                        .then(|| offset + (anchor.offset - fragment.insertion_offset) as usize);
+                }
+                if visible {
+                    offset += fragment.len as usize;
+                }
+                fragments.next();
+            }
+            None
+        })
+    }
+
     pub fn rope_for_version(&self, version: &clock::Global) -> Rope {
         let mut rope = Rope::new();
 

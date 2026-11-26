@@ -155,28 +155,29 @@ impl CellSourceHistory {
         version.observe(operation.timestamp());
         let cell = self.cell.read(cx);
         let text = cell.rope_for_version(&version);
-        let kept: Vec<_> = self
-            .line_endings
-            .iter()
-            .filter(|(newline, _)| newline.is_valid(cell))
-            .collect();
-        let kept: HashMap<usize, &str> = cell
-            .offsets_to_version(
-                kept.iter().map(|(newline, _)| newline.to_offset(cell)),
-                &version,
-            )
-            .zip(kept.iter().map(|(_, ending)| *ending))
-            .collect();
-        let default_ending = cell.line_ending().as_str();
-        let normalized = text.to_string();
-        let mut source = String::with_capacity(normalized.len());
-        for (offset, character) in normalized.char_indices() {
-            if character == '\n' {
-                source.push_str(kept.get(&offset).copied().unwrap_or(default_ending));
-            } else {
-                source.push(character);
+        let source = if self.line_endings.is_empty() {
+            text::chunks_with_line_ending(&text, cell.line_ending()).collect::<String>()
+        } else {
+            let kept: HashMap<usize, &str> = cell
+                .offsets_at_version(
+                    self.line_endings.iter().map(|(newline, _)| newline),
+                    &version,
+                )
+                .zip(self.line_endings.iter().map(|(_, ending)| *ending))
+                .filter_map(|(offset, ending)| Some((offset?, ending)))
+                .collect();
+            let default_ending = cell.line_ending().as_str();
+            let normalized = text.to_string();
+            let mut source = String::with_capacity(normalized.len());
+            for (offset, character) in normalized.char_indices() {
+                if character == '\n' {
+                    source.push_str(kept.get(&offset).copied().unwrap_or(default_ending));
+                } else {
+                    source.push(character);
+                }
             }
-        }
+            source
+        };
 
         // A moved or deleted cell's earlier edits live in hidden notebook text
         // until a structure undo makes that text visible at the cell again.
@@ -228,7 +229,7 @@ impl CellSourceHistory {
             };
             language::LineEnding::normalize(&mut restored);
             anyhow::ensure!(
-                restored == normalized,
+                restored == text.to_string(),
                 "Cell source history no longer matches the notebook"
             );
             fields.last_source = source;
@@ -1246,14 +1247,14 @@ impl NotebookEditor {
             CellChange::MoveDown if before + 1 < count => (CellEdit::Swap(before), before + 1),
             _ => return,
         };
-        let step = StructureStep {
+        let mut step = StructureStep {
             edit,
             before,
             after,
             rewind: None,
             removed: None,
         };
-        self.structure_error = match self.apply_structure(&step, window, cx) {
+        self.structure_error = match self.apply_structure(&mut step, window, cx) {
             Ok(inverse) => {
                 self.structure_undo.push(inverse);
                 self.structure_redo.clear();
@@ -1268,7 +1269,7 @@ impl NotebookEditor {
     }
 
     fn undo_structure(&mut self, redo: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(step) = (if redo {
+        let Some(mut step) = (if redo {
             &mut self.structure_redo
         } else {
             &mut self.structure_undo
@@ -1276,7 +1277,7 @@ impl NotebookEditor {
         .pop() else {
             return;
         };
-        let result = self.apply_structure(&step, window, cx);
+        let result = self.apply_structure(&mut step, window, cx);
         let (from, to) = if redo {
             (&mut self.structure_redo, &mut self.structure_undo)
         } else {
@@ -1297,7 +1298,7 @@ impl NotebookEditor {
 
     fn apply_structure(
         &mut self,
-        step: &StructureStep,
+        step: &mut StructureStep,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<StructureStep> {
@@ -1386,7 +1387,7 @@ impl NotebookEditor {
                 self.notebook_item
                     .update(cx, |item, _| item.fields.insert(index, fields));
                 let source = cell.source().concat();
-                let cell_id = match step.removed.clone() {
+                let cell_id = match step.removed.take() {
                     Some((cell, transactions, line_endings)) => self.attach_cell(
                         cell,
                         &source,

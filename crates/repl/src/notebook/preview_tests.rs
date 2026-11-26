@@ -1194,6 +1194,57 @@ async fn cell_edits_keep_untouched_line_endings_through_saves_and_structure_chan
 }
 
 #[gpui::test]
+async fn batched_cell_edits_keep_line_endings_for_each_undo_step(cx: &mut TestAppContext) {
+    let original = r#"{"nbformat": 4, "nbformat_minor": 5, "metadata": {},
+  "cells": [{"cell_type": "markdown", "id": "short", "metadata": {}, "source": ["a\r\n", "b\n", "c"]}]
+}
+"#;
+    let (_, workspace, cx) = notebook_workspace(json!({"field.ipynb": original}), cx).await;
+    open_file("field.ipynb", &workspace, cx).await;
+    let view = workspace.read_with(cx, |workspace, cx| {
+        workspace.active_item_as::<NotebookPreview>(cx).unwrap()
+    });
+    let (raw, notebook, cell) = view.read_with(cx, |view, cx| {
+        let notebook = view.notebook.clone().unwrap();
+        let editor = notebook
+            .read(cx)
+            .cell(0)
+            .unwrap()
+            .editor(cx)
+            .unwrap()
+            .clone();
+        let cell = editor.read(cx).buffer().read(cx).as_singleton().unwrap();
+        (view.editor.clone(), notebook, cell)
+    });
+    let raw_text = |cx: &mut VisualTestContext| raw.read_with(cx, |editor, cx| editor.text(cx));
+    let undo = |cx: &mut VisualTestContext| {
+        cell.update(cx, |cell, cx| assert!(cell.undo(cx).is_some()));
+        cx.run_until_parked();
+    };
+
+    notebook.update(cx, |notebook, cx| {
+        cell.update(cx, |cell, cx| {
+            cell.finalize_last_transaction();
+            cell.edit([(5..5, "q")], None, cx);
+            cell.finalize_last_transaction();
+            cell.edit([(3..4, "")], None, cx);
+        });
+        notebook.flush_cell_edits(cx).unwrap();
+    });
+    cx.run_until_parked();
+    let appended = original.replace(r#"["a\r\n", "b\n", "c"]"#, r#"["a\r\n","b\n","cq"]"#);
+    assert_eq!(
+        raw_text(cx),
+        original.replace(r#"["a\r\n", "b\n", "c"]"#, r#"["a\r\n","bcq"]"#)
+    );
+    undo(cx);
+    assert_eq!(raw_text(cx), appended);
+    undo(cx);
+    assert_eq!(raw_text(cx), original);
+    assert!(!view.read_with(cx, |view, cx| workspace::Item::is_dirty(view, cx)));
+}
+
+#[gpui::test]
 async fn switching_to_source_preserves_cell_undo_until_the_raw_file_changes(
     cx: &mut TestAppContext,
 ) {
