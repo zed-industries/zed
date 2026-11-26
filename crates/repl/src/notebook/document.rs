@@ -3,7 +3,7 @@ use std::ops::Range;
 use anyhow::{Context as _, Result, ensure};
 use collections::HashSet;
 use nbformat::v4::CellId;
-use serde::{Deserialize, Deserializer, de::IgnoredAny};
+use serde::{Deserialize, Deserializer};
 use serde_json::{Value, value::RawValue};
 
 pub(super) struct ParsedNotebook {
@@ -61,7 +61,13 @@ fn present_value<'de, D: Deserializer<'de>>(
 
 impl<'a, Cells: Deserialize<'a>> RawNotebook<'a, Cells> {
     fn parse(text: &'a str) -> Result<Self> {
-        let notebook: Self = serde_json::from_str(text)?;
+        let notebook: Self = serde_json::from_str(text).map_err(|error| {
+            anyhow::anyhow!(
+                "Invalid notebook at line {}, column {}",
+                error.line(),
+                error.column()
+            )
+        })?;
         ensure!(
             notebook.nbformat == 4 && notebook.nbformat_minor <= 5,
             "Unsupported notebook version {}.{}",
@@ -79,9 +85,13 @@ impl<'a, Cells: Deserialize<'a>> RawNotebook<'a, Cells> {
 impl RawNotebook<'_, Vec<RawCell<'_>>> {
     fn validate_cells(&self) -> Result<()> {
         let mut ids = HashSet::default();
-        for cell in &self.cells {
+        for (index, cell) in self.cells.iter().enumerate() {
             if let Some(id) = &cell.id {
-                ensure!(ids.insert(id), "Duplicate notebook cell ID: {id}");
+                ensure!(
+                    ids.insert(id),
+                    "Duplicate notebook cell ID at cell {}",
+                    index + 1
+                );
             } else {
                 ensure!(self.nbformat_minor < 5, "Missing notebook cell ID");
             }
@@ -99,7 +109,22 @@ impl RawNotebook<'_, Vec<RawCell<'_>>> {
                     outputs.get().starts_with('['),
                     "Invalid notebook cell outputs"
                 );
-                let count: Option<i32> = serde_json::from_str(count.get())?;
+                // nbformat's lenient cell decoder prints any output it fails to decode.
+                // Validate with the same value decoder before giving it the notebook.
+                let outputs: Vec<Value> = serde_json::from_str(outputs.get())
+                    .map_err(|_| anyhow::anyhow!("Invalid outputs in cell {}", index + 1))?;
+                for (output_index, output) in outputs.into_iter().enumerate() {
+                    serde_json::from_value::<nbformat::v4::Output>(output).map_err(|_| {
+                        anyhow::anyhow!(
+                            "Unsupported output {} in cell {}",
+                            output_index + 1,
+                            index + 1
+                        )
+                    })?;
+                }
+                let count: Option<i32> = serde_json::from_str(count.get()).map_err(|_| {
+                    anyhow::anyhow!("Invalid execution count in cell {}", index + 1)
+                })?;
                 ensure!(
                     count.is_none_or(|count| count >= 0),
                     "Invalid notebook execution count"
@@ -317,20 +342,14 @@ pub(super) fn plan_cell_edit(
 pub(super) fn parse_view(text: &str) -> Result<ParsedNotebook> {
     let raw = RawNotebook::parse(text)?;
     raw.validate_cells()?;
-    let notebook = super::notebook_ui::upgrade_notebook(nbformat::parse_notebook(text)?)?;
+    let notebook = super::notebook_ui::upgrade_notebook(
+        nbformat::parse_notebook(text).map_err(|_| anyhow::anyhow!("Invalid notebook contents"))?,
+    )?;
     let mut fields = Vec::with_capacity(raw.cells.len());
     for (raw, cell) in raw.cells.into_iter().zip(&notebook.cells) {
         let (source, execution) = match cell {
-            nbformat::v4::Cell::Code {
-                source, outputs, ..
-            } => {
+            nbformat::v4::Cell::Code { source, .. } => {
                 let (saved_outputs, count) = raw.execution_fields()?;
-                let output_count =
-                    serde_json::from_str::<Vec<IgnoredAny>>(saved_outputs.get())?.len();
-                ensure!(
-                    output_count == outputs.len(),
-                    "Unsupported notebook cell output"
-                );
                 let outputs = raw_range(text, saved_outputs)?;
                 let count = raw_range(text, count)?;
                 (
@@ -646,6 +665,45 @@ mod tests {
         assert!(
             matches!(parsed.notebook.cells.last(), Some(nbformat::v4::Cell::Code { outputs, execution_count: None, .. }) if outputs.len() == 1)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn unsupported_outputs_do_not_print_notebook_contents() -> Result<()> {
+        const CHILD: &str = "ZED_TEST_NOTEBOOK_OUTPUT_DIAGNOSTICS";
+        const MARKER: &str = "synthetic-notebook-output-1784";
+        if std::env::var_os(CHILD).is_some() {
+            for invalid_output in [
+                json!({"output_type":MARKER, "text":MARKER}),
+                json!({"output_type":"stream","name":"stdout","text":[{ "payload": MARKER }]}),
+            ] {
+                let mut notebook: Value = serde_json::from_str(NOTEBOOK)?;
+                notebook["cells"][1]["outputs"] = json!([invalid_output]);
+                let error = parse_view(&notebook.to_string())
+                    .err()
+                    .context("expected raw fallback")?;
+                assert_eq!(error.to_string(), "Unsupported output 1 in cell 2");
+            }
+            return Ok(());
+        }
+
+        let output = smol::block_on(
+            util::command::new_command(std::env::current_exe()?)
+                .args([
+                    "notebook::document::tests::unsupported_outputs_do_not_print_notebook_contents",
+                    "--exact",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .output(),
+        )?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "{stdout}\n{stderr}"
+        );
+        assert!(!stdout.contains(MARKER) && !stderr.contains(MARKER));
         Ok(())
     }
 

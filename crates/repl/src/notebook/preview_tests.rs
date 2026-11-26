@@ -1077,15 +1077,18 @@ async fn switching_to_source_preserves_cell_undo_until_the_raw_file_changes(
 async fn test_unpreviewable_files_open_in_the_editor(cx: &mut TestAppContext) {
     let malformed = "{not valid JSON";
     let unsupported = r#"{"nbformat":99,"nbformat_minor":0,"cells":[],"metadata":{}}"#;
+    let unsupported_output =
+        NOTEBOOK.replace(r#""output_type":"stream""#, r#""output_type":"unknown""#);
     let invalid_heading = r#"{"nbformat":3,"worksheets":[{"cells":[{"cell_type":"heading","level":7,"metadata":{},"source":"Title"}]}]}"#;
     let (_, workspace, cx) = notebook_workspace(
-        json!({"broken.ipynb": malformed, "future.ipynb": unsupported, "heading.ipynb": invalid_heading, "document.json": NOTEBOOK}),
+        json!({"broken.ipynb": malformed, "future.ipynb": unsupported, "output.ipynb": unsupported_output, "heading.ipynb": invalid_heading, "document.json": NOTEBOOK}),
         cx,
     )
     .await;
     for (name, source) in [
         ("broken.ipynb", malformed),
         ("future.ipynb", unsupported),
+        ("output.ipynb", unsupported_output.as_str()),
         ("heading.ipynb", invalid_heading),
         ("document.json", NOTEBOOK),
     ] {
