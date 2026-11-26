@@ -1,11 +1,12 @@
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, Task, WeakEntity, Window,
+    AnyElement, App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, Task,
+    WeakEntity, Window,
 };
 use picker::{Picker, PickerDelegate};
 use settings::{ActiveSettingsProfileName, SettingsStore};
-use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
-use workspace::{ModalView, Workspace};
+use ui::{Button, Color, HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
+use workspace::{DismissDecision, ModalView, Workspace};
 
 pub fn init(cx: &mut App) {
     cx.on_action(|_: &zed_actions::settings_profile_selector::Toggle, cx| {
@@ -30,7 +31,15 @@ pub struct SettingsProfileSelector {
     picker: Entity<Picker<SettingsProfileSelectorDelegate>>,
 }
 
-impl ModalView for SettingsProfileSelector {}
+impl ModalView for SettingsProfileSelector {
+    fn on_before_dismiss(&mut self, _: &mut Window, cx: &mut Context<Self>) -> DismissDecision {
+        self.picker.update(cx, |picker, cx| {
+            picker.delegate.live_preview = false;
+            picker.delegate.restore_preview(cx);
+        });
+        DismissDecision::Dismiss(true)
+    }
+}
 
 impl EventEmitter<DismissEvent> for SettingsProfileSelector {}
 
@@ -61,11 +70,15 @@ impl SettingsProfileSelector {
 pub struct SettingsProfileSelectorDelegate {
     matches: Vec<StringMatch>,
     profile_names: Vec<Option<String>>,
-    original_profile_name: Option<String>,
-    selected_profile_name: Option<String>,
     selected_index: usize,
-    selection_completed: bool,
+    live_preview: bool,
+    preview: Option<ProfilePreview>,
     selector: WeakEntity<SettingsProfileSelector>,
+}
+
+struct ProfilePreview {
+    previous: Option<String>,
+    applied: Option<String>,
 }
 
 impl SettingsProfileSelectorDelegate {
@@ -99,10 +112,9 @@ impl SettingsProfileSelectorDelegate {
         let mut this = Self {
             matches,
             profile_names,
-            original_profile_name: profile_name.clone(),
-            selected_profile_name: None,
             selected_index: 0,
-            selection_completed: false,
+            live_preview: false,
+            preview: None,
             selector,
         };
 
@@ -121,29 +133,60 @@ impl SettingsProfileSelectorDelegate {
             .unwrap_or(self.selected_index);
     }
 
-    fn set_selected_profile(
-        &self,
-        cx: &mut Context<Picker<SettingsProfileSelectorDelegate>>,
-    ) -> Option<String> {
-        let mat = self.matches.get(self.selected_index)?;
-        let profile_name = self.profile_names.get(mat.candidate_id)?;
-        Self::update_active_profile_name_global(profile_name.clone(), cx)
+    fn selected_profile_name(&self) -> Option<&Option<String>> {
+        let selected_match = self.matches.get(self.selected_index)?;
+        self.profile_names.get(selected_match.candidate_id)
     }
 
-    fn update_active_profile_name_global(
-        profile_name: Option<String>,
-        cx: &mut Context<Picker<SettingsProfileSelectorDelegate>>,
-    ) -> Option<String> {
-        if let Some(profile_name) = profile_name {
-            cx.set_global(ActiveSettingsProfileName(profile_name.clone()));
-            return Some(profile_name);
-        }
+    fn active_profile(cx: &App) -> Option<String> {
+        cx.try_global::<ActiveSettingsProfileName>()
+            .map(|name| name.0.clone())
+    }
 
-        if cx.has_global::<ActiveSettingsProfileName>() {
+    fn apply_profile(profile: Option<String>, cx: &mut App) {
+        if let Some(profile) = profile {
+            cx.set_global(ActiveSettingsProfileName(profile));
+        } else if cx.has_global::<ActiveSettingsProfileName>() {
             cx.remove_global::<ActiveSettingsProfileName>();
         }
+    }
 
-        None
+    fn restore_preview(&mut self, cx: &mut App) {
+        if let Some(preview) = self.preview.take()
+            && Self::active_profile(cx) == preview.applied
+        {
+            Self::apply_profile(preview.previous, cx);
+        }
+    }
+
+    fn update_preview(&mut self, cx: &mut App) {
+        if !self.live_preview {
+            return;
+        }
+        let Some(profile) = self.selected_profile_name().cloned() else {
+            self.restore_preview(cx);
+            return;
+        };
+        let active = Self::active_profile(cx);
+        if profile == active {
+            if self
+                .preview
+                .as_ref()
+                .is_some_and(|preview| preview.applied != active)
+            {
+                self.preview = None;
+            }
+            return;
+        }
+        let previous = match self.preview.take() {
+            Some(preview) if preview.applied == active => preview.previous,
+            _ => active,
+        };
+        Self::apply_profile(profile.clone(), cx);
+        self.preview = Some(ProfilePreview {
+            previous,
+            applied: profile,
+        });
     }
 }
 
@@ -173,7 +216,7 @@ impl PickerDelegate for SettingsProfileSelectorDelegate {
         cx: &mut Context<Picker<SettingsProfileSelectorDelegate>>,
     ) {
         self.selected_index = ix;
-        self.selected_profile_name = self.set_selected_profile(cx);
+        self.update_preview(cx);
     }
 
     fn update_matches(
@@ -221,7 +264,7 @@ impl PickerDelegate for SettingsProfileSelectorDelegate {
                     .delegate
                     .selected_index
                     .min(this.delegate.matches.len().saturating_sub(1));
-                this.delegate.selected_profile_name = this.delegate.set_selected_profile(cx);
+                this.delegate.update_preview(cx);
             })
             .ok();
         })
@@ -233,7 +276,11 @@ impl PickerDelegate for SettingsProfileSelectorDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<SettingsProfileSelectorDelegate>>,
     ) {
-        self.selection_completed = true;
+        let Some(profile_name) = self.selected_profile_name().cloned() else {
+            return;
+        };
+        self.preview = None;
+        Self::apply_profile(profile_name, cx);
         self.selector
             .update(cx, |_, cx| {
                 cx.emit(DismissEvent);
@@ -246,13 +293,36 @@ impl PickerDelegate for SettingsProfileSelectorDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<SettingsProfileSelectorDelegate>>,
     ) {
-        if !self.selection_completed {
-            SettingsProfileSelectorDelegate::update_active_profile_name_global(
-                self.original_profile_name.clone(),
-                cx,
-            );
-        }
         self.selector.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+    }
+
+    fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
+        Some(
+            h_flex()
+                .w_full()
+                .p_1p5()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(
+                    div()
+                        .debug_selector(|| "settings-profile-live-preview".into())
+                        .child(
+                            Button::new("settings-profile-live-preview", "Live Preview")
+                                .when(self.live_preview, |button| button.color(Color::Accent))
+                                .on_click(cx.listener(|picker, _, _, cx| {
+                                    let delegate = &mut picker.delegate;
+                                    delegate.live_preview = !delegate.live_preview;
+                                    if delegate.live_preview {
+                                        delegate.update_preview(cx);
+                                    } else {
+                                        delegate.restore_preview(cx);
+                                    }
+                                    cx.notify();
+                                })),
+                        ),
+                )
+                .into_any_element(),
+        )
     }
 
     fn render_match(
@@ -270,10 +340,14 @@ impl PickerDelegate for SettingsProfileSelectorDelegate {
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
-                .child(HighlightedLabel::new(
-                    display_name(profile_name),
-                    mat.positions.clone(),
-                )),
+                .child(
+                    div()
+                        .debug_selector(|| format!("settings-profile-row-{ix}"))
+                        .child(HighlightedLabel::new(
+                            display_name(profile_name),
+                            mat.positions.clone(),
+                        )),
+                ),
         )
     }
 }
@@ -286,7 +360,7 @@ fn display_name(profile_name: &Option<String>) -> String {
 mod tests {
     use super::*;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
-    use menu::{Cancel, Confirm, SelectNext, SelectPrevious};
+    use menu::{Cancel, Confirm, SelectNext};
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::Settings;
@@ -383,201 +457,168 @@ mod tests {
             assert_eq!(picker.delegate.matches.get(3), None);
 
             assert_eq!(picker.delegate.selected_index, 0);
-            assert_eq!(picker.delegate.selected_profile_name, None);
 
             assert_eq!(cx.try_global::<ActiveSettingsProfileName>(), None);
             assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(10.0));
         });
 
-        cx.dispatch_action(Confirm);
-
-        cx.update(|_, cx| {
-            assert_eq!(cx.try_global::<ActiveSettingsProfileName>(), None);
-        });
-
-        cx.dispatch_action(settings_profile_selector::Toggle);
-        let picker = active_settings_profile_picker(&workspace, cx);
         cx.dispatch_action(SelectNext);
-
         picker.read_with(cx, |picker, cx| {
             assert_eq!(picker.delegate.selected_index, 1);
-            assert_eq!(
-                picker.delegate.selected_profile_name,
-                Some(classroom_and_streaming_profile_name.clone())
-            );
-
-            assert_eq!(
-                cx.try_global::<ActiveSettingsProfileName>()
-                    .map(|p| p.0.clone()),
-                Some(classroom_and_streaming_profile_name.clone())
-            );
-
-            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(20.0));
+            assert_eq!(cx.try_global::<ActiveSettingsProfileName>(), None);
+            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(10.0));
         });
-
         cx.dispatch_action(Cancel);
 
+        cx.dispatch_action(settings_profile_selector::Toggle);
+        let picker = active_settings_profile_picker(&workspace, cx);
+        picker.update_in(cx, |picker, window, cx| {
+            picker.set_query("Demo Videos", window, cx)
+        });
+        cx.run_until_parked();
+        picker.read_with(cx, |picker, cx| {
+            assert_eq!(picker.delegate.matches.len(), 1);
+            assert_eq!(picker.delegate.matches[0].string, demo_videos_profile_name);
+            assert_eq!(cx.try_global::<ActiveSettingsProfileName>(), None);
+            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(10.0));
+        });
+        cx.dispatch_action(Confirm);
+        cx.update(|_, cx| {
+            assert_eq!(
+                cx.try_global::<ActiveSettingsProfileName>()
+                    .map(|name| name.0.as_str()),
+                Some(demo_videos_profile_name.as_str())
+            );
+            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(15.0));
+        });
+
+        cx.dispatch_action(settings_profile_selector::Toggle);
+        let picker = active_settings_profile_picker(&workspace, cx);
+        picker.read_with(cx, |picker, _| {
+            assert_eq!(picker.delegate.selected_index, 2)
+        });
+        picker.update_in(cx, |picker, window, cx| {
+            picker.set_query("zzzzzz", window, cx)
+        });
+        cx.run_until_parked();
+        picker.read_with(cx, |picker, _| assert!(picker.delegate.matches.is_empty()));
+        cx.dispatch_action(Confirm);
+        active_settings_profile_picker(&workspace, cx);
+        cx.update(|_, cx| {
+            assert_eq!(
+                cx.try_global::<ActiveSettingsProfileName>()
+                    .map(|name| name.0.as_str()),
+                Some(demo_videos_profile_name.as_str())
+            );
+        });
+
+        picker.update_in(cx, |picker, window, cx| picker.set_query("", window, cx));
+        cx.run_until_parked();
+        cx.dispatch_action(Confirm);
         cx.update(|_, cx| {
             assert_eq!(cx.try_global::<ActiveSettingsProfileName>(), None);
             assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(10.0));
         });
+    }
+
+    #[cfg(debug_assertions)]
+    #[gpui::test]
+    async fn test_settings_profile_selector_mouse_controls(cx: &mut TestAppContext) {
+        let (workspace, cx) =
+            init_test(json!({"profiles": {"Preview": {"settings": {}}}}), cx).await;
+        let assert_active = |cx: &mut VisualTestContext, expected| {
+            cx.update(|_, cx| {
+                assert_eq!(
+                    SettingsProfileSelectorDelegate::active_profile(cx).as_deref(),
+                    expected
+                );
+            });
+        };
+        let click_preview = |cx: &mut VisualTestContext| {
+            cx.run_until_parked();
+            let button = cx
+                .debug_bounds("settings-profile-live-preview")
+                .expect("preview button bounds");
+            cx.simulate_click(button.center(), gpui::Modifiers::none());
+        };
 
         cx.dispatch_action(settings_profile_selector::Toggle);
-        let picker = active_settings_profile_picker(&workspace, cx);
-
         cx.dispatch_action(SelectNext);
-
-        picker.read_with(cx, |picker, cx| {
-            assert_eq!(picker.delegate.selected_index, 1);
-            assert_eq!(
-                picker.delegate.selected_profile_name,
-                Some(classroom_and_streaming_profile_name.clone())
+        assert_active(cx, None);
+        click_preview(cx);
+        assert_active(cx, Some("Preview"));
+        click_preview(cx);
+        assert_active(cx, None);
+        click_preview(cx);
+        assert_active(cx, Some("Preview"));
+        cx.run_until_parked();
+        cx.simulate_click(gpui::point(px(5.), px(200.)), gpui::Modifiers::none());
+        assert_active(cx, None);
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(
+                workspace
+                    .active_modal::<SettingsProfileSelector>(cx)
+                    .is_none()
             );
-
-            assert_eq!(
-                cx.try_global::<ActiveSettingsProfileName>()
-                    .map(|p| p.0.clone()),
-                Some(classroom_and_streaming_profile_name.clone())
-            );
-
-            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(20.0));
-        });
-
-        cx.dispatch_action(SelectNext);
-
-        picker.read_with(cx, |picker, cx| {
-            assert_eq!(picker.delegate.selected_index, 2);
-            assert_eq!(
-                picker.delegate.selected_profile_name,
-                Some(demo_videos_profile_name.clone())
-            );
-
-            assert_eq!(
-                cx.try_global::<ActiveSettingsProfileName>()
-                    .map(|p| p.0.clone()),
-                Some(demo_videos_profile_name.clone())
-            );
-
-            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(15.0));
-        });
-
-        cx.dispatch_action(Confirm);
-
-        cx.update(|_, cx| {
-            assert_eq!(
-                cx.try_global::<ActiveSettingsProfileName>()
-                    .map(|p| p.0.clone()),
-                Some(demo_videos_profile_name.clone())
-            );
-            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(15.0));
         });
 
         cx.dispatch_action(settings_profile_selector::Toggle);
-        let picker = active_settings_profile_picker(&workspace, cx);
+        cx.run_until_parked();
+        let row = cx
+            .debug_bounds("settings-profile-row-1")
+            .expect("profile row bounds");
+        cx.simulate_click(row.center(), gpui::Modifiers::none());
+        assert_active(cx, Some("Preview"));
+    }
 
-        picker.read_with(cx, |picker, cx| {
-            assert_eq!(picker.delegate.selected_index, 2);
-            assert_eq!(
-                picker.delegate.selected_profile_name,
-                Some(demo_videos_profile_name.clone())
-            );
+    #[gpui::test]
+    async fn test_preview_rollback_on_dismiss(cx: &mut TestAppContext) {
+        let (workspace, cx) = init_test(
+            json!({"profiles": {"Preview": {"settings": {}}, "External": {"settings": {}}}}),
+            cx,
+        )
+        .await;
 
-            assert_eq!(
-                cx.try_global::<ActiveSettingsProfileName>()
-                    .map(|p| p.0.clone()),
-                Some(demo_videos_profile_name.clone())
-            );
-            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(15.0));
-        });
+        for (external_change, confirm, expected) in [
+            (false, false, None),
+            (true, false, Some("External")),
+            (false, true, Some("Preview")),
+        ] {
+            cx.update(|_, cx| SettingsProfileSelectorDelegate::apply_profile(None, cx));
+            cx.dispatch_action(settings_profile_selector::Toggle);
+            let picker = active_settings_profile_picker(&workspace, cx);
+            picker.update(cx, |picker, _| picker.delegate.live_preview = true);
+            cx.dispatch_action(SelectNext);
+            cx.update(|_, cx| {
+                assert_eq!(
+                    SettingsProfileSelectorDelegate::active_profile(cx).as_deref(),
+                    Some("Preview")
+                );
+                if external_change {
+                    cx.set_global(ActiveSettingsProfileName("External".into()));
+                }
+            });
 
-        cx.dispatch_action(SelectPrevious);
+            if confirm {
+                cx.dispatch_action(Confirm);
+            } else if external_change {
+                cx.dispatch_action(Cancel);
+            } else {
+                cx.dispatch_action(settings_profile_selector::Toggle);
+            }
 
-        picker.read_with(cx, |picker, cx| {
-            assert_eq!(picker.delegate.selected_index, 1);
-            assert_eq!(
-                picker.delegate.selected_profile_name,
-                Some(classroom_and_streaming_profile_name.clone())
-            );
-
-            assert_eq!(
-                cx.try_global::<ActiveSettingsProfileName>()
-                    .map(|p| p.0.clone()),
-                Some(classroom_and_streaming_profile_name.clone())
-            );
-
-            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(20.0));
-        });
-
-        cx.dispatch_action(Cancel);
-
-        cx.update(|_, cx| {
-            assert_eq!(
-                cx.try_global::<ActiveSettingsProfileName>()
-                    .map(|p| p.0.clone()),
-                Some(demo_videos_profile_name.clone())
-            );
-
-            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(15.0));
-        });
-
-        cx.dispatch_action(settings_profile_selector::Toggle);
-        let picker = active_settings_profile_picker(&workspace, cx);
-
-        picker.read_with(cx, |picker, cx| {
-            assert_eq!(picker.delegate.selected_index, 2);
-            assert_eq!(
-                picker.delegate.selected_profile_name,
-                Some(demo_videos_profile_name.clone())
-            );
-
-            assert_eq!(
-                cx.try_global::<ActiveSettingsProfileName>()
-                    .map(|p| p.0.clone()),
-                Some(demo_videos_profile_name)
-            );
-
-            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(15.0));
-        });
-
-        cx.dispatch_action(SelectPrevious);
-
-        picker.read_with(cx, |picker, cx| {
-            assert_eq!(picker.delegate.selected_index, 1);
-            assert_eq!(
-                picker.delegate.selected_profile_name,
-                Some(classroom_and_streaming_profile_name.clone())
-            );
-
-            assert_eq!(
-                cx.try_global::<ActiveSettingsProfileName>()
-                    .map(|p| p.0.clone()),
-                Some(classroom_and_streaming_profile_name)
-            );
-
-            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(20.0));
-        });
-
-        cx.dispatch_action(SelectPrevious);
-
-        picker.read_with(cx, |picker, cx| {
-            assert_eq!(picker.delegate.selected_index, 0);
-            assert_eq!(picker.delegate.selected_profile_name, None);
-
-            assert_eq!(
-                cx.try_global::<ActiveSettingsProfileName>()
-                    .map(|p| p.0.clone()),
-                None
-            );
-
-            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(10.0));
-        });
-
-        cx.dispatch_action(Confirm);
-
-        cx.update(|_, cx| {
-            assert_eq!(cx.try_global::<ActiveSettingsProfileName>(), None);
-            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(10.0));
-        });
+            workspace.read_with(cx, |workspace, cx| {
+                assert!(
+                    workspace
+                        .active_modal::<SettingsProfileSelector>(cx)
+                        .is_none()
+                );
+                assert_eq!(
+                    SettingsProfileSelectorDelegate::active_profile(cx).as_deref(),
+                    expected
+                );
+            });
+        }
     }
 
     #[gpui::test]
@@ -605,30 +646,38 @@ mod tests {
         let picker = active_settings_profile_picker(&workspace, cx);
         cx.dispatch_action(SelectNext);
 
-        picker.read_with(cx, |picker, cx| {
+        picker.read_with(cx, |picker, _| {
             assert_eq!(
-                picker.delegate.selected_profile_name.as_deref(),
+                picker
+                    .delegate
+                    .selected_profile_name()
+                    .and_then(Option::as_deref),
                 Some("Explicit User")
             );
+        });
+        cx.dispatch_action(Confirm);
+        cx.update(|_, cx| {
             assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(20.0));
         });
-
-        cx.dispatch_action(Confirm);
 
         // Select "Implicit User" (index 2) — no base specified, same behavior.
         cx.dispatch_action(settings_profile_selector::Toggle);
         let picker = active_settings_profile_picker(&workspace, cx);
         cx.dispatch_action(SelectNext);
 
-        picker.read_with(cx, |picker, cx| {
+        picker.read_with(cx, |picker, _| {
             assert_eq!(
-                picker.delegate.selected_profile_name.as_deref(),
+                picker
+                    .delegate
+                    .selected_profile_name()
+                    .and_then(Option::as_deref),
                 Some("Implicit User")
             );
+        });
+        cx.dispatch_action(Confirm);
+        cx.update(|_, cx| {
             assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(20.0));
         });
-
-        cx.dispatch_action(Confirm);
     }
 
     #[gpui::test]
@@ -660,25 +709,35 @@ mod tests {
         let picker = active_settings_profile_picker(&workspace, cx);
         cx.dispatch_action(SelectNext);
 
-        picker.read_with(cx, |picker, cx| {
+        picker.read_with(cx, |picker, _| {
             assert_eq!(
-                picker.delegate.selected_profile_name.as_deref(),
+                picker
+                    .delegate
+                    .selected_profile_name()
+                    .and_then(Option::as_deref),
                 Some("Clean Slate")
             );
+        });
+        cx.dispatch_action(Confirm);
+        cx.update(|_, cx| {
             assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(15.0));
         });
+        cx.dispatch_action(settings_profile_selector::Toggle);
+        let picker = active_settings_profile_picker(&workspace, cx);
 
         // "Custom on Defaults" has base: "default" with buffer_font_size: 30,
         // so the profile's override (30) applies on top of the factory default,
         // not on top of the user's value (10).
         cx.dispatch_action(SelectNext);
 
-        picker.read_with(cx, |picker, cx| {
+        picker.read_with(cx, |picker, _| {
             assert_eq!(
-                picker.delegate.selected_profile_name.as_deref(),
+                picker
+                    .delegate
+                    .selected_profile_name()
+                    .and_then(Option::as_deref),
                 Some("Custom on Defaults")
             );
-            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(30.0));
         });
 
         cx.dispatch_action(Confirm);
