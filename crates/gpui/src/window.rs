@@ -1294,7 +1294,8 @@ pub struct Window {
     /// `Some`, the scene must keep being presented even when nothing is redrawn.
     scene_animation_interval: Rc<Cell<Option<Duration>>>,
     /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
-    /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
+    /// Lifts the inactive frame limit while input rate exceeds 60fps, and on Apple
+    /// platforms keeps the window presenting so the display holds its refresh rate.
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
     #[cfg(feature = "profiler")]
     pub(crate) window_profiler: profiler::WindowProfiler,
@@ -1332,7 +1333,6 @@ struct ModifierState {
 }
 
 /// Tracks input event timestamps to determine if input is arriving at a high rate.
-/// Used for selective VRR (Variable Refresh Rate) optimization.
 #[derive(Clone, Debug)]
 pub(crate) struct InputRateTracker {
     timestamps: Vec<Instant>,
@@ -1964,16 +1964,19 @@ impl Window {
                     })
                     .log_err();
 
-                // Keep presenting briefly after high-rate input to prevent display
-                // underclocking, but subject to the same power limits as redraws.
                 let high_rate_input = input_rate_tracker.borrow_mut().is_high_rate();
+                // ProMotion lowers the display's refresh rate once presents stop,
+                // which delays the next frame, so keep presenting briefly after
+                // high-rate input, subject to the same power limits as redraws.
+                let sustain_presentation =
+                    high_rate_input && cfg!(any(target_os = "macos", target_os = "ios"));
                 let has_next_frame_callbacks = !next_frame_callbacks.borrow().is_empty();
                 let has_demand_besides_animation = invalidator.is_dirty()
                     || force_render
                     || has_next_frame_callbacks
                     || request_frame_options.require_presentation
                     || needs_present.get()
-                    || high_rate_input;
+                    || sustain_presentation;
                 let has_frame_demand =
                     has_demand_besides_animation || scene_animation_interval.get().is_some();
 
@@ -2069,7 +2072,7 @@ impl Window {
                 let needs_present = request_frame_options.require_presentation
                     || needs_present.get()
                     || scene_animation_interval.get().is_some()
-                    || high_rate_input;
+                    || sustain_presentation;
                 if should_draw {
                     measure("frame duration", || {
                         handle
