@@ -25,7 +25,7 @@ use core_foundation_sys::number::{CFBooleanGetValue, CFBooleanRef};
 use core_graphics::display::CGDirectDisplayID;
 use ctor::ctor;
 use futures::channel::oneshot;
-use gpui_apple::display_link::{DisplayLink, DisplayLinkFrames, DisplayLinkTick};
+use gpui_apple::display_link::{DisplayLink, DisplayLinkFrames};
 use gpui_util::ResultExt;
 use objc2::{
     AnyThread, MainThreadMarker, Message, class, msg_send,
@@ -895,16 +895,14 @@ impl MacWindowState {
                 let main_thread =
                     crate::main_thread_marker().expect("macOS windows require the main thread");
                 let window_state = Rc::downgrade(window_state);
-                frames.start_with(|| {
-                    // SAFETY: `native_view` is a live `NSView` (`GPUIView`).
-                    unsafe {
-                        DisplayLink::for_source(native_view.as_ref(), main_thread, move |tick| {
-                            if let Some(window_state) = window_state.upgrade() {
-                                display_link_frame(&window_state, tick);
-                            }
-                        })
-                    }
-                });
+                // SAFETY: `native_view` is a live `NSView` (`GPUIView`).
+                unsafe {
+                    frames.start_for_source(native_view.as_ref(), main_thread, move || {
+                        if let Some(window_state) = window_state.upgrade() {
+                            display_link_frame(&window_state);
+                        }
+                    });
+                }
             }
             FrameSource::DisplayLink(frame_source) => {
                 if let Some(existing) = frame_source.as_mut() {
@@ -3642,7 +3640,7 @@ extern "C" fn step(view: *mut c_void) {
     }
 }
 
-fn display_link_frame(window_state: &Rc<Mutex<MacWindowState>>, tick: DisplayLinkTick) {
+fn display_link_frame(window_state: &Rc<Mutex<MacWindowState>>) {
     let signal_at = PlatformFrameSignal::capture(scheduler::Instant::now);
     let mut lock = window_state.lock();
     let FrameSource::View(frames) = &lock.frame_source else {
@@ -3653,7 +3651,7 @@ fn display_link_frame(window_state: &Rc<Mutex<MacWindowState>>, tick: DisplayLin
         return;
     };
     drop(lock);
-    frames.begin_frame(tick);
+    frames.begin_frame();
     callback(RequestFrameOptions {
         signal_at,
         signal_source: FrameRequestSource::NativeCallback,

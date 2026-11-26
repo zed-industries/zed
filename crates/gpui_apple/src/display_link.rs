@@ -8,19 +8,14 @@ use objc2_foundation::{NSObject, NSObjectProtocol, NSRunLoop, NSRunLoopCommonMod
 use objc2_quartz_core::CADisplayLink;
 use std::{
     cell::{Cell, RefCell},
+    rc::Rc,
     time::{Duration, Instant},
 };
 
 const DEFAULT_REFRESH_INTERVAL: Duration = Duration::from_millis(16);
 
-/// Timing reported by a `CADisplayLink` tick.
-#[derive(Debug, Clone, Copy)]
-pub struct DisplayLinkTick {
-    pub duration: Option<Duration>,
-}
-
 struct DisplayLinkTargetIvars {
-    callback: Box<dyn Fn(DisplayLinkTick)>,
+    callback: Box<dyn Fn(Option<Duration>)>,
 }
 
 define_class!(
@@ -41,7 +36,7 @@ define_class!(
             let duration = Duration::try_from_secs_f64(link.duration())
                 .ok()
                 .filter(|duration| !duration.is_zero());
-            (target.ivars().callback)(DisplayLinkTick { duration });
+            (target.ivars().callback)(duration);
         }
     }
 );
@@ -49,7 +44,7 @@ define_class!(
 impl DisplayLinkTarget {
     fn new(
         main_thread: MainThreadMarker,
-        callback: impl Fn(DisplayLinkTick) + 'static,
+        callback: impl Fn(Option<Duration>) + 'static,
     ) -> Retained<Self> {
         let this = Self::alloc(main_thread).set_ivars(DisplayLinkTargetIvars {
             callback: Box::new(callback),
@@ -96,7 +91,16 @@ impl DisplayLink {
     pub unsafe fn for_source(
         source: &AnyObject,
         main_thread: MainThreadMarker,
-        callback: impl Fn(DisplayLinkTick) + 'static,
+        callback: impl Fn() + 'static,
+    ) -> Option<Self> {
+        // SAFETY: Caller guarantees `source` vends a `CADisplayLink *`.
+        unsafe { Self::for_source_with_duration(source, main_thread, move |_| callback()) }
+    }
+
+    unsafe fn for_source_with_duration(
+        source: &AnyObject,
+        main_thread: MainThreadMarker,
+        callback: impl Fn(Option<Duration>) + 'static,
     ) -> Option<Self> {
         let responds: bool = unsafe {
             msg_send![
@@ -128,11 +132,8 @@ impl DisplayLink {
 
     /// Starts delivering vsync ticks for the main display on iOS/iPadOS.
     #[cfg(target_os = "ios")]
-    pub fn for_main_display(
-        main_thread: MainThreadMarker,
-        callback: impl Fn(DisplayLinkTick) + 'static,
-    ) -> Self {
-        let target = DisplayLinkTarget::new(main_thread, callback);
+    pub fn for_main_display(main_thread: MainThreadMarker, callback: impl Fn() + 'static) -> Self {
+        let target = DisplayLinkTarget::new(main_thread, move |_| callback());
         // SAFETY: `DisplayLinkTarget` implements `displayLinkFired:`.
         let link = unsafe {
             CADisplayLink::displayLinkWithTarget_selector(&target, sel!(displayLinkFired:))
@@ -190,15 +191,36 @@ pub struct DisplayLinkFrames {
 }
 
 impl DisplayLinkFrames {
-    /// Resumes the link, calling `build` to create it on first start.
-    pub fn start_with(&self, build: impl FnOnce() -> Option<DisplayLink>) {
+    /// Resumes the link, creating one bound to `source` on first start.
+    ///
+    /// # Safety
+    ///
+    /// `source` must be a valid Objective-C object whose
+    /// `-displayLinkWithTarget:selector:` returns a `CADisplayLink *`.
+    pub unsafe fn start_for_source(
+        self: &Rc<Self>,
+        source: &AnyObject,
+        main_thread: MainThreadMarker,
+        callback: impl Fn() + 'static,
+    ) {
         self.active.set(true);
         let mut slot = self.link.borrow_mut();
         if let Some(link) = slot.as_ref() {
             link.set_paused(false);
             return;
         }
-        *slot = build();
+        let weak_frames = Rc::downgrade(self);
+        // SAFETY: Caller guarantees `source` vends a `CADisplayLink *`.
+        *slot = unsafe {
+            DisplayLink::for_source_with_duration(source, main_thread, move |duration| {
+                if let Some(frames) = weak_frames.upgrade()
+                    && let Some(duration) = duration
+                {
+                    frames.refresh_interval.set(Some(duration));
+                }
+                callback();
+            })
+        };
     }
 
     pub fn stop(&self) {
@@ -259,12 +281,9 @@ impl DisplayLinkFrames {
             )
     }
 
-    pub fn begin_frame(&self, tick: DisplayLinkTick) {
+    pub fn begin_frame(&self) {
         self.woken.set(false);
         self.presented.set(false);
-        if let Some(duration) = tick.duration {
-            self.refresh_interval.set(Some(duration));
-        }
     }
 
     /// Ends a tick, pausing the link if GPUI neither presented nor asked for
@@ -314,18 +333,15 @@ mod tests {
     #[test]
     fn frames_pause_only_when_gpui_neither_presents_nor_asks_again() {
         let frames = DisplayLinkFrames::default();
-        let tick = DisplayLinkTick {
-            duration: Some(Duration::from_secs_f64(1.0 / 120.0)),
-        };
 
-        frames.begin_frame(tick);
+        frames.begin_frame();
         frames.did_present();
         assert!(
             !frames.end_frame(),
             "a frame that presented keeps the link running"
         );
 
-        frames.begin_frame(tick);
+        frames.begin_frame();
         frames.wake();
         assert!(
             !frames.end_frame(),
@@ -333,20 +349,20 @@ mod tests {
         );
 
         frames.wake();
-        frames.begin_frame(tick);
+        frames.begin_frame();
         assert!(
             frames.end_frame(),
             "a wake before the tick was served by it"
         );
 
         frames.did_present();
-        frames.begin_frame(tick);
+        frames.begin_frame();
         assert!(
             frames.end_frame(),
             "a present before the tick, like an input-driven frame, was not this tick's"
         );
 
-        frames.begin_frame(tick);
+        frames.begin_frame();
         assert!(frames.end_frame(), "an idle tick pauses the link");
     }
 
