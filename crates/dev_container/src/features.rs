@@ -57,14 +57,21 @@ pub(crate) struct FeatureOptionDefinition {
     pub(crate) default: Option<Value>,
 }
 
+fn option_value_to_env(value: &Value) -> String {
+    match value {
+        Value::String(string) => string.clone(),
+        Value::Array(items) => items
+            .iter()
+            .map(option_value_to_env)
+            .collect::<Vec<_>>()
+            .join(","),
+        other => other.to_string(),
+    }
+}
+
 impl FeatureOptionDefinition {
     fn serialize_default(&self) -> Option<String> {
-        self.default.as_ref().map(|some_value| match some_value {
-            Value::Bool(b) => b.to_string(),
-            Value::String(s) => s.to_string(),
-            Value::Number(n) => n.to_string(),
-            other => other.to_string(),
-        })
+        self.default.as_ref().map(option_value_to_env)
     }
 }
 
@@ -158,7 +165,7 @@ RUN chmod -R 0755 {full_dest} \
             }
             FeatureOptions::Options(map) => {
                 for (key, value) in map {
-                    merged.insert(safe_id_upper(key), value.to_string());
+                    merged.insert(safe_id_upper(key), option_value_to_env(value));
                 }
             }
         }
@@ -346,4 +353,66 @@ pub(crate) fn parse_oci_feature_ref(input: &str) -> Option<OciFeatureRef> {
         path,
         version,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json_lenient::json;
+
+    #[test]
+    fn test_merged_env_formats_user_and_default_option_values() {
+        let manifest = FeatureManifest::new(
+            "apt-packages_0".to_string(),
+            "ghcr.io/rocker-org/devcontainer-features/apt-packages:1".to_string(),
+            PathBuf::new(),
+            DevContainerFeatureJson {
+                options: HashMap::from([
+                    (
+                        "packages".to_string(),
+                        FeatureOptionDefinition {
+                            default: Some(json!("")),
+                        },
+                    ),
+                    (
+                        "upgradePackages".to_string(),
+                        FeatureOptionDefinition {
+                            default: Some(json!(false)),
+                        },
+                    ),
+                    (
+                        "extraPackages".to_string(),
+                        FeatureOptionDefinition {
+                            default: Some(json!(["curl", "nano"])),
+                        },
+                    ),
+                ]),
+                ..DevContainerFeatureJson::default()
+            },
+        );
+        let options = serde_json_lenient::from_value::<FeatureOptions>(json!({
+            "packages": ["libsnappy-dev", "libvips-dev", "xauth"],
+            "emptyPackages": [],
+            "timeout": 30,
+            "extraConfig": null,
+            "settings": {"b": 1, "a": 2},
+        }))
+        .unwrap();
+
+        assert_eq!(
+            manifest.generate_merged_env(&options),
+            HashMap::from([
+                (
+                    "PACKAGES".to_string(),
+                    "libsnappy-dev,libvips-dev,xauth".to_string()
+                ),
+                ("EMPTYPACKAGES".to_string(), "".to_string()),
+                ("UPGRADEPACKAGES".to_string(), "false".to_string()),
+                ("EXTRAPACKAGES".to_string(), "curl,nano".to_string()),
+                ("TIMEOUT".to_string(), "30".to_string()),
+                ("EXTRACONFIG".to_string(), "null".to_string()),
+                ("SETTINGS".to_string(), r#"{"b":1,"a":2}"#.to_string()),
+            ])
+        );
+    }
 }
