@@ -17218,6 +17218,13 @@ async fn test_blame_buffer_at_head(cx: &mut gpui::TestAppContext) {
             row_commits: &[1, 0, 0, 2],
             ..utf_8("nul_byte.txt", None)
         },
+        Case {
+            first: Vec::new(),
+            second: Vec::new(),
+            edited_row: 0,
+            row_commits: &[],
+            ..utf_8("empty.txt", None)
+        },
     ];
 
     let root = TempTree::new(json!({
@@ -17304,61 +17311,6 @@ async fn test_blame_buffer_at_head(cx: &mut gpui::TestAppContext) {
             blame_row_commits(&blame, &commits),
             case.row_commits,
             "blame of {file_name}"
-        );
-    }
-}
-
-#[gpui::test]
-async fn test_blame_buffer_at_head_for_empty_files(cx: &mut gpui::TestAppContext) {
-    disable_git_global_config();
-    init_test(cx);
-    cx.executor().allow_parking();
-
-    let files = [("empty.txt", None), ("empty_edited.txt", Some("new\n"))];
-    let root = TempTree::new(json!({ "project": {} }));
-    let work_dir = root.path().join("project");
-    git_init(&work_dir);
-    for commit in 0..2 {
-        for (file_name, _) in &files {
-            std::fs::write(work_dir.join(file_name), "").unwrap();
-            git_add(file_name, &work_dir);
-        }
-        std::fs::write(work_dir.join("counter.txt"), commit.to_string()).unwrap();
-        git_add("counter.txt", &work_dir);
-        git_commit("commit", &work_dir);
-    }
-
-    let project = Project::test(RealFs::new(None, cx.executor()), [root.path()], cx).await;
-    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
-    tree.flush_fs_events(cx).await;
-    project
-        .update(cx, |project, cx| project.git_scans_complete(cx))
-        .await;
-    cx.executor().run_until_parked();
-
-    let git_store = project.read_with(cx, |project, _| project.git_store().clone());
-    for (file_name, buffer_text) in files {
-        let buffer = project
-            .update(cx, |project, cx| {
-                project.open_local_buffer(work_dir.join(file_name), cx)
-            })
-            .await
-            .unwrap();
-        if let Some(buffer_text) = buffer_text {
-            buffer.update(cx, |buffer, cx| buffer.set_text(buffer_text, cx));
-        }
-
-        let head_blame = git_store
-            .update(cx, |git_store, cx| {
-                git_store.blame_buffer_at_head(&buffer, cx)
-            })
-            .await
-            .unwrap()
-            .unwrap_or_else(|| panic!("{file_name} was not blamed at HEAD"));
-        assert!(head_blame.entries.is_empty(), "blame of {file_name}");
-        assert!(
-            head_blame.messages.is_empty(),
-            "commit messages of {file_name}"
         );
     }
 }

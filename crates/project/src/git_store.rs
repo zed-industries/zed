@@ -11725,13 +11725,9 @@ fn blame_at_head(
             .blame_at_revision(repo_path.clone(), revision)
             .await
             .with_context(|| format!("Failed to blame {:?}", repo_path.as_ref()))?;
-        if is_unchanged {
-            let head_row_count = head.text.split_inclusive('\n').count() as u32;
-            let blamed_row_count = blame.entries.iter().map(|entry| entry.range.end).max();
-            return Ok((blamed_row_count == Some(head_row_count)).then_some(blame));
-        }
-        let buffer_text = content.to_string();
-        let entries = map_head_blame_through_diff(&blame.entries, &head.text, &buffer_text);
+        let buffer_text = (!is_unchanged).then(|| content.to_string());
+        let entries =
+            map_head_blame_through_diff(&blame.entries, &head.text, buffer_text.as_deref());
         Ok(entries.map(|entries| Blame { entries, ..blame }))
     })
 }
@@ -11739,12 +11735,15 @@ fn blame_at_head(
 fn map_head_blame_through_diff(
     head_entries: &[git::blame::BlameEntry],
     head_text: &str,
-    buffer_text: &str,
+    buffer_text: Option<&str>,
 ) -> Option<Vec<git::blame::BlameEntry>> {
     let head_row_count = head_text.split_inclusive('\n').count() as u32;
     if head_entries.iter().map(|entry| entry.range.end).max() != Some(head_row_count) {
         return None;
     }
+    let Some(buffer_text) = buffer_text else {
+        return Some(head_entries.to_vec());
+    };
 
     let mut mapped = Vec::new();
     let mut entry_ix = 0;
@@ -11821,7 +11820,7 @@ mod tests {
 
     fn map_blame(
         head_text: &str,
-        buffer_text: &str,
+        buffer_text: Option<&str>,
         blame: &[(u8, std::ops::Range<u32>)],
     ) -> Option<Vec<(u8, std::ops::Range<u32>)>> {
         map_head_blame_through_diff(&head_blame(blame), head_text, buffer_text).map(commit_rows)
@@ -11840,63 +11839,65 @@ mod tests {
         let blame = [(1, 0..2), (2, 2..3), (3, 3..4)];
 
         assert_eq!(
-            map_blame(head, head, &blame),
+            map_blame(head, None, &blame),
             Some(vec![(1, 0..2), (2, 2..3), (3, 3..4)])
         );
         assert_eq!(
-            map_blame(head, "a\nB\nc\nd\n", &blame),
+            map_blame(head, Some("a\nB\nc\nd\n"), &blame),
             Some(vec![(1, 0..1), (2, 2..3), (3, 3..4)])
         );
         assert_eq!(
-            map_blame(head, "a\nb\nx\ny\nc\nd\n", &blame),
+            map_blame(head, Some("a\nb\nx\ny\nc\nd\n"), &blame),
             Some(vec![(1, 0..2), (2, 4..5), (3, 5..6)])
         );
         assert_eq!(
-            map_blame(head, "a\nd\n", &blame),
+            map_blame(head, Some("a\nd\n"), &blame),
             Some(vec![(1, 0..1), (3, 1..2)])
         );
         assert_eq!(
-            map_blame(head, "A\nb\nc\nd\n", &blame),
+            map_blame(head, Some("A\nb\nc\nd\n"), &blame),
             Some(vec![(1, 1..2), (2, 2..3), (3, 3..4)])
         );
         assert_eq!(
-            map_blame(head, "x\na\nb\nc\nd\n", &blame),
+            map_blame(head, Some("x\na\nb\nc\nd\n"), &blame),
             Some(vec![(1, 1..3), (2, 3..4), (3, 4..5)])
         );
         assert_eq!(
-            map_blame(head, "a\nb\nc\nD\n", &blame),
+            map_blame(head, Some("a\nb\nc\nD\n"), &blame),
             Some(vec![(1, 0..2), (2, 2..3)])
         );
         assert_eq!(
-            map_blame(head, "a\nb\nc\n", &blame),
+            map_blame(head, Some("a\nb\nc\n"), &blame),
             Some(vec![(1, 0..2), (2, 2..3)])
         );
         assert_eq!(
-            map_blame(head, "a\nb\nc\nd\ne\n", &blame),
+            map_blame(head, Some("a\nb\nc\nd\ne\n"), &blame),
             Some(vec![(1, 0..2), (2, 2..3), (3, 3..4)])
         );
         assert_eq!(
-            map_blame(head, "a\nb\nc\nd", &blame),
+            map_blame(head, Some("a\nb\nc\nd"), &blame),
             Some(vec![(1, 0..2), (2, 2..3)])
         );
         assert_eq!(
-            map_blame("a\nb\nc\nd", head, &blame),
+            map_blame("a\nb\nc\nd", Some(head), &blame),
             Some(vec![(1, 0..2), (2, 2..3)])
         );
         assert_eq!(
-            map_blame("a\nb\nc\nd", "a\nb\nc\nd", &blame),
+            map_blame("a\nb\nc\nd", None, &blame),
             Some(vec![(1, 0..2), (2, 2..3), (3, 3..4)])
         );
         assert_eq!(
-            map_blame("a\nb\nc\nd", "a\nb\nc\nd\ne", &blame),
+            map_blame("a\nb\nc\nd", Some("a\nb\nc\nd\ne"), &blame),
             Some(vec![(1, 0..2), (2, 2..3)])
         );
-        assert_eq!(map_blame(head, "\n", &blame), Some(vec![]));
-        assert_eq!(map_blame(head, "", &blame), Some(vec![]));
+        assert_eq!(map_blame(head, Some("\n"), &blame), Some(vec![]));
+        assert_eq!(map_blame(head, Some(""), &blame), Some(vec![]));
 
-        assert_eq!(map_blame(head, head, &[(1, 0..5)]), None);
-        assert_eq!(map_blame(head, head, &[(1, 0..3)]), None);
-        assert_eq!(map_blame(head, head, &[]), None);
+        for buffer_text in [None, Some("a\nB\nc\nd\n")] {
+            assert_eq!(map_blame(head, buffer_text, &[(1, 0..5)]), None);
+            assert_eq!(map_blame(head, buffer_text, &[(1, 0..3)]), None);
+            assert_eq!(map_blame(head, buffer_text, &[]), None);
+        }
     }
 
     #[gpui::test]
