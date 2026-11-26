@@ -84,12 +84,21 @@ impl From<Connection> for RemoteConnectionOptions {
             Connection::Ssh(conn) => RemoteConnectionOptions::Ssh(conn.into()),
             Connection::Wsl(conn) => RemoteConnectionOptions::Wsl(conn.into()),
             Connection::DevContainer(conn) => {
+                // Without both labels, fall back to identifying the container by
+                // its ID rather than merging unrelated dev containers under an
+                // empty config path.
+                let (local_folder, config_file) =
+                    if conn.local_folder.is_empty() || conn.config_file.is_empty() {
+                        (None, None)
+                    } else {
+                        (Some(conn.local_folder), Some(conn.config_file))
+                    };
                 RemoteConnectionOptions::Docker(DockerConnectionOptions {
                     name: conn.name,
                     remote_user: conn.remote_user,
                     container_id: conn.container_id,
-                    local_folder: Some(conn.local_folder),
-                    config_file: Some(conn.config_file),
+                    local_folder,
+                    config_file,
                     upload_binary_over_docker_exec: false,
                     use_podman: conn.use_podman,
                     remote_env: conn.remote_env,
@@ -670,6 +679,29 @@ mod tests {
                 remote_user: "vscode".into(),
             }
         );
+    }
+
+    #[test]
+    fn test_dev_container_connection_without_labels_uses_container_id() {
+        for connection in [
+            dev_container("container-1", ""),
+            DevContainerConnection {
+                local_folder: String::new(),
+                ..dev_container(
+                    "container-1",
+                    "/host/project/.devcontainer/devcontainer.json",
+                )
+            },
+        ] {
+            let options = RemoteConnectionOptions::from(Connection::DevContainer(connection));
+            assert_eq!(
+                options.identity(),
+                remote::RemoteConnectionIdentity::Docker {
+                    container_id: "container-1".into(),
+                    remote_user: "vscode".into(),
+                }
+            );
+        }
     }
 
     // After a rebuild, "Open Dev Container" reports a new container ID for the same config file.
