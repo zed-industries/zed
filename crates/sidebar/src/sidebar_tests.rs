@@ -1154,12 +1154,14 @@ fn seed_thread_metadata(metadata: ThreadMetadata, cx: &mut TestAppContext) {
 /// used for the fake server. Passing those options back into
 /// `reuse_opts` on a subsequent call makes the new project share the
 /// same `RemoteConnectionIdentity`, matching how Zed treats multiple
-/// projects on the same SSH host.
+/// projects on the same SSH host. `reported_opts` makes the project report
+/// other connection options, as a real dev container or SSH connection does.
 async fn start_remote_project(
     server_fs: &Arc<FakeFs>,
     worktree_path: &Path,
     app_state: &Arc<workspace::AppState>,
     reuse_opts: Option<&remote::RemoteConnectionOptions>,
+    reported_opts: Option<remote::RemoteConnectionOptions>,
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,
 ) -> (
@@ -1180,6 +1182,9 @@ async fn start_remote_project(
             (opts, session)
         }
     };
+    if let Some(reported_opts) = reported_opts {
+        cx.update(|cx| remote::MockConnection::report_connection_options(&opts, reported_opts, cx));
+    }
 
     server_cx.update(remote_server::HeadlessProject::init);
     let server_executor = server_cx.executor();
@@ -17184,6 +17189,7 @@ async fn test_remote_archive_thread_with_active_connection(
         Path::new("/project"),
         &app_state,
         None,
+        None,
         cx,
         server_cx,
     )
@@ -17347,6 +17353,7 @@ async fn test_remote_linked_worktree_workspace_to_remove_uses_remote_connection(
         Path::new("/external-worktree"),
         &app_state,
         None,
+        None,
         cx,
         server_cx,
     )
@@ -17491,6 +17498,7 @@ async fn test_remote_archive_thread_with_disconnected_remote(
         &server_fs,
         Path::new("/project"),
         &app_state,
+        None,
         None,
         cx,
         server_cx,
@@ -18296,57 +18304,16 @@ async fn test_dev_container_group_keeps_live_options_after_rebuild(
     server_fs
         .insert_tree("/project", serde_json::json!({ "src": {} }))
         .await;
-    let (opts, server_session, _) = remote::RemoteClient::fake_server(cx, server_cx);
-    cx.update(|_, cx| {
-        remote::MockConnection::report_connection_options(
-            &opts,
-            dev_container("container-after"),
-            cx,
-        )
-    });
-    server_cx.update(remote_server::HeadlessProject::init);
-    let server_executor = server_cx.executor();
-    let _headless = server_cx.new(|cx| {
-        remote_server::HeadlessProject::new(
-            remote_server::HeadlessAppState {
-                session: server_session,
-                fs: server_fs.clone(),
-                http_client: Arc::new(http_client::BlockedHttpClient),
-                node_runtime: node_runtime::NodeRuntime::unavailable(),
-                languages: Arc::new(language::LanguageRegistry::new(server_executor)),
-                extension_host_proxy: Arc::new(extension::ExtensionHostProxy::new()),
-                startup_time: std::time::Instant::now(),
-            },
-            false,
-            cx,
-        )
-    });
-    let remote_client = remote::RemoteClient::connect_mock(opts, cx).await;
-    let project = cx.update(|_, cx| {
-        let project_client = client::Client::new(
-            Arc::new(clock::FakeSystemClock::new()),
-            http_client::FakeHttpClient::with_404_response(),
-            cx,
-        );
-        let user_store = cx.new(|cx| client::UserStore::new(project_client.clone(), cx));
-        project::Project::remote(
-            remote_client,
-            project_client,
-            node_runtime::NodeRuntime::unavailable(),
-            user_store,
-            app_state.languages.clone(),
-            app_state.fs.clone(),
-            false,
-            cx,
-        )
-    });
-    project
-        .update(cx, |project, cx| {
-            project.find_or_create_worktree(Path::new("/project"), true, cx)
-        })
-        .await
-        .expect("should open remote worktree");
-    cx.run_until_parked();
+    let (project, _headless, _opts) = start_remote_project(
+        &server_fs,
+        Path::new("/project"),
+        &app_state,
+        None,
+        Some(dev_container("container-after")),
+        cx,
+        server_cx,
+    )
+    .await;
 
     multi_workspace.update_in(cx, |mw, window, cx| {
         mw.test_add_workspace(project, window, cx);
