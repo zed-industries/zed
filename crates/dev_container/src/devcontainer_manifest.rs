@@ -3371,7 +3371,7 @@ fn shell_single_quote(value: &str) -> String {
 
 /// Updates the `postStartCommand` marker when `started_at` changes.
 /// Exits with:
-///  * 0 after succesfully writing
+///  * 0 after successfully writing
 ///  * 1 on a write failure, or
 ///  * 2 if this start is already marked
 /// Lifecycle commands run separately to preserve their argument boundaries.
