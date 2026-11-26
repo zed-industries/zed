@@ -579,7 +579,7 @@ impl Worktree {
             if let Some(metadata) = metadata {
                 let mut entry = Entry::new(
                     RelPath::empty_arc(),
-                    &metadata,
+                    metadata.into(),
                     ProjectEntryId::new(&next_entry_id),
                     snapshot.root_char_bag,
                     None,
@@ -4279,7 +4279,7 @@ impl<'a, S: Summary> sum_tree::Dimension<'a, PathSummary<S>> for TraversalProgre
 impl Entry {
     fn new(
         path: Arc<RelPath>,
-        metadata: &fs::Metadata,
+        metadata: fs::EntryMetadata,
         id: ProjectEntryId,
         root_char_bag: CharBag,
         canonical_path: Option<Arc<Path>>,
@@ -5622,21 +5622,42 @@ impl BackgroundScanner {
             ignore_stack.global_ignore_root = Some(job.abs_path.clone());
         }
 
+        let children = child_paths
+            .into_iter()
+            .filter_map(|absolute_path| {
+                let name = absolute_path.file_name()?.to_str()?;
+                let relative_path = job.path.join(RelPath::from_unix_str(name).ok()?);
+                let excluded = self.settings.file_scan_exclusions.is_match(&relative_path);
+                Some((
+                    Arc::<Path>::from(absolute_path),
+                    Arc::<RelPath>::from(relative_path),
+                    excluded,
+                ))
+            })
+            .collect::<Vec<_>>();
+
+        #[cfg(windows)]
+        let batch_metadata = self
+            .fs
+            .scan_metadata_batch(
+                children
+                    .iter()
+                    .map(|(absolute_path, _, excluded)| (!excluded).then(|| absolute_path.clone()))
+                    .collect(),
+            )
+            .await;
+        #[cfg(not(windows))]
+        let batch_metadata: Option<Vec<Option<fs::EntryMetadata>>> = None;
+
         // Other workers take ids at the same time, so taking one per child as
         // it's read would interleave this directory's ids with theirs.
         // Contiguous ids let `populate_dir` insert into `entries_by_id` in
         // one place.
-        let first_child_id = self.next_entry_id.fetch_add(child_paths.len(), SeqCst);
-        for (child_index, child_abs_path) in child_paths.into_iter().enumerate() {
-            let child_abs_path: Arc<Path> = child_abs_path.into();
+        let first_child_id = self.next_entry_id.fetch_add(children.len(), SeqCst);
+        for (child_index, (child_abs_path, child_path, excluded)) in
+            children.into_iter().enumerate()
+        {
             let child_name = child_abs_path.file_name().unwrap();
-            let Some(child_path) = child_name
-                .to_str()
-                .and_then(|name| Some(job.path.join(RelPath::from_unix_str(name).ok()?)))
-            else {
-                continue;
-            };
-            let child_path: Arc<RelPath> = child_path.into();
 
             if self.track_git_repositories {
                 if child_name == DOT_GIT {
@@ -5669,8 +5690,7 @@ impl BackgroundScanner {
                 }
             }
 
-            // `job.path` was checked above, so only the child can match.
-            if self.settings.file_scan_exclusions.is_match(&child_path) {
+            if excluded {
                 log::debug!("skipping excluded child entry {child_path:?}");
 
                 self.state
@@ -5684,18 +5704,27 @@ impl BackgroundScanner {
                 continue;
             }
 
-            let child_metadata = match self.fs.metadata(&child_abs_path).await {
-                Ok(Some(metadata)) => metadata,
-                Ok(None) => continue,
-                Err(err) => {
-                    log::error!("error processing {:?}: {err:#}", child_abs_path.display());
-                    continue;
+            let child_metadata = if let Some(metadata) = batch_metadata
+                .as_ref()
+                .and_then(|batch| batch.get(child_index))
+                .copied()
+                .flatten()
+            {
+                metadata
+            } else {
+                match self.fs.metadata(&child_abs_path).await {
+                    Ok(Some(metadata)) => metadata.into(),
+                    Ok(None) => continue,
+                    Err(err) => {
+                        log::error!("error processing {:?}: {err:#}", child_abs_path.display());
+                        continue;
+                    }
                 }
             };
 
             let mut child_entry = Entry::new(
                 child_path.clone(),
-                &child_metadata,
+                child_metadata,
                 ProjectEntryId::from_usize(first_child_id + child_index),
                 root_char_bag,
                 None,
@@ -5908,7 +5937,7 @@ impl BackgroundScanner {
                     let entry_id = state.entry_id_for(self.next_entry_id.as_ref(), path, &metadata);
                     let mut fs_entry = Entry::new(
                         path.clone(),
-                        &metadata,
+                        (*metadata).into(),
                         entry_id,
                         state.snapshot.root_char_bag,
                         if metadata.is_symlink {
@@ -6771,10 +6800,10 @@ fn is_beyond_scan_depth(file_scan_depth: Option<u32>, path: &RelPath) -> bool {
 fn swap_to_front(child_paths: &mut Vec<PathBuf>, file: &str) {
     let position = child_paths
         .iter()
-        .position(|path| path.file_name().unwrap() == file);
+        .position(|path| path.file_name().is_some_and(|name| name == file));
     if let Some(position) = position {
-        let temp = child_paths.remove(position);
-        child_paths.insert(0, temp);
+        let child = child_paths.remove(position);
+        child_paths.insert(0, child);
     }
 }
 

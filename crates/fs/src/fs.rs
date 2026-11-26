@@ -171,6 +171,14 @@ pub trait Fs: Send + Sync {
         path: &Path,
     ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<PathBuf>>>>>;
 
+    #[cfg(windows)]
+    async fn scan_metadata_batch(
+        &self,
+        _paths: Vec<Option<Arc<Path>>>,
+    ) -> Option<Vec<Option<EntryMetadata>>> {
+        None
+    }
+
     /// Creates the native file watcher now rather than on the first `watch`, so a
     /// failure to start it (e.g. inotify instance limits) can be reported at startup.
     fn start_native_watcher(&self) -> Result<()> {
@@ -382,6 +390,29 @@ pub struct Metadata {
     pub is_fifo: bool,
     pub is_executable: bool,
     pub is_writable: bool,
+}
+
+#[derive(Clone, Copy)]
+pub struct EntryMetadata {
+    pub inode: u64,
+    pub mtime: MTime,
+    pub is_dir: bool,
+    pub is_symlink: bool,
+    pub is_fifo: bool,
+    pub len: u64,
+}
+
+impl From<Metadata> for EntryMetadata {
+    fn from(metadata: Metadata) -> Self {
+        Self {
+            inode: metadata.inode,
+            mtime: metadata.mtime,
+            is_dir: metadata.is_dir,
+            is_symlink: metadata.is_symlink,
+            is_fifo: metadata.is_fifo,
+            len: metadata.len,
+        }
+    }
 }
 
 /// Filesystem modification time. The purpose of this newtype is to discourage use of operations
@@ -1313,6 +1344,23 @@ impl Fs for RealFs {
             .spawn(async move { read_dir_entries(path) })
             .await?;
         Ok(Box::pin(iter(entries)))
+    }
+
+    #[cfg(windows)]
+    async fn scan_metadata_batch(
+        &self,
+        paths: Vec<Option<Arc<Path>>>,
+    ) -> Option<Vec<Option<EntryMetadata>>> {
+        Some(
+            self.executor
+                .spawn(async move {
+                    paths
+                        .into_iter()
+                        .map(|path| path.as_deref().and_then(windows_scan_metadata))
+                        .collect()
+                })
+                .await,
+        )
     }
 
     fn start_native_watcher(&self) -> Result<()> {
@@ -3978,20 +4026,51 @@ fn read_recursive<'a>(
     .boxed()
 }
 
+#[cfg(windows)]
+fn windows_scan_metadata(path: &Path) -> Option<EntryMetadata> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows::Win32::Storage::FileSystem::{
+        FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS,
+        FILE_FLAG_OPEN_REPARSE_POINT,
+    };
+
+    // NTFS directory listings can have stale timestamps and sizes, especially for hard links.
+    // One metadata-only handle provides the current attributes and identity together.
+    let file = std::fs::OpenOptions::new()
+        .access_mode(0)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0 | FILE_FLAG_OPEN_REPARSE_POINT.0)
+        .open(path)
+        .ok()?;
+    let information = windows_file_information(&file).ok()?;
+    if information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
+        return None;
+    }
+    let inode = windows_file_index(&information);
+    if inode == 0 {
+        return None;
+    }
+
+    let ticks = (u64::from(information.ftLastWriteTime.dwHighDateTime) << 32)
+        | u64::from(information.ftLastWriteTime.dwLowDateTime);
+    let elapsed = Duration::new(ticks / 10_000_000, (ticks % 10_000_000) as u32 * 100);
+    let windows_epoch = UNIX_EPOCH - Duration::from_secs(11_644_473_600);
+    Some(EntryMetadata {
+        inode,
+        mtime: MTime(windows_epoch.checked_add(elapsed)?),
+        is_dir: information.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY.0 != 0,
+        is_symlink: false,
+        is_fifo: false,
+        len: (u64::from(information.nFileSizeHigh) << 32) | u64::from(information.nFileSizeLow),
+    })
+}
+
 // todo(windows)
 // can we get file id not open the file twice?
 // https://github.com/rust-lang/rust/issues/63010
 #[cfg(target_os = "windows")]
 async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
-    use std::os::windows::io::AsRawHandle;
-
     use smol::fs::windows::OpenOptionsExt;
-    use windows::Win32::{
-        Foundation::HANDLE,
-        Storage::FileSystem::{
-            BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, GetFileInformationByHandle,
-        },
-    };
+    use windows::Win32::Storage::FileSystem::FILE_FLAG_BACKUP_SEMANTICS;
 
     let file = smol::fs::OpenOptions::new()
         .read(true)
@@ -3999,15 +4078,89 @@ async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
         .open(path)
         .await?;
 
-    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
-    // https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
-    // This function supports Windows XP+
-    smol::unblock(move || {
-        unsafe { GetFileInformationByHandle(HANDLE(file.as_raw_handle() as _), &mut info)? };
+    smol::unblock(move || Ok(windows_file_index(&windows_file_information(&file)?))).await
+}
 
-        Ok(((info.nFileIndexHigh as u64) << 32) | (info.nFileIndexLow as u64))
-    })
-    .await
+#[cfg(windows)]
+fn windows_file_information(
+    file: &impl std::os::windows::io::AsRawHandle,
+) -> windows::core::Result<windows::Win32::Storage::FileSystem::BY_HANDLE_FILE_INFORMATION> {
+    use windows::Win32::{
+        Foundation::HANDLE,
+        Storage::FileSystem::{BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle},
+    };
+    let mut information = BY_HANDLE_FILE_INFORMATION::default();
+    // The caller owns the handle for the duration of the query.
+    unsafe { GetFileInformationByHandle(HANDLE(file.as_raw_handle()), &mut information)? };
+    Ok(information)
+}
+
+#[cfg(windows)]
+fn windows_file_index(
+    information: &windows::Win32::Storage::FileSystem::BY_HANDLE_FILE_INFORMATION,
+) -> u64 {
+    (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow)
+}
+
+#[cfg(all(test, windows))]
+#[test]
+fn windows_scan_metadata_reads_current_attributes() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let child_directory = directory.path().join("directory");
+    std::fs::create_dir(&child_directory)?;
+    let first_file = directory.path().join("file-α.txt");
+    let linked_file = child_directory.join("hard-link.txt");
+    std::fs::write(&first_file, b"abc")?;
+    std::fs::hard_link(&first_file, &linked_file)?;
+    assert_eq!(
+        windows_scan_metadata(&linked_file)
+            .context("missing hard-link metadata")?
+            .len,
+        3
+    );
+
+    let modified = UNIX_EPOCH - Duration::from_secs(1);
+    std::fs::write(&first_file, b"updated through the original name")?;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&first_file)?
+        .set_modified(modified)?;
+    let alias =
+        windows_scan_metadata(&linked_file).context("missing updated hard-link metadata")?;
+    assert_eq!(alias.len, b"updated through the original name".len() as u64);
+    assert_eq!(alias.mtime, MTime(modified));
+
+    std::fs::write(child_directory.join("new-file"), b"abc")?;
+    for path in [first_file, linked_file, child_directory] {
+        let actual = windows_scan_metadata(&path).context("missing Windows scan metadata")?;
+        let expected = std::fs::metadata(&path)?;
+        assert_eq!(actual.inode, smol::block_on(file_id(&path))?);
+        assert_eq!(actual.mtime, MTime(expected.modified()?));
+        assert_eq!(actual.is_dir, expected.is_dir());
+        assert_eq!(actual.len, expected.len());
+    }
+    Ok(())
+}
+
+#[cfg(all(test, windows))]
+#[test]
+fn windows_scan_metadata_defers_junctions_to_the_regular_lookup() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let target = directory.path().join("target");
+    let junction = directory.path().join("junction");
+    std::fs::create_dir(&target)?;
+    let status = std::process::Command::new("cmd")
+        .args(["/D", "/C", "mklink", "/J"])
+        .args([&junction, &target])
+        .output()?;
+    anyhow::ensure!(
+        status.status.success(),
+        "could not create junction: {:?}",
+        status
+    );
+    assert!(windows_scan_metadata(&junction).is_none());
+    std::fs::remove_dir(&junction)?;
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
