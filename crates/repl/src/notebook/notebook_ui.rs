@@ -95,7 +95,7 @@ struct StructureStep {
     before: usize,
     after: usize,
     rewind: Option<BufferRewind>,
-    removed: Option<(Cell, SourceTransactions)>,
+    removed: Option<(Cell, SourceTransactions, LineEndings)>,
 }
 
 #[derive(Clone, Copy)]
@@ -125,10 +125,14 @@ impl BufferRewind {
 type SourceTransactions =
     HashMap<clock::Lamport, Option<(language::Transaction, std::ops::Range<language::Anchor>)>>;
 
+/// Newlines whose saved terminator differs from the cell buffer's line ending.
+type LineEndings = Vec<(language::Anchor, &'static str)>;
+
 struct CellSourceHistory {
     cell: Entity<language::Buffer>,
     observed: clock::Global,
     transactions: SourceTransactions,
+    line_endings: LineEndings,
     _subscriptions: [gpui::Subscription; 3],
 }
 
@@ -151,7 +155,28 @@ impl CellSourceHistory {
         version.observe(operation.timestamp());
         let cell = self.cell.read(cx);
         let text = cell.rope_for_version(&version);
-        let source = text::chunks_with_line_ending(&text, cell.line_ending()).collect::<String>();
+        let kept: Vec<_> = self
+            .line_endings
+            .iter()
+            .filter(|(newline, _)| newline.is_valid(cell))
+            .collect();
+        let kept: HashMap<usize, &str> = cell
+            .offsets_to_version(
+                kept.iter().map(|(newline, _)| newline.to_offset(cell)),
+                &version,
+            )
+            .zip(kept.iter().map(|(_, ending)| *ending))
+            .collect();
+        let default_ending = cell.line_ending().as_str();
+        let normalized = text.to_string();
+        let mut source = String::with_capacity(normalized.len());
+        for (offset, character) in normalized.char_indices() {
+            if character == '\n' {
+                source.push_str(kept.get(&offset).copied().unwrap_or(default_ending));
+            } else {
+                source.push(character);
+            }
+        }
 
         // A moved or deleted cell's earlier edits live in hidden notebook text
         // until a structure undo makes that text visible at the cell again.
@@ -203,7 +228,7 @@ impl CellSourceHistory {
             };
             language::LineEnding::normalize(&mut restored);
             anyhow::ensure!(
-                restored == text.to_string(),
+                restored == normalized,
                 "Cell source history no longer matches the notebook"
             );
             fields.last_source = source;
@@ -335,14 +360,15 @@ impl NotebookEditor {
         };
         let languages = editor.project.read(cx).languages().clone();
         for cell in cells {
-            let cell = Cell::load(
+            let cell_entity = Cell::load(
                 &cell,
                 &languages,
                 editor.notebook_language.clone(),
                 window,
                 cx,
             );
-            let cell_id = editor.attach_cell(cell, HashMap::default(), window, cx);
+            let cell_id =
+                editor.attach_cell(cell_entity, &cell.source().concat(), None, window, cx);
             editor.cell_order.push(cell_id);
         }
         editor.watch_kernel_trust(cx);
@@ -352,7 +378,8 @@ impl NotebookEditor {
     fn attach_cell(
         &mut self,
         cell_entity: Cell,
-        transactions: SourceTransactions,
+        source: &str,
+        history: Option<(SourceTransactions, LineEndings)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> CellId {
@@ -394,12 +421,15 @@ impl NotebookEditor {
                     this.apply_cell_operation(&edited_id, &buffer, operation, cx);
                 }
             });
+            let (transactions, line_endings) = history
+                .unwrap_or_else(|| (HashMap::default(), line_endings(buffer.read(cx), source)));
             self.cell_sources.insert(
                 cell_id.clone(),
                 CellSourceHistory {
                     observed: buffer.read(cx).version(),
                     cell: buffer,
                     transactions,
+                    line_endings,
                     _subscriptions: [cell_events, focus_events, buffer_events],
                 },
             );
@@ -1333,12 +1363,15 @@ impl NotebookEditor {
         match projection {
             Projection::Remove(index) => {
                 let id = self.cell_order.remove(index);
-                let transactions = self
+                let (transactions, line_endings) = self
                     .cell_sources
                     .remove(&id)
-                    .map(|history| history.transactions)
+                    .map(|history| (history.transactions, history.line_endings))
                     .unwrap_or_default();
-                removed = self.cell_map.remove(&id).map(|cell| (cell, transactions));
+                removed = self
+                    .cell_map
+                    .remove(&id)
+                    .map(|cell| (cell, transactions, line_endings));
                 self.display_slots.remove(&id);
                 self.notebook_item
                     .update(cx, |item, _| item.fields.remove(index));
@@ -1352,8 +1385,15 @@ impl NotebookEditor {
                 let fields = anchor_fields(fields, buffer.read(cx));
                 self.notebook_item
                     .update(cx, |item, _| item.fields.insert(index, fields));
-                let (cell, transactions) = match step.removed.clone() {
-                    Some(removed) => removed,
+                let source = cell.source().concat();
+                let cell_id = match step.removed.clone() {
+                    Some((cell, transactions, line_endings)) => self.attach_cell(
+                        cell,
+                        &source,
+                        Some((transactions, line_endings)),
+                        window,
+                        cx,
+                    ),
                     None => {
                         let languages = self.project.read(cx).languages().clone();
                         let cell = Cell::load(
@@ -1363,10 +1403,9 @@ impl NotebookEditor {
                             window,
                             cx,
                         );
-                        (cell, HashMap::default())
+                        self.attach_cell(cell, &source, None, window, cx)
                     }
                 };
-                let cell_id = self.attach_cell(cell, transactions, window, cx);
                 self.cell_order.insert(index, cell_id);
                 self.cell_list.splice(index..index, 1);
             }
@@ -2335,6 +2374,29 @@ impl NotebookItem {
             notebook: parsed.notebook,
         }))
     }
+}
+
+fn line_endings(cell: &language::Buffer, source: &str) -> LineEndings {
+    let default_ending = cell.line_ending().as_str();
+    let mut line_endings = Vec::new();
+    let mut offset = 0;
+    let mut rest = source;
+    while let Some(index) = rest.find(['\r', '\n']) {
+        let ending = if rest[index..].starts_with("\r\n") {
+            "\r\n"
+        } else if rest[index..].starts_with('\r') {
+            "\r"
+        } else {
+            "\n"
+        };
+        offset += index;
+        if ending != default_ending {
+            line_endings.push((cell.anchor_after(offset), ending));
+        }
+        offset += 1;
+        rest = &rest[index + ending.len()..];
+    }
+    line_endings
 }
 
 fn anchor_fields(

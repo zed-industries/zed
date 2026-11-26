@@ -1083,6 +1083,117 @@ async fn cell_undo_after_structure_undo_restores_the_exact_source(cx: &mut TestA
 }
 
 #[gpui::test]
+async fn cell_edits_keep_untouched_line_endings_through_saves_and_structure_changes(
+    cx: &mut TestAppContext,
+) {
+    let original = r#"{"nbformat": 4, "nbformat_minor": 5, "metadata": {},
+  "cells": [
+    {"cell_type": "markdown", "id": "short", "metadata": {}, "source": ["a\r\n", "b\n", "c"]},
+    {"cell_type": "code", "id": "long", "metadata": {}, "execution_count": null, "outputs": [],
+     "source": ["neighbor = 'long enough that the short cell is the one that moves'"]}
+  ]
+}
+"#;
+    let path = Path::new(path!("/notebooks/field.ipynb"));
+    let (fs, workspace, cx) = notebook_workspace(json!({"field.ipynb": original}), cx).await;
+    open_file("field.ipynb", &workspace, cx).await;
+    let view = workspace.read_with(cx, |workspace, cx| {
+        workspace.active_item_as::<NotebookPreview>(cx).unwrap()
+    });
+    let short_editor = |cx: &mut VisualTestContext| {
+        view.read_with(cx, |view, cx| {
+            let notebook = view.notebook.as_ref().unwrap().read(cx);
+            (0..)
+                .map_while(|index| notebook.cell(index))
+                .find(|cell| cell.id(cx).to_string() == "short")
+                .unwrap()
+                .editor(cx)
+                .unwrap()
+                .clone()
+        })
+    };
+    let field = |text: &str| {
+        let object = &text[text.find(r#""id": "short""#).unwrap()..];
+        let line = object.lines().next().unwrap();
+        let source = &line[line.find(r#""source": "#).unwrap() + r#""source": "#.len()..];
+        source[..=source.rfind(']').unwrap()].to_owned()
+    };
+    let raw_field = |cx: &mut VisualTestContext| {
+        field(&view.read_with(cx, |view, cx| view.editor.read(cx).text(cx)))
+    };
+    let append = |text: &str, cx: &mut VisualTestContext| {
+        short_editor(cx).update_in(cx, |editor, window, cx| {
+            editor.buffer().update(cx, |buffer, cx| {
+                buffer.set_group_interval(std::time::Duration::ZERO, cx)
+            });
+            editor.move_to_end(&Default::default(), window, cx);
+            editor.insert(text, window, cx);
+        });
+        cx.run_until_parked();
+    };
+    let undo_cell = |cx: &mut VisualTestContext| {
+        short_editor(cx).update_in(cx, |editor, window, cx| {
+            editor.undo(&editor::actions::Undo, window, cx)
+        });
+        cx.run_until_parked();
+    };
+    let save = |cx: &mut VisualTestContext| {
+        cx.dispatch_action(workspace::SaveAll { save_intent: None });
+        cx.run_until_parked();
+    };
+    let short_first = |text: &str| text.find(r#""short""#) < text.find(r#""long""#);
+    let edited = r#"["a\r\n","b\n","cd"]"#;
+
+    append("d", cx);
+    assert_eq!(raw_field(cx), edited);
+    save(cx);
+    let saved = fs.load(path).await.unwrap();
+    assert_eq!(field(&saved), edited);
+
+    cx.dispatch_action(MoveCellDown);
+    save(cx);
+    let saved = fs.load(path).await.unwrap();
+    assert!(!short_first(&saved));
+    assert_eq!(field(&saved), edited);
+
+    append("e", cx);
+    assert_eq!(raw_field(cx), r#"["a\r\n","b\n","cde"]"#);
+    undo_cell(cx);
+    assert_eq!(raw_field(cx), edited);
+
+    cx.dispatch_action(editor::actions::Undo);
+    save(cx);
+    let saved = fs.load(path).await.unwrap();
+    assert!(short_first(&saved));
+    assert_eq!(field(&saved), edited);
+    undo_cell(cx);
+    assert_eq!(
+        view.read_with(cx, |view, cx| view.editor.read(cx).text(cx)),
+        original
+    );
+    assert!(view.read_with(cx, |view, cx| workspace::Item::is_dirty(view, cx)));
+
+    short_editor(cx).update(cx, |editor, cx| {
+        let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "x"), (2..2, "y")], None, cx)
+        });
+    });
+    cx.run_until_parked();
+    let multi_cursor = r#"["xa\r\n","yb\n","c"]"#;
+    assert_eq!(raw_field(cx), multi_cursor);
+    cx.dispatch_action(DeleteCell);
+    assert_eq!(cell_sources(&workspace, cx).len(), 1);
+    cx.dispatch_action(editor::actions::Undo);
+    assert_eq!(raw_field(cx), multi_cursor);
+    append("z\nw", cx);
+    let typed = r#"["xa\r\n","yb\n","cz\r\n","w"]"#;
+    assert_eq!(raw_field(cx), typed);
+    save(cx);
+    assert_eq!(field(&fs.load(path).await.unwrap()), typed);
+}
+
+#[gpui::test]
 async fn switching_to_source_preserves_cell_undo_until_the_raw_file_changes(
     cx: &mut TestAppContext,
 ) {
