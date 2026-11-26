@@ -16,7 +16,7 @@ use theme_settings::ThemeSettings;
 use std::ops::Deref;
 use std::sync::{Arc, LazyLock};
 use std::{any::TypeId, time::Duration};
-use ui::{CopyButton, SplitButton, SplitButtonStyle, Tooltip, prelude::*};
+use ui::{CopyButton, SplitButton, SplitButtonStyle, TintColor, Tooltip, prelude::*};
 use util::ResultExt;
 
 #[derive(Default)]
@@ -103,6 +103,10 @@ pub(crate) fn request_resource_approval(
                     let request = request.clone();
                         Button::new((label, usize::from(remember)), if remember { "Always" } else { label })
                             .label_size(LabelSize::Small)
+                            .when(!remember, |button| button.style(ButtonStyle::Tinted(
+                                if permission == ResourcePermission::Allowed { TintColor::Success } else { TintColor::Error }
+                            )))
+                            .color(if remember { Color::Muted } else if permission == ResourcePermission::Allowed { Color::Success } else { Color::Error })
                             .when(remember, |button| button.tooltip(Tooltip::text(format!(
                                 "{label} this operation for this resource from any requester. Saved in your user settings."
                             ))))
