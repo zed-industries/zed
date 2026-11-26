@@ -214,7 +214,7 @@ impl NativeRunningKernel {
                 std::process::Stdio::piped(),
                 std::process::Stdio::piped(),
                 std::process::Stdio::piped(),
-            )?;
+            ).map_err(|error| anyhow::anyhow!("Failed to start kernel {}: {}", kernel_specification.name, error.root_cause()))?;
             let process_status = process.status();
             let kill_on_cancel = util::defer(|| {
                 process.kill().log_err();
@@ -513,9 +513,10 @@ pub async fn local_kernel_specifications(fs: Arc<dyn Fs>) -> Result<Vec<LocalKer
     Ok(kernel_dirs)
 }
 
-pub(crate) async fn notebook_python_kernels(
+pub(crate) async fn notebook_kernel_choices(
     fs: Arc<dyn Fs>,
     project_python: Option<PathBuf>,
+    include_kernelspecs: bool,
 ) -> Result<Vec<LocalKernelSpecification>> {
     let mut candidates = Vec::new();
     if let Some(path) = project_python.filter(|path| path.is_absolute()) {
@@ -524,12 +525,27 @@ pub(crate) async fn notebook_python_kernels(
     if let Some(path) = crate::notebook::kernel_setup::installed_python() {
         candidates.push((path, "Zed Python".to_string()));
     }
-    for spec in notebook_kernelspecs(fs.as_ref()).await? {
-        if spec.kernelspec.language.eq_ignore_ascii_case("python")
+    let mut data_dirs = dirs::data_dirs();
+    if include_kernelspecs && let Some(prefix) = env::var_os("CONDA_PREFIX") {
+        let dir = PathBuf::from(prefix).join("share/jupyter");
+        if !data_dirs.contains(&dir) {
+            data_dirs.push(dir);
+        }
+    }
+    let mut installed = Vec::new();
+    for dir in data_dirs.into_iter().filter(|dir| dir.is_absolute()) {
+        let kernels = dir.join("kernels");
+        if fs.metadata(&kernels).await?.is_some() {
+            installed.extend(read_kernels_dir(kernels, fs.as_ref()).await?);
+        }
+    }
+    for spec in &installed {
+        if !include_kernelspecs
+            && spec.kernelspec.language.eq_ignore_ascii_case("python")
             && let Some(path) = spec.kernelspec.argv.first().map(PathBuf::from)
             && path.is_absolute()
         {
-            candidates.push((path, spec.kernelspec.display_name));
+            candidates.push((path, spec.kernelspec.display_name.clone()));
         }
     }
     let names: &[&str] = if cfg!(windows) {
@@ -556,21 +572,8 @@ pub(crate) async fn notebook_python_kernels(
         }
         specs.push(LocalKernelSpecification::for_notebook_python(path, name)?);
     }
-    Ok(specs)
-}
-
-/// Reads kernelspecs without running any program, unlike
-/// [`local_kernel_specifications`], which asks `python` for its prefix.
-pub(crate) async fn notebook_kernelspecs(fs: &dyn Fs) -> Result<Vec<LocalKernelSpecification>> {
-    let mut specs = Vec::new();
-    for dir in dirs::data_dirs()
-        .into_iter()
-        .filter(|dir| dir.is_absolute())
-    {
-        let kernels = dir.join("kernels");
-        if fs.metadata(&kernels).await?.is_some() {
-            specs.extend(read_kernels_dir(kernels, fs).await?);
-        }
+    if include_kernelspecs {
+        specs.extend(installed);
     }
     Ok(specs)
 }
@@ -704,7 +707,7 @@ with run_kernel(kernel_name="zed-test") as client:
         symlink(&program, &python).unwrap();
         cx.executor().allow_parking();
         let mut candidates =
-            notebook_python_kernels(FakeFs::new(cx.executor()), Some(python.clone()))
+            notebook_kernel_choices(FakeFs::new(cx.executor()), Some(python.clone()), false)
                 .await
                 .unwrap();
         assert!(

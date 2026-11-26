@@ -921,18 +921,11 @@ impl NotebookEditor {
             })??;
             let project_python = project_python.await;
             let specs = cx
-                .background_spawn({
-                    let project_python = project_python.clone();
-                    async move {
-                        let mut specs =
-                            crate::kernels::notebook_python_kernels(fs.clone(), project_python)
-                                .await?;
-                        if list_kernelspecs {
-                            specs.extend(crate::kernels::notebook_kernelspecs(fs.as_ref()).await?);
-                        }
-                        anyhow::Ok(specs)
-                    }
-                })
+                .background_spawn(crate::kernels::notebook_kernel_choices(
+                    fs,
+                    project_python.clone(),
+                    list_kernelspecs,
+                ))
                 .await?;
             (specs, project_python, list_kernelspecs)
         };
@@ -3769,15 +3762,8 @@ mod tests {
         run.await;
         editor.read_with(cx, |editor, cx| {
             let notice = editor.kernel_notice.as_deref().unwrap();
-            assert!(notice.contains("failed to spawn command"), "{notice}");
-            assert!(
-                notice.contains(r#"ZED_NOTEBOOK_MARKER="synthetic-marker""#),
-                "{notice}"
-            );
-            assert!(
-                notice.contains(&format!(r#""{}" "--vanilla" "#, path!("/missing/fake-r"))),
-                "{notice}"
-            );
+            assert!(notice.contains("Failed to start kernel fake-r"), "{notice}");
+            assert!(!notice.contains("synthetic-marker") && !notice.contains("--vanilla"));
             assert_eq!(editor.notebook_item.read(cx).buffer.read(cx).text(), raw);
         });
     }
