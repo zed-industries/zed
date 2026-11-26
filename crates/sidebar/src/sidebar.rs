@@ -4357,6 +4357,28 @@ impl Sidebar {
             })
     }
 
+    /// Returns the sidebar's group key for the thread. A thread saved before a
+    /// dev container rebuild still names the removed container, while its group
+    /// already holds the live connection.
+    fn project_group_key_for_thread(
+        &self,
+        worktree_paths: &WorktreePaths,
+        remote_connection: Option<RemoteConnectionOptions>,
+        cx: &App,
+    ) -> ProjectGroupKey {
+        let key = ProjectGroupKey::from_worktree_paths(worktree_paths, remote_connection);
+        self.multi_workspace
+            .upgrade()
+            .and_then(|multi_workspace| {
+                multi_workspace
+                    .read(cx)
+                    .project_group_keys()
+                    .into_iter()
+                    .find(|group_key| *group_key == key)
+            })
+            .unwrap_or(key)
+    }
+
     fn open_thread_from_archive(
         &mut self,
         metadata: ThreadMetadata,
@@ -4386,9 +4408,10 @@ impl Sidebar {
                 {
                     self.activate_thread_in_other_window(metadata, workspace, target_window, cx);
                 } else {
-                    let key = ProjectGroupKey::from_worktree_paths(
+                    let key = self.project_group_key_for_thread(
                         &metadata.worktree_paths,
                         metadata.remote_connection.clone(),
+                        cx,
                     );
                     self.open_workspace_and_activate_thread(metadata, path_list, &key, window, cx);
                 }
@@ -4436,9 +4459,10 @@ impl Sidebar {
                                 cx,
                             );
                         } else {
-                            let key = ProjectGroupKey::from_worktree_paths(
+                            let key = this.project_group_key_for_thread(
                                 &metadata.worktree_paths,
                                 metadata.remote_connection.clone(),
+                                cx,
                             );
                             this.open_workspace_and_activate_thread(
                                 metadata, path_list, &key, window, cx,
@@ -4513,10 +4537,6 @@ impl Sidebar {
 
                     if let Some(updated_metadata) = updated_metadata {
                         let new_paths = updated_metadata.folder_paths().clone();
-                        let key = ProjectGroupKey::from_worktree_paths(
-                            &updated_metadata.worktree_paths,
-                            updated_metadata.remote_connection.clone(),
-                        );
 
                         cx.update(|_window, cx| {
                             store.update(cx, |store, cx| {
@@ -4526,6 +4546,11 @@ impl Sidebar {
 
                         this.update_in(cx, |this, window, cx| {
                             this.restoring_tasks.remove(&thread_id);
+                            let key = this.project_group_key_for_thread(
+                                &updated_metadata.worktree_paths,
+                                updated_metadata.remote_connection.clone(),
+                                cx,
+                            );
                             this.open_workspace_and_activate_thread(
                                 updated_metadata,
                                 new_paths,

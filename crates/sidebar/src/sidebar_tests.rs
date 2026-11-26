@@ -18333,4 +18333,19 @@ async fn test_dev_container_group_keeps_live_options_after_rebuild(
         );
     });
     assert_group_uses_rebuilt_container(cx);
+
+    // An archived thread from before the rebuild opens with the group's live connection.
+    let thread_paths = WorktreePaths::from_path_lists(
+        PathList::new(&[PathBuf::from("/project")]),
+        PathList::new(&[PathBuf::from("/project")]),
+    )
+    .unwrap();
+    let thread_key = sidebar.read_with(cx, |sidebar, cx| {
+        sidebar.project_group_key_for_thread(
+            &thread_paths,
+            Some(dev_container("container-before")),
+            cx,
+        )
+    });
+    assert_eq!(thread_key.host(), Some(&dev_container("container-after")));
 }
