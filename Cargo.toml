@@ -109,6 +109,7 @@ members = [
     "crates/gpui_windows",
     "crates/grammars",
     "crates/hang_telemetry",
+    "crates/helix",
     "crates/html_to_markdown",
     "crates/http_client",
     "crates/http_client_tls",
@@ -149,6 +150,7 @@ members = [
     "crates/migrator",
     "crates/miniprofiler_ui",
     "crates/mistral",
+    "crates/modal_editor",
     "crates/multi_buffer",
     "crates/net",
     "crates/node_runtime",
@@ -388,6 +390,7 @@ gpui_wgpu = { path = "crates/gpui_wgpu" }
 gpui_windows = { path = "crates/gpui_windows", default-features = false }
 grammars = { path = "crates/grammars" }
 hang_telemetry = { path = "crates/hang_telemetry" }
+helix = { path = "crates/helix" }
 html_to_markdown = { path = "crates/html_to_markdown" }
 http_client = { path = "crates/http_client" }
 http_client_tls = { path = "crates/http_client_tls" }
@@ -428,6 +431,7 @@ mermaid_render = { path = "crates/mermaid_render" }
 migrator = { path = "crates/migrator" }
 miniprofiler_ui = { path = "crates/miniprofiler_ui" }
 mistral = { path = "crates/mistral" }
+modal_editor = { path = "crates/modal_editor" }
 multi_buffer = { path = "crates/multi_buffer" }
 net = { path = "crates/net" }
 node_runtime = { path = "crates/node_runtime" }

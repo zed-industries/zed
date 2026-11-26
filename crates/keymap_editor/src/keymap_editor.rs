@@ -240,7 +240,7 @@ impl SourceFilters {
     fn allows(&self, source: Option<KeybindSource>) -> bool {
         match source {
             Some(KeybindSource::User) => self.user,
-            Some(KeybindSource::Vim) => self.vim_defaults,
+            Some(KeybindSource::Vim | KeybindSource::Helix) => self.vim_defaults,
             Some(KeybindSource::Base | KeybindSource::Default | KeybindSource::Unknown) | None => {
                 self.zed_defaults
             }
@@ -2219,7 +2219,7 @@ impl Render for KeymapEditor {
                                             .cloned()
                                             .unwrap_or_default()
                                             .into_any_element(),
-                                        |binding| ui::KeyBinding::from_keystrokes(binding.keystrokes.clone(), binding.source == KeybindSource::Vim).into_any_element()
+                                        |binding| ui::KeyBinding::from_keystrokes(binding.keystrokes.clone(), matches!(binding.source, KeybindSource::Vim | KeybindSource::Helix)).into_any_element()
                                     );
 
                                     let action_arguments = match binding.action().arguments.clone()
@@ -2347,6 +2347,7 @@ impl Render for KeymapEditor {
                                                     match conflict.override_source {
                                                         KeybindSource::User  => Some("your keymap"),
                                                         KeybindSource::Vim => Some("the vim keymap"),
+                                                        KeybindSource::Helix => Some("the helix keymap"),
                                                         KeybindSource::Base => Some("your base keymap"),
                                                         _ => {
                                                             log::error!("Unexpected override from the {} keymap", conflict.override_source.name());
@@ -3770,6 +3771,7 @@ fn collect_contexts_from_assets() -> Vec<SharedString> {
     let mut keymap_assets = vec![
         util::asset_str::<SettingsAssets>(settings::DEFAULT_KEYMAP_PATH),
         util::asset_str::<SettingsAssets>(settings::VIM_KEYMAP_PATH),
+        util::asset_str::<SettingsAssets>(settings::HELIX_KEYMAP_PATH),
     ];
     keymap_assets.extend(
         BaseKeymap::OPTIONS

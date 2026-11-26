@@ -72,10 +72,11 @@ use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
-    BaseKeymap, DEFAULT_KEYMAP_PATH, DefaultOpenBehavior, InvalidSettingsError, KeybindSource,
-    KeymapFile, KeymapFileLoadResult, MigrationStatus, SPECIFIC_OVERRIDES_KEYMAP_PATH, Settings,
-    SettingsFile, SettingsStore, VIM_KEYMAP_PATH, initial_local_debug_tasks_content,
-    initial_project_settings_content, initial_tasks_content, update_settings_file,
+    BaseKeymap, DEFAULT_KEYMAP_PATH, DefaultOpenBehavior, HELIX_KEYMAP_PATH, InvalidSettingsError,
+    KeybindSource, KeymapFile, KeymapFileLoadResult, MigrationStatus,
+    SPECIFIC_OVERRIDES_KEYMAP_PATH, Settings, SettingsFile, SettingsStore, VIM_KEYMAP_PATH,
+    initial_local_debug_tasks_content, initial_project_settings_content, initial_tasks_content,
+    update_settings_file,
 };
 use sidebar::Sidebar;
 #[cfg(debug_assertions)]
@@ -607,7 +608,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
             cx.new(|_| language_selector::ActiveBufferLanguage::new(workspace));
         let active_toolchain_language =
             cx.new(|cx| toolchain_selector::ActiveToolchain::new(workspace, window, cx));
-        let vim_mode_indicator = cx.new(|cx| vim::ModeIndicator::new(window, cx));
+        let vim_mode_indicator = cx.new(|cx| modal_editor::ModeIndicator::new(window, cx));
         let pending_keystrokes_indicator =
             cx.new(|cx| which_key::PendingKeystrokesIndicator::new(window, cx));
         let image_info = cx.new(|_cx| ImageInfo::new(workspace));
@@ -2150,12 +2151,14 @@ pub fn handle_keymap_file_changes(
     let mut old_base_keymap = *BaseKeymap::get_global(cx);
     let mut old_vim_enabled = VimModeSetting::get_global(cx).0;
     let mut old_helix_enabled = vim_mode_setting::HelixModeSetting::get_global(cx).0;
+    let mut old_helix_crate_enabled = vim_mode_setting::HelixModeSetting::uses_helix_crate(cx);
     let mut old_disable_ai = DisableAiSettings::get_global(cx).disable_ai;
 
-    cx.observe_global::<SettingsStore>(move |cx| {
+    vim_mode_setting::observe_modal_editing_changes(cx, move |cx| {
         let new_base_keymap = *BaseKeymap::get_global(cx);
         let new_vim_enabled = VimModeSetting::get_global(cx).0;
         let new_helix_enabled = vim_mode_setting::HelixModeSetting::get_global(cx).0;
+        let new_helix_crate_enabled = vim_mode_setting::HelixModeSetting::uses_helix_crate(cx);
         let new_disable_ai = DisableAiSettings::get_global(cx).disable_ai;
 
         if new_disable_ai != old_disable_ai {
@@ -2165,11 +2168,13 @@ pub fn handle_keymap_file_changes(
         if new_base_keymap != old_base_keymap
             || new_vim_enabled != old_vim_enabled
             || new_helix_enabled != old_helix_enabled
+            || new_helix_crate_enabled != old_helix_crate_enabled
             || new_disable_ai != old_disable_ai
         {
             old_base_keymap = new_base_keymap;
             old_vim_enabled = new_vim_enabled;
             old_helix_enabled = new_helix_enabled;
+            old_helix_crate_enabled = new_helix_crate_enabled;
             old_disable_ai = new_disable_ai;
 
             base_keymap_tx.unbounded_send(()).unwrap();
@@ -2374,9 +2379,19 @@ pub fn load_default_keymap(cx: &mut App) {
         ));
     }
 
-    if VimModeSetting::get_global(cx).0 || vim_mode_setting::HelixModeSetting::get_global(cx).0 {
+    let helix_crate_enabled = vim_mode_setting::HelixModeSetting::uses_helix_crate(cx);
+    if (VimModeSetting::get_global(cx).0 || vim_mode_setting::HelixModeSetting::get_global(cx).0)
+        && !helix_crate_enabled
+    {
         cx.bind_keys(filter_disabled_ai_bindings(
             KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(KeybindSource::Vim), cx).unwrap(),
+            cx,
+        ));
+    }
+
+    if helix_crate_enabled {
+        cx.bind_keys(filter_disabled_ai_bindings(
+            KeymapFile::load_asset(HELIX_KEYMAP_PATH, Some(KeybindSource::Helix), cx).unwrap(),
             cx,
         ));
     }
@@ -6287,6 +6302,7 @@ mod tests {
                 "git_panel",
                 "git_picker",
                 "go_to_line",
+                "helix",
                 "highlights_tree_view",
                 "icon_theme_selector",
                 "image_viewer",

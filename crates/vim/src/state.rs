@@ -12,19 +12,19 @@ use db::{
     sqlez_macros::sql,
 };
 use editor::display_map::{is_invisible, replacement};
-use editor::{Anchor, ClipboardSelection, Editor, MultiBuffer, ToPoint as EditorToPoint};
+use editor::{Anchor, Editor, MultiBuffer, ToPoint as EditorToPoint};
 use gpui::{
-    Action, App, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, DismissEvent, Entity,
-    EntityId, Global, HighlightStyle, StyledText, Subscription, Task, TaskExt, TextStyle,
-    WeakEntity,
+    Action, App, AppContext, BorrowAppContext, DismissEvent, Entity, EntityId, Global,
+    HighlightStyle, StyledText, Subscription, Task, TaskExt, TextStyle, WeakEntity,
 };
 use language::{Buffer, BufferEvent, BufferId, Chunk, LanguageAwareStyling, Point};
+use modal_editor::{HelixJumpLabel, Register, Registers};
 
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectItem, ProjectPath};
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::Settings;
 use std::borrow::BorrowMut;
 use std::collections::HashSet;
 use std::path::Path;
@@ -37,6 +37,7 @@ use ui::{
 };
 use util::ResultExt;
 use util::rel_path::RelPath;
+use vim_mode_setting::{HelixModeSetting, VimModeSetting, observe_modal_editing_changes};
 use workspace::searchable::Direction;
 use workspace::{MultiWorkspace, Workspace, WorkspaceDb, WorkspaceId};
 
@@ -172,12 +173,6 @@ pub enum Operator {
     },
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct HelixJumpLabel {
-    pub label: [char; 2],
-    pub range: Range<Anchor>,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HelixJumpBehaviour {
     Move,
@@ -204,46 +199,6 @@ pub enum RecordedSelection {
     VisualLine {
         rows: u32,
     },
-}
-
-#[derive(Default, Clone, Debug)]
-pub struct Register {
-    pub(crate) text: SharedString,
-    pub(crate) clipboard_selections: Option<Vec<ClipboardSelection>>,
-}
-
-impl From<Register> for ClipboardItem {
-    fn from(register: Register) -> Self {
-        if let Some(clipboard_selections) = register.clipboard_selections {
-            ClipboardItem::new_string_with_json_metadata(register.text.into(), clipboard_selections)
-        } else {
-            ClipboardItem::new_string(register.text.into())
-        }
-    }
-}
-
-impl From<ClipboardItem> for Register {
-    fn from(item: ClipboardItem) -> Self {
-        match item.entries().iter().find_map(|entry| match entry {
-            ClipboardEntry::String(value) => Some(value),
-            _ => None,
-        }) {
-            Some(value) => Register {
-                text: value.text().to_owned().into(),
-                clipboard_selections: value.metadata_json::<Vec<ClipboardSelection>>(),
-            },
-            None => Register::default(),
-        }
-    }
-}
-
-impl From<String> for Register {
-    fn from(text: String) -> Self {
-        Register {
-            text: text.into(),
-            clipboard_selections: None,
-        }
-    }
 }
 
 #[derive(Default)]
@@ -279,8 +234,7 @@ pub struct VimGlobals {
     pub last_replayed_register: Option<char>,
     pub replayer: Option<Replayer>,
 
-    pub last_yank: Option<SharedString>,
-    pub registers: HashMap<char, Register>,
+    pub registers: Registers,
     pub recordings: HashMap<char, Vec<ReplayableAction>>,
 
     pub focused_vim: Option<WeakEntity<Vim>>,
@@ -777,14 +731,17 @@ impl VimGlobals {
 
         let mut was_enabled = None;
 
-        cx.observe_global::<SettingsStore>(move |cx| {
+        observe_modal_editing_changes(cx, move |cx| {
+            KeyBinding::set_vim_mode(
+                cx,
+                VimModeSetting::is_enabled(cx) || HelixModeSetting::is_enabled(cx),
+            );
             let is_enabled = Vim::enabled(cx);
             if was_enabled == Some(is_enabled) {
                 return;
             }
             was_enabled = Some(is_enabled);
             if is_enabled {
-                KeyBinding::set_vim_mode(cx, true);
                 CommandPaletteFilter::update_global(cx, |filter, _| {
                     filter.show_namespace(Vim::NAMESPACE);
                 });
@@ -805,7 +762,6 @@ impl VimGlobals {
                     }
                 }
             } else {
-                KeyBinding::set_vim_mode(cx, false);
                 *Vim::globals(cx) = VimGlobals::default();
                 GlobalCommandPaletteInterceptor::clear(cx);
                 CommandPaletteFilter::update_global(cx, |filter, _| {
@@ -842,12 +798,12 @@ impl VimGlobals {
         if let Some(register) = register {
             let lower = register.to_lowercase().next().unwrap_or(register);
             if lower != register {
-                let current = self.registers.entry(lower).or_default();
+                let mut current = self.registers.get(lower).cloned().unwrap_or_default();
                 current.text = (current.text.to_string() + &content.text).into();
                 // not clear how to support appending to registers with multiple cursors
                 current.clipboard_selections.take();
-                let yanked = current.clone();
-                self.registers.insert('"', yanked);
+                self.registers.insert(lower, current.clone());
+                self.registers.insert('"', current);
             } else {
                 match lower {
                     '_' | ':' | '.' | '%' | '#' | '=' | '/' => {}
@@ -857,10 +813,7 @@ impl VimGlobals {
                     }
                     '*' => {
                         self.registers.insert('"', content.clone());
-                        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-                        cx.write_to_primary(content.into());
-                        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-                        cx.write_to_clipboard(content.into());
+                        modal_editor::write_to_primary(content, cx);
                     }
                     '"' => {
                         self.registers.insert('"', content.clone());
@@ -877,12 +830,9 @@ impl VimGlobals {
             if setting == UseSystemClipboard::Always
                 || setting == UseSystemClipboard::OnYank && is_yank
             {
-                self.last_yank.replace(content.text.clone());
-                cx.write_to_clipboard(content.clone().into());
+                self.registers.write_to_clipboard(content.clone(), cx);
             } else {
-                if let Some(text) = cx.read_from_clipboard().and_then(|i| i.text()) {
-                    self.last_yank.replace(text.into());
-                }
+                self.registers.remember_clipboard(cx);
             }
             self.registers.insert('"', content.clone());
             if is_yank {
@@ -916,26 +866,17 @@ impl VimGlobals {
             let setting = VimSettings::get_global(cx).use_system_clipboard;
             return match setting {
                 UseSystemClipboard::Always => cx.read_from_clipboard().map(|item| item.into()),
-                UseSystemClipboard::OnYank if self.system_clipboard_is_newer(cx) => {
+                UseSystemClipboard::OnYank if self.registers.system_clipboard_is_newer(cx) => {
                     cx.read_from_clipboard().map(|item| item.into())
                 }
-                _ => self.registers.get(&'"').cloned(),
+                _ => self.registers.get('"').cloned(),
             };
         };
         let lower = register.to_lowercase().next().unwrap_or(register);
         match lower {
             '_' | ':' | '.' | '#' | '=' => None,
             '+' => cx.read_from_clipboard().map(|item| item.into()),
-            '*' => {
-                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-                {
-                    cx.read_from_primary().map(|item| item.into())
-                }
-                #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-                {
-                    cx.read_from_clipboard().map(|item| item.into())
-                }
-            }
+            '*' => modal_editor::read_from_primary(cx),
             '%' => editor.and_then(|editor| {
                 let multibuffer = editor.buffer().read(cx);
                 let snapshot = multibuffer.snapshot(cx);
@@ -952,18 +893,8 @@ impl VimGlobals {
                     None
                 }
             }),
-            _ => self.registers.get(&lower).cloned(),
+            _ => self.registers.get(lower).cloned(),
         }
-    }
-
-    fn system_clipboard_is_newer(&self, cx: &App) -> bool {
-        cx.read_from_clipboard().is_some_and(|item| {
-            match (item.text().as_deref(), &self.last_yank) {
-                (Some(new), Some(last)) => last.as_ref() != new,
-                (Some(_), None) => true,
-                (None, _) => false,
-            }
-        })
     }
 
     pub fn observe_action(&mut self, action: Box<dyn Action>) {

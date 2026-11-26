@@ -3,10 +3,8 @@ use gpui::{Action, Context, Window};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::{
-    Vim,
-    state::{Mode, Register},
-};
+use crate::{Vim, state::Mode};
+use modal_editor::Register;
 
 /// Pastes text from the specified register at the cursor position.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]

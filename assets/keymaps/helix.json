@@ -1,0 +1,64 @@
+[
+  {
+    "context": "Editor && Helix && !menu",
+    "bindings": {
+      "1": ["helix::PushDigit", 1],
+      "2": ["helix::PushDigit", 2],
+      "3": ["helix::PushDigit", 3],
+      "4": ["helix::PushDigit", 4],
+      "5": ["helix::PushDigit", 5],
+      "6": ["helix::PushDigit", 6],
+      "7": ["helix::PushDigit", 7],
+      "8": ["helix::PushDigit", 8],
+      "9": ["helix::PushDigit", 9],
+      "\"": "helix::SelectRegister",
+    },
+  },
+  {
+    // A zero only continues a count, it doesn't start one.
+    "context": "Editor && Helix && helix_count && !menu",
+    "bindings": {
+      "0": ["helix::PushDigit", 0],
+    },
+  },
+  {
+    "context": "Editor && Helix && helix_mode == normal && !menu",
+    "bindings": {
+      "h": "helix::MoveCharLeft",
+      "left": "helix::MoveCharLeft",
+      "j": "helix::MoveVisualLineDown",
+      "down": "helix::MoveVisualLineDown",
+      "k": "helix::MoveVisualLineUp",
+      "up": "helix::MoveVisualLineUp",
+      "l": "helix::MoveCharRight",
+      "right": "helix::MoveCharRight",
+      "v": "helix::SelectMode",
+      "i": "helix::InsertMode",
+      "a": "helix::AppendMode",
+      "escape": "helix::NormalMode",
+    },
+  },
+  {
+    "context": "Editor && Helix && helix_mode == select && !menu",
+    "bindings": {
+      "h": "helix::ExtendCharLeft",
+      "left": "helix::ExtendCharLeft",
+      "j": "helix::ExtendVisualLineDown",
+      "down": "helix::ExtendVisualLineDown",
+      "k": "helix::ExtendVisualLineUp",
+      "up": "helix::ExtendVisualLineUp",
+      "l": "helix::ExtendCharRight",
+      "right": "helix::ExtendCharRight",
+      "v": "helix::NormalMode",
+      "i": "helix::InsertMode",
+      "a": "helix::AppendMode",
+      "escape": "helix::ExitSelectMode",
+    },
+  },
+  {
+    "context": "Editor && helix_mode == insert",
+    "bindings": {
+      "escape": "helix::NormalMode",
+    },
+  },
+]

@@ -9,7 +9,6 @@ mod digraph;
 mod helix;
 mod indent;
 mod insert;
-mod mode_indicator;
 mod motion;
 mod normal;
 mod object;
@@ -22,8 +21,8 @@ mod visual;
 use crate::normal::paste::Paste as VimPaste;
 use collections::HashMap;
 use editor::{
-    Anchor, Bias, Editor, EditorEvent, EditorSettings, MultiBufferOffset, NavigationOverlayKey,
-    NavigationTargetOverlay, SelectionEffects,
+    Anchor, Bias, Editor, EditorEvent, EditorSettings, MultiBufferOffset, NavigationTargetOverlay,
+    SelectionEffects,
     actions::Paste,
     display_map::ToDisplayPoint,
     movement::{self, FindRange},
@@ -34,7 +33,9 @@ use gpui::{
 };
 use insert::{NormalBefore, TemporaryNormal};
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
-pub use mode_indicator::ModeIndicator;
+use modal_editor::{
+    HELIX_JUMP_OVERLAY_KEY, HelixJumpLabel, ModeIndicatorFocused, ModeIndicatorSource, ModeStatus,
+};
 use motion::Motion;
 use multi_buffer::ToPoint as _;
 use normal::search::SearchSubmit;
@@ -46,26 +47,20 @@ use settings::RegisterSetting;
 pub use settings::{
     ModeContent, Settings, SettingsStore, UseSystemClipboard, update_settings_file,
 };
-use state::{
-    HelixJumpBehaviour, HelixJumpLabel, Mode, Operator, RecordedSelection, SearchState, VimGlobals,
-};
+use state::{HelixJumpBehaviour, Mode, Operator, RecordedSelection, SearchState, VimGlobals};
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme_settings::ThemeSettings;
-use ui::{IntoElement, SharedString, px};
+use ui::{ActiveTheme, IntoElement, SharedString, px};
 use vim_mode_setting::HelixModeSetting;
 use vim_mode_setting::VimModeSetting;
+use vim_mode_setting::observe_modal_editing_changes_in;
 use workspace::{self, Pane, Workspace};
 
 use crate::{
     normal::{GoToPreviousTab, GoToTab},
     state::ReplayableAction,
 };
-
-enum HelixJumpNavigationOverlay {}
-
-pub(crate) const HELIX_JUMP_OVERLAY_KEY: NavigationOverlayKey =
-    NavigationOverlayKey::unique::<HelixJumpNavigationOverlay>();
 
 /// Number is used to manage vim's count. Pushing a digit
 /// multiplies the current value by 10 and adds the digit.
@@ -279,6 +274,7 @@ actions!(
 /// Initializes the `vim` crate.
 pub fn init(cx: &mut App) {
     VimGlobals::register(cx);
+    modal_editor::register_mode_indicator_source::<Vim>(cx);
 
     cx.observe_new(Vim::register).detach();
 
@@ -553,12 +549,65 @@ impl Render for Vim {
     }
 }
 
-enum VimEvent {
-    Focused,
+impl EventEmitter<ModeIndicatorFocused> for Vim {}
+
+impl ModeIndicatorSource for Vim {
+    fn mode_status(&self, cx: &App) -> ModeStatus {
+        let colors = cx.theme().colors();
+        let (foreground, background) = match self.mode {
+            Mode::Normal => (colors.vim_normal_foreground, colors.vim_normal_background),
+            Mode::Insert => (colors.vim_insert_foreground, colors.vim_insert_background),
+            Mode::Replace => (colors.vim_replace_foreground, colors.vim_replace_background),
+            Mode::Visual => (colors.vim_visual_foreground, colors.vim_visual_background),
+            Mode::VisualLine => (
+                colors.vim_visual_line_foreground,
+                colors.vim_visual_line_background,
+            ),
+            Mode::VisualBlock => (
+                colors.vim_visual_block_foreground,
+                colors.vim_visual_block_background,
+            ),
+            Mode::HelixNormal => (
+                colors.vim_helix_normal_foreground,
+                colors.vim_helix_normal_background,
+            ),
+            Mode::HelixSelect => (
+                colors.vim_helix_select_foreground,
+                colors.vim_helix_select_background,
+            ),
+        };
+        let mode = if self.temp_mode {
+            format!("(insert) {}", self.mode)
+        } else {
+            self.mode.to_string()
+        };
+        ModeStatus {
+            label: self.status_label.clone(),
+            mode,
+            pending: self.current_operators_description(cx),
+            foreground,
+            background,
+        }
+    }
 }
-impl EventEmitter<VimEvent> for Vim {}
 
 impl Vim {
+    fn current_operators_description(&self, cx: &App) -> String {
+        let globals = cx.global::<VimGlobals>();
+        let recording = globals
+            .recording_register
+            .map(|reg| format!("recording @{reg} "))
+            .into_iter();
+
+        recording
+            .chain(globals.pre_count.map(|count| format!("{}", count)))
+            .chain(self.selected_register.map(|reg| format!("\"{reg}")))
+            .chain(self.operator_stack.iter().map(|item| item.status()))
+            .chain(globals.post_count.map(|count| format!("{}", count)))
+            .collect::<Vec<_>>()
+            .concat()
+    }
+
     /// The namespace for Vim actions.
     const NAMESPACE: &'static str = "vim";
 
@@ -624,7 +673,7 @@ impl Vim {
         let mut was_enabled = Vim::enabled(cx);
         let mut was_helix_enabled = HelixModeSetting::get_global(cx).0;
         let mut was_toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
-        cx.observe_global_in::<SettingsStore>(window, move |editor, window, cx| {
+        observe_modal_editing_changes_in(window, cx, move |editor, window, cx| {
             let enabled = Vim::enabled(cx);
             let helix_enabled = HelixModeSetting::get_global(cx).0;
             let toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
@@ -1075,7 +1124,8 @@ impl Vim {
     }
 
     pub fn enabled(cx: &mut App) -> bool {
-        VimModeSetting::get_global(cx).0 || HelixModeSetting::get_global(cx).0
+        (VimModeSetting::get_global(cx).0 || HelixModeSetting::get_global(cx).0)
+            && !HelixModeSetting::uses_helix_crate(cx)
     }
 
     /// Called whenever an keystroke is typed so vim can observe all actions
@@ -1599,7 +1649,7 @@ impl Vim {
             }
         }
 
-        cx.emit(VimEvent::Focused);
+        cx.emit(ModeIndicatorFocused);
         self.sync_vim_settings(window, cx);
 
         if VimSettings::get_global(cx).toggle_relative_line_numbers {

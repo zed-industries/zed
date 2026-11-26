@@ -129,6 +129,7 @@ gpui_platform = { workspace = true, features = [
 ] }
 gpui_tokio.workspace = true
 hang_telemetry.workspace = true
+helix.workspace = true
 image = { workspace = true, optional = true }
 itertools.workspace = true
 rayon.workspace = true
@@ -165,6 +166,7 @@ menu.workspace = true
 migrator.workspace = true
 mimalloc = { version = "0.1", optional = true }
 miniprofiler_ui.workspace = true
+modal_editor.workspace = true
 node_runtime.workspace = true
 notifications.workspace = true
 onboarding.workspace = true
