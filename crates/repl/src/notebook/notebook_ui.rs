@@ -287,12 +287,9 @@ impl NotebookEditor {
     ) -> Self {
         let focus_handle = cx.focus_handle();
         cx.on_focus(&focus_handle, window, |notebook, window, cx| {
-            if notebook.notebook_mode == NotebookMode::Edit
-                && let Some(editor) = notebook
-                    .get_selected_cell()
-                    .and_then(|cell| cell.editor(cx))
-            {
-                editor.focus_handle(cx).focus(window, cx);
+            // Blur hides a Markdown editor, so refocusing alone would send input to an unmounted editor.
+            if notebook.notebook_mode == NotebookMode::Edit {
+                notebook.enter_edit_mode(&EnterEditMode, window, cx);
             }
         })
         .detach();
