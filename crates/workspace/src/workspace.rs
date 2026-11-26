@@ -10069,12 +10069,21 @@ fn notify_if_database_failed(window: WindowHandle<MultiWorkspace>, cx: &mut Asyn
                         cx,
                         |cx| {
                             cx.new(|cx| {
-                                MessageNotification::new("Failed to load the database file.", cx)
-                                    .primary_message("File an Issue")
-                                    .primary_icon(IconName::Plus)
-                                    .primary_on_click(|window, cx| {
-                                        window.dispatch_action(Box::new(FileBugReport), cx)
-                                    })
+                                if db::FILE_DB_MIGRATED_BY_NEWER_VERSION
+                                    .load(std::sync::atomic::Ordering::Acquire)
+                                {
+                                    MessageNotification::new(
+                                        "The database was updated by a newer version of Zed, so this session won't be saved.",
+                                        cx,
+                                    )
+                                } else {
+                                    MessageNotification::new("Failed to load the database file.", cx)
+                                        .primary_message("File an Issue")
+                                        .primary_icon(IconName::Plus)
+                                        .primary_on_click(|window, cx| {
+                                            window.dispatch_action(Box::new(FileBugReport), cx)
+                                        })
+                                }
                             })
                         },
                     );

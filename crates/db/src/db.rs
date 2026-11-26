@@ -16,6 +16,7 @@ pub use uuid;
 pub use release_channel::RELEASE_CHANNEL;
 use release_channel::ReleaseChannel;
 use sqlez::domain::Migrator;
+use sqlez::migrations::UnknownMigrationsError;
 use sqlez::thread_safe_connection::ThreadSafeConnection;
 use sqlez_macros::sql;
 use std::fs::create_dir_all;
@@ -139,6 +140,8 @@ const DB_FILE_NAME: &str = "db.sqlite";
 
 pub static ALL_FILE_DB_FAILED: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(false));
 
+pub static FILE_DB_MIGRATED_BY_NEWER_VERSION: AtomicBool = AtomicBool::new(false);
+
 /// A type that can be used as a database scope for path construction.
 pub trait DbScope {
     fn scope_name(&self) -> &str;
@@ -209,6 +212,11 @@ async fn open_main_db<M: Migrator>(db_path: &Path) -> Option<ThreadSafeConnectio
         .with_connection_initialize_query(CONNECTION_INITIALIZE_QUERY)
         .build()
         .await
+        .inspect_err(|error| {
+            if error.downcast_ref::<UnknownMigrationsError>().is_some() {
+                FILE_DB_MIGRATED_BY_NEWER_VERSION.store(true, Ordering::Release);
+            }
+        })
         .log_err()
 }
 
@@ -294,12 +302,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::thread;
+    use std::{sync::atomic::Ordering, thread};
 
+    use release_channel::ReleaseChannel;
     use sqlez::domain::Domain;
     use sqlez_macros::sql;
 
-    use crate::open_db;
+    use crate::{FILE_DB_MIGRATED_BY_NEWER_VERSION, open_db};
 
     // Test bad migration panics
     #[gpui::test]
@@ -358,6 +367,42 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[gpui::test]
+    async fn test_db_migrated_by_newer_version(cx: &mut gpui::TestAppContext) {
+        cx.executor().allow_parking();
+
+        enum NewerDB {}
+
+        impl Domain for NewerDB {
+            const NAME: &str = "newer_version_tests";
+            const MIGRATIONS: &[&str] = &[
+                sql!(CREATE TABLE newer(value);),
+                sql!(ALTER TABLE newer RENAME COLUMN value TO renamed;),
+            ];
+        }
+
+        enum OlderDB {}
+
+        impl Domain for OlderDB {
+            const NAME: &str = "newer_version_tests";
+            const MIGRATIONS: &[&str] = &[sql!(CREATE TABLE newer(value);)];
+        }
+
+        let tempdir = tempfile::Builder::new()
+            .prefix("DbTests")
+            .tempdir()
+            .unwrap();
+        let newer_db = open_db::<NewerDB>(tempdir.path(), ReleaseChannel::Dev).await;
+        assert!(newer_db.persistent());
+
+        let older_db = open_db::<OlderDB>(tempdir.path(), ReleaseChannel::Dev).await;
+        assert!(!older_db.persistent());
+        assert!(FILE_DB_MIGRATED_BY_NEWER_VERSION.load(Ordering::Acquire));
+
+        let newer_db = open_db::<NewerDB>(tempdir.path(), ReleaseChannel::Dev).await;
+        assert!(newer_db.persistent());
     }
 
     /// Test that DB exists but corrupted (causing recreate)

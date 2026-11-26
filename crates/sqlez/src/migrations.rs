@@ -12,6 +12,27 @@ use libsqlite3_sys::sqlite3_exec;
 
 use crate::connection::Connection;
 
+/// The database has completed migrations that the caller doesn't know about, because a newer
+/// version of the app migrated it. Its schema may no longer match what this version expects.
+#[derive(Debug)]
+pub struct UnknownMigrationsError {
+    domain: &'static str,
+    known: usize,
+    completed: usize,
+}
+
+impl std::fmt::Display for UnknownMigrationsError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            formatter,
+            "{} has {} completed migrations, but only {} are known. A newer version likely migrated this database.",
+            self.domain, self.completed, self.known
+        )
+    }
+}
+
+impl std::error::Error for UnknownMigrationsError {}
+
 impl Connection {
     fn eager_exec(&self, sql: &str) -> anyhow::Result<()> {
         let sql_str = CString::new(sql).context("Error creating cstr")?;
@@ -55,6 +76,15 @@ impl Connection {
                     WHERE domain = ?
                     ORDER BY step
                     "})?(domain)?;
+
+            if completed_migrations.len() > migrations.len() {
+                return Err(UnknownMigrationsError {
+                    domain,
+                    known: migrations.len(),
+                    completed: completed_migrations.len(),
+                }
+                .into());
+            }
 
             let mut store_completed_migration = self
                 .exec_bound("INSERT INTO migrations (domain, step, migration) VALUES (?, ?, ?)")?;
@@ -154,7 +184,7 @@ impl Connection {
 mod test {
     use indoc::indoc;
 
-    use crate::connection::Connection;
+    use crate::{connection::Connection, migrations::UnknownMigrationsError};
 
     #[test]
     fn test_migrations_are_added_to_table() {
@@ -349,6 +379,23 @@ mod test {
 
         // Verify new migration returns error when run
         assert!(second_migration_result.is_err())
+    }
+
+    #[test]
+    fn migrations_from_newer_version_fail() {
+        let connection = Connection::open_memory(Some("migrations_from_newer_version_fail"));
+        let migrations = [
+            "CREATE TABLE test (col INTEGER)",
+            "ALTER TABLE test RENAME COLUMN col TO renamed",
+        ];
+        connection
+            .migrate("test", &migrations, &mut disallow_migration_change)
+            .unwrap();
+
+        let error = connection
+            .migrate("test", &migrations[..1], &mut disallow_migration_change)
+            .unwrap_err();
+        assert!(error.is::<UnknownMigrationsError>());
     }
 
     #[test]
