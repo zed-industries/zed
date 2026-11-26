@@ -1710,8 +1710,11 @@ impl GitPanel {
                     cx,
                 )
             });
-            let model_selector =
-                cx.new(|_| LanguageModelSelector::new(picker).cycle_favorite_models_enabled(false));
+            let model_selector = cx.new(|_| {
+                LanguageModelSelector::new(picker)
+                    .cycle_favorite_models_enabled(false)
+                    .truncate_label(true)
+            });
 
             let mut this = Self {
                 active_repository,
@@ -6967,10 +6970,15 @@ impl GitPanel {
 
         Some(
             h_flex()
+                .min_w_0()
                 .gap_0p5()
                 .child(button)
                 .child(Divider::vertical())
-                .child(self.commit_message_model_selector.clone())
+                .child(
+                    div()
+                        .min_w_0()
+                        .child(self.commit_message_model_selector.clone()),
+                )
                 .into_any_element(),
         )
     }
@@ -7568,12 +7576,14 @@ impl GitPanel {
                             .justify_between()
                             .child(
                                 h_flex()
+                                    .min_w_0()
                                     .gap_0p5()
                                     .child(toggle_commit_editor_button)
                                     .children(self.render_generate_commit_message_button(true, cx)),
                             )
                             .child(
                                 h_flex()
+                                    .flex_shrink_0()
                                     .gap_0p5()
                                     .children(enable_coauthors)
                                     .child(self.render_commit_button(cx)),

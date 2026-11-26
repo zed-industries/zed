@@ -573,6 +573,7 @@ pub struct LanguageModelSelector {
     picker: Entity<LanguageModelPicker>,
     menu_handle: PopoverMenuHandle<LanguageModelPicker>,
     cycle_favorite_models_enabled: bool,
+    truncate_label: bool,
 }
 
 impl LanguageModelSelector {
@@ -583,6 +584,7 @@ impl LanguageModelSelector {
             picker,
             menu_handle,
             cycle_favorite_models_enabled: true,
+            truncate_label: false,
         }
     }
 
@@ -604,6 +606,11 @@ impl LanguageModelSelector {
 
     pub fn cycle_favorite_models_enabled(mut self, enabled: bool) -> Self {
         self.cycle_favorite_models_enabled = enabled;
+        self
+    }
+
+    pub fn truncate_label(mut self, truncate: bool) -> Self {
+        self.truncate_label = truncate;
         self
     }
 }
@@ -641,6 +648,7 @@ impl Render for LanguageModelSelector {
         PickerPopoverMenu::new(
             self.picker.clone(),
             Button::new("active-model", model_name)
+                .truncate(self.truncate_label)
                 .label_size(LabelSize::Small)
                 .color(color)
                 .when_some(provider_icon, |button, icon| {
