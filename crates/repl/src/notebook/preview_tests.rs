@@ -13,6 +13,7 @@ use std::sync::Arc;
 use util::path;
 use util::rel_path::rel_path;
 use workspace::item::ItemHandle;
+use workspace::pane::{CloseActiveItem, ReopenClosedItem};
 use workspace::{AppState, MultiWorkspace, Workspace};
 use zed_actions::notebook::{
     AddCodeBlock, AddMarkdownBlock, DeleteCell, EditSource, EnterCommandMode, MoveCellDown,
@@ -144,6 +145,16 @@ fn cell_sources(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) -> Ve
     })
 }
 
+fn active_tab_title(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) -> String {
+    workspace.read_with(cx, |workspace, cx| {
+        workspace
+            .active_item(cx)
+            .expect("active tab")
+            .tab_content_text(0, cx)
+            .to_string()
+    })
+}
+
 #[gpui::test]
 async fn tab_return_restores_the_cell_selection_and_notebook_mode(cx: &mut TestAppContext) {
     use workspace::pane::{ActivateNextItem, ActivatePreviousItem};
@@ -213,9 +224,122 @@ async fn markdown_tab_return_preserves_the_caret_and_command_mode(cx: &mut TestA
 }
 
 #[gpui::test]
-async fn discarding_a_notebook_closes_its_tab(cx: &mut TestAppContext) {
-    let (fs, workspace, cx) = notebook_workspace(json!({"field.ipynb": NOTEBOOK}), cx).await;
+async fn reopening_closed_notebooks_ignores_source_view_swaps(cx: &mut TestAppContext) {
+    let (_, workspace, cx) =
+        notebook_workspace(json!({"field.ipynb": NOTEBOOK, "notes.txt": "notes"}), cx).await;
     open_file("field.ipynb", &workspace, cx).await;
+    cx.dispatch_action(EditSource);
+    cx.dispatch_action(OpenNotebook);
+    open_file("notes.txt", &workspace, cx).await;
+    cx.dispatch_action(CloseActiveItem::default());
+    cx.dispatch_action(CloseActiveItem::default());
+    assert!(workspace.read_with(cx, |workspace, cx| workspace.active_item(cx).is_none()));
+
+    cx.dispatch_action(ReopenClosedItem);
+    assert_eq!(active_tab_title(&workspace, cx), "field.ipynb");
+    assert_eq!(cell_sources(&workspace, cx).len(), 2);
+    cx.dispatch_action(ReopenClosedItem);
+    assert_eq!(active_tab_title(&workspace, cx), "notes.txt");
+    cx.dispatch_action(ReopenClosedItem);
+    assert_eq!(active_tab_title(&workspace, cx), "notes.txt");
+    assert_eq!(
+        workspace.read_with(cx, |workspace, cx| workspace
+            .active_pane()
+            .read(cx)
+            .items_len()),
+        2
+    );
+}
+
+#[gpui::test]
+async fn reopening_explicitly_closed_notebook_source_restores_json(cx: &mut TestAppContext) {
+    let (_, workspace, cx) =
+        notebook_workspace(json!({"field.ipynb": NOTEBOOK, "notes.txt": "notes"}), cx).await;
+    open_file("field.ipynb", &workspace, cx).await;
+    cx.dispatch_action(EditSource);
+    cx.dispatch_action(editor::actions::MoveToEnd);
+    open_file("notes.txt", &workspace, cx).await;
+    cx.dispatch_action(CloseActiveItem::default());
+    cx.dispatch_action(CloseActiveItem::default());
+    cx.dispatch_action(ReopenClosedItem);
+    let source = workspace.read_with(cx, |workspace, cx| {
+        workspace
+            .active_item_as::<Editor>(cx)
+            .expect("reopened raw notebook source")
+    });
+    source.update(cx, |source, cx| {
+        assert_eq!(source.text(cx), NOTEBOOK);
+        assert_eq!(
+            source
+                .selections
+                .newest::<language::Point>(&source.display_snapshot(cx))
+                .head(),
+            language::Point::new(NOTEBOOK.lines().count() as u32, 0)
+        );
+    });
+    cx.dispatch_action(ReopenClosedItem);
+    assert_eq!(active_tab_title(&workspace, cx), "notes.txt");
+}
+
+#[gpui::test]
+async fn reopening_a_notebook_reuses_source_already_open_in_the_pane(cx: &mut TestAppContext) {
+    let (_, workspace, cx) = notebook_workspace(
+        json!({"field.ipynb": NOTEBOOK, "older.txt": "older", "notes.txt": "notes"}),
+        cx,
+    )
+    .await;
+    open_file("field.ipynb", &workspace, cx).await;
+    open_file("older.txt", &workspace, cx).await;
+    cx.dispatch_action(CloseActiveItem::default());
+    cx.dispatch_action(CloseActiveItem::default());
+    open_file("field.ipynb", &workspace, cx).await;
+    cx.dispatch_action(EditSource);
+    let source = workspace.read_with(cx, |workspace, cx| {
+        workspace.active_item_as::<Editor>(cx).unwrap()
+    });
+    open_file("notes.txt", &workspace, cx).await;
+    cx.dispatch_action(ReopenClosedItem);
+    workspace.read_with(cx, |workspace, cx| {
+        assert_eq!(workspace.active_item_as::<Editor>(cx), Some(source));
+        assert_eq!(workspace.active_pane().read(cx).items_len(), 2);
+    });
+    cx.dispatch_action(ReopenClosedItem);
+    assert_eq!(active_tab_title(&workspace, cx), "older.txt");
+}
+
+#[gpui::test]
+async fn reopening_notebook_cells_keeps_an_existing_source_tab(cx: &mut TestAppContext) {
+    let (_, workspace, cx) =
+        notebook_workspace(json!({"field.ipynb": NOTEBOOK, "notes.txt": "notes"}), cx).await;
+    open_file("field.ipynb", &workspace, cx).await;
+    cx.dispatch_action(EditSource);
+    let source_id = workspace.read_with(cx, |workspace, cx| {
+        workspace.active_item_as::<Editor>(cx).unwrap().entity_id()
+    });
+    cx.dispatch_action(workspace::pane::SplitRight::default());
+    open_file("notes.txt", &workspace, cx).await;
+    cx.dispatch_action(workspace::pane::ActivatePreviousItem::default());
+    cx.dispatch_action(OpenNotebook);
+    cx.dispatch_action(CloseActiveItem::default());
+    cx.dispatch_action(ReopenClosedItem);
+    assert_eq!(cell_sources(&workspace, cx).len(), 2);
+    cx.dispatch_action(workspace::ActivatePane(0));
+    workspace.read_with(cx, |workspace, cx| {
+        assert_eq!(workspace.active_pane().read(cx).items_len(), 1);
+        let editor = workspace.active_item_as::<Editor>(cx).unwrap();
+        assert_eq!(editor.entity_id(), source_id);
+        assert_eq!(editor.read(cx).text(cx), NOTEBOOK);
+    });
+}
+
+#[gpui::test]
+async fn discarding_a_notebook_closes_its_tab(cx: &mut TestAppContext) {
+    let (fs, workspace, cx) =
+        notebook_workspace(json!({"field.ipynb": NOTEBOOK, "notes.txt": "notes"}), cx).await;
+    open_file("field.ipynb", &workspace, cx).await;
+    let saved_cells = cell_sources(&workspace, cx);
+    open_file("notes.txt", &workspace, cx).await;
+    cx.dispatch_action(CloseActiveItem::default());
     cx.dispatch_action(AddCodeBlock);
     cx.simulate_keystrokes("x");
     cx.dispatch_action(workspace::pane::CloseActiveItem::default());
@@ -223,6 +347,9 @@ async fn discarding_a_notebook_closes_its_tab(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(cell_sources(&workspace, cx)[1], "x");
 
+    cx.dispatch_action(ReopenClosedItem);
+    assert_eq!(active_tab_title(&workspace, cx), "notes.txt");
+    cx.dispatch_action(CloseActiveItem::default());
     cx.dispatch_action(workspace::pane::CloseActiveItem::default());
     cx.simulate_prompt_answer("Don't Save");
     cx.run_until_parked();
@@ -239,6 +366,8 @@ async fn discarding_a_notebook_closes_its_tab(cx: &mut TestAppContext) {
             .unwrap(),
         NOTEBOOK
     );
+    cx.dispatch_action(ReopenClosedItem);
+    assert_eq!(cell_sources(&workspace, cx), saved_cells);
 }
 
 #[gpui::test]

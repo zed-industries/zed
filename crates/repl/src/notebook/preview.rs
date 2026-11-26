@@ -1,14 +1,14 @@
 use anyhow::{Context as _, Result};
-use collections::HashSet;
 use editor::items::SourceLocationRequested;
 use editor::{Editor, EditorEvent};
 
-use gpui::{App, Entity, EntityId, EventEmitter, FocusHandle, Focusable, Global, Task, WeakEntity};
+use gpui::{App, Entity, EntityId, EventEmitter, FocusHandle, Focusable, Task, WeakEntity};
 
 use project::{MTime, Project, ProjectItem as _, ProjectPath, project_settings::ProjectSettings};
 use settings::Settings as _;
 use ui::prelude::*;
 use workspace::item::{ItemBufferKind, ItemEvent, SaveOptions, SerializableItem, TabContentParams};
+use workspace::pane::ItemNavHistory;
 use workspace::{Item, ItemHandle, ItemId, Pane, Workspace, WorkspaceId};
 use zed_actions::notebook::{EditSource, OpenNotebook};
 
@@ -17,10 +17,6 @@ use super::{NotebookEditor, NotebookItem};
 #[cfg(test)]
 #[path = "preview_tests.rs"]
 pub(super) mod preview_tests;
-
-#[derive(Default)]
-struct SourceBuffers(HashSet<EntityId>);
-impl Global for SourceBuffers {}
 
 struct NotebookSourceView {
     notebook: Entity<NotebookEditor>,
@@ -33,29 +29,16 @@ impl editor::Addon for NotebookSourceView {
     }
 }
 
-impl SourceBuffers {
-    fn remember(editor: &Entity<Editor>, cx: &mut App) {
-        let buffer = editor.read(cx).buffer().clone();
-        let id = buffer.entity_id();
-        if cx.global_mut::<Self>().0.insert(id) {
-            cx.observe_release(&buffer, move |_, cx| {
-                cx.global_mut::<Self>().0.remove(&id);
-            })
-            .detach();
-        }
-    }
-}
-
 pub struct NotebookPreview {
     workspace: WeakEntity<Workspace>,
     editor: Entity<Editor>,
     focus_handle: FocusHandle,
+    nav_history: Option<ItemNavHistory>,
     pub(super) notebook: Option<Entity<NotebookEditor>>,
     restore_source: bool,
 }
 
 pub(super) fn init(cx: &mut App) {
-    cx.default_global::<SourceBuffers>();
     workspace::register_serializable_item::<NotebookPreview>(cx);
     cx.observe_new(|workspace: &mut Workspace, window, cx| {
         let Some(window) = window else { return };
@@ -123,13 +106,12 @@ impl NotebookPreview {
         else {
             return;
         };
-        let source_id = editor.read(cx).buffer().entity_id();
         if !explicit {
             if workspace.is_restoring() || editor.is_dirty(cx) {
-                SourceBuffers::remember(&editor, cx);
+                editor.update(cx, |editor, _| editor.preserve_source_view = true);
                 return;
             }
-            if cx.global::<SourceBuffers>().0.contains(&source_id) {
+            if editor.read(cx).preserve_source_view {
                 return;
             }
         }
@@ -140,13 +122,8 @@ impl NotebookPreview {
             return;
         };
         let version = buffer.read(cx).version();
-        let pending_navigation =
-            cx.subscribe(&editor, |_, editor, _: &SourceLocationRequested, cx| {
-                SourceBuffers::remember(&editor, cx);
-            });
         cx.spawn_in(window, async move |workspace, cx| {
             let cells = parse.await;
-            drop(pending_navigation);
             workspace.update_in(cx, |workspace, window, cx| {
                 let dirty = editor.is_dirty(cx);
                 if workspace.pane_for_item_id(editor.entity_id()).as_ref() != Some(&pane)
@@ -156,7 +133,7 @@ impl NotebookPreview {
                     || (!explicit
                         && (dirty
                             || workspace.is_restoring()
-                            || cx.global::<SourceBuffers>().0.contains(&source_id)))
+                            || editor.read(cx).preserve_source_view))
                 {
                     return;
                 }
@@ -192,6 +169,7 @@ impl NotebookPreview {
                 let owner = cx.weak_entity();
                 let preview =
                     cx.new(|cx| Self::new(owner, editor.clone(), Some(cells), window, cx));
+                editor.update(cx, |editor, _| editor.set_nav_history(None));
                 pane.update(cx, |pane, cx| {
                     Self::replace_tab(pane, &editor, Box::new(preview), explicit, window, cx);
                 });
@@ -265,6 +243,7 @@ impl NotebookPreview {
             workspace,
             editor,
             focus_handle: cx.focus_handle(),
+            nav_history: None,
             restore_source: notebook.is_none(),
             notebook,
         }
@@ -327,6 +306,7 @@ impl NotebookPreview {
                 let Some(pane) = workspace.pane_for_item_id(preview.entity_id()) else {
                     return;
                 };
+                preview.update(cx, |preview, _| preview.nav_history = None);
                 let source_buffer = editor.read(cx).buffer().read(cx).as_singleton();
                 let editor = pane
                     .read(cx)
@@ -342,7 +322,7 @@ impl NotebookPreview {
                         })
                     });
                 }
-                SourceBuffers::remember(&editor, cx);
+                editor.update(cx, |editor, _| editor.preserve_source_view = true);
                 if workspace.pane_for_item_id(editor.entity_id()).is_some() {
                     if explicit {
                         workspace.activate_item(&editor, true, true, window, cx);
@@ -373,6 +353,16 @@ impl Focusable for NotebookPreview {
 
 impl Item for NotebookPreview {
     type Event = ItemEvent;
+
+    fn set_nav_history(&mut self, history: ItemNavHistory, _: &mut Window, _: &mut Context<Self>) {
+        self.nav_history = Some(history);
+    }
+
+    fn deactivated(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(history) = &mut self.nav_history {
+            history.push::<()>(None, None, cx);
+        }
+    }
 
     fn reveal_source(
         &mut self,

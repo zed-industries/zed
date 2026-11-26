@@ -644,6 +644,7 @@ impl Item for Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Box<dyn workspace::item::ItemHandle> {
+        self.preserve_source_view = true;
         cx.emit(SourceLocationRequested);
         Box::new(cx.entity())
     }
@@ -670,6 +671,7 @@ impl Item for Editor {
         cx: &mut Context<Self>,
     ) -> bool {
         if let Some(data) = data.downcast_ref::<NavigationData>() {
+            self.preserve_source_view = true;
             let newest_selection = self.selections.newest::<Point>(&self.display_snapshot(cx));
             let buffer = self.buffer.read(cx).read(cx);
             let offset = if buffer.can_resolve(&data.cursor_anchor) {
