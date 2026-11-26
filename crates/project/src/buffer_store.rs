@@ -53,6 +53,7 @@ struct RemoteProjectSearchState {
     next_id: u64,
     // Used by the side running the actual search for match candidates to potentially cancel the search prematurely.
     searches_in_progress: HashMap<(PeerId, u64), Task<Result<()>>>,
+    cancelled_before_start: HashSet<(PeerId, u64)>,
 }
 
 #[derive(Hash, Eq, PartialEq, Clone)]
@@ -1183,6 +1184,8 @@ impl BufferStore {
     pub fn unshared(&mut self, _cx: &mut Context<Self>) {
         self.downstream_client.take();
         self.forget_shared_buffers();
+        self.project_search.searches_in_progress.clear();
+        self.project_search.cancelled_before_start.clear();
     }
 
     pub fn discard_incomplete(&mut self) {
@@ -1714,6 +1717,7 @@ impl BufferStore {
 
     pub fn forget_shared_buffers_for(&mut self, peer_id: &proto::PeerId) {
         self.shared_buffers.remove(peer_id);
+        self.forget_project_searches_for(peer_id);
     }
 
     pub fn is_shared(&self, buffer_id: BufferId, cx: &App) -> bool {
@@ -1732,6 +1736,7 @@ impl BufferStore {
         if let Some(buffers) = self.shared_buffers.remove(old_peer_id) {
             self.shared_buffers.insert(new_peer_id, buffers);
         }
+        self.forget_project_searches_for(old_peer_id);
     }
 
     pub fn has_shared_buffers(&self) -> bool {
@@ -1837,13 +1842,25 @@ impl BufferStore {
         (handle, rx)
     }
 
+    pub(crate) fn unregister_project_search_result_handle(&mut self, handle: u64) {
+        self.project_search.chunks.remove(&handle);
+    }
+
     pub fn register_ongoing_project_search(
         &mut self,
         id: (PeerId, u64),
         search: Task<anyhow::Result<()>>,
     ) {
+        if self.project_search.cancelled_before_start.remove(&id) {
+            return;
+        }
         let _old = self.project_search.searches_in_progress.insert(id, search);
         debug_assert!(_old.is_none());
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn ongoing_project_search_count(&self) -> usize {
+        self.project_search.searches_in_progress.len()
     }
 
     pub async fn handle_find_search_candidates_cancel(
@@ -1855,8 +1872,15 @@ impl BufferStore {
             envelope.original_sender_id.unwrap_or(envelope.sender_id),
             envelope.payload.handle,
         );
-        let _ = this.update(&mut cx, |this, _| {
-            this.project_search.searches_in_progress.remove(&id)
+        this.update(&mut cx, |this, _| {
+            if this
+                .project_search
+                .searches_in_progress
+                .remove(&id)
+                .is_none()
+            {
+                this.project_search.cancelled_before_start.insert(id);
+            }
         });
         Ok(())
     }
@@ -1901,6 +1925,15 @@ impl BufferStore {
             };
         }
         Ok(proto::Ack {})
+    }
+
+    fn forget_project_searches_for(&mut self, peer_id: &proto::PeerId) {
+        self.project_search
+            .searches_in_progress
+            .retain(|(search_peer_id, _), _| search_peer_id != peer_id);
+        self.project_search
+            .cancelled_before_start
+            .retain(|(search_peer_id, _)| search_peer_id != peer_id);
     }
 }
 

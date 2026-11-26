@@ -537,6 +537,7 @@ impl Server {
             .add_message_handler(forward_toggle_lsp_logs)
             .add_message_handler(broadcast_project_message_from_host::<proto::LanguageServerLog>)
             .add_request_handler(forward_project_search_chunk)
+            .add_message_handler(forward_project_search_cancel)
             .add_request_handler(forward_read_only_project_request::<proto::LoadCommitTemplate>);
 
         Arc::new(server)
@@ -2605,12 +2606,42 @@ async fn forward_project_search_chunk(
     response: Response<proto::FindSearchCandidatesChunk>,
     session: MessageContext,
 ) -> Result<()> {
-    let peer_id = message.peer_id.context("missing peer_id")?;
+    let guest = ConnectionId::from(message.peer_id.context("missing peer_id")?);
+    let project_id = ProjectId::from_proto(message.project_id);
+    {
+        let guard = session
+            .db()
+            .await
+            .connections_for_buffer_update(project_id, session.connection_id, Capability::ReadOnly)
+            .await?;
+        let (host, guests) = &*guard;
+        if *host != session.connection_id || !guests.contains(&guest) {
+            Err(anyhow!(
+                "only the project host can send search results to its guests"
+            ))?;
+        }
+    }
     let payload = session
         .peer
-        .forward_request(session.connection_id, peer_id.into(), message)
+        .forward_request(session.connection_id, guest, message)
         .await?;
     response.send(payload)?;
+    Ok(())
+}
+
+async fn forward_project_search_cancel(
+    message: proto::FindSearchCandidatesCancelled,
+    session: MessageContext,
+) -> Result<()> {
+    let project_id = ProjectId::from_proto(message.project_id);
+    let host = session
+        .db()
+        .await
+        .host_for_read_only_project_request(project_id, session.connection_id)
+        .await?;
+    session
+        .peer
+        .forward_send(session.connection_id, host, message)?;
     Ok(())
 }
 

@@ -289,6 +289,17 @@ impl Search {
                         let (handle, rx) = self
                             .buffer_store
                             .update(cx, |this, _| this.register_project_search_result_handle());
+                        let unregister_search = util::defer({
+                            let buffer_store = self.buffer_store.downgrade();
+                            let mut cx = cx.clone();
+                            move || {
+                                buffer_store
+                                    .update(&mut cx, |this, _| {
+                                        this.unregister_project_search_result_handle(handle);
+                                    })
+                                    .ok();
+                            }
+                        });
 
                         let cancel_ongoing_search = util::defer({
                             let client = client.clone();
@@ -318,9 +329,13 @@ impl Search {
 
                         let issue_remote_buffers_request = cx
                             .spawn(async move |cx| {
+                                let _unregister_search = unregister_search;
+                                if request.await.log_err().is_none() {
+                                    cancel_ongoing_search.abort();
+                                    return;
+                                }
+                                let _cancel_ongoing_search = cancel_ongoing_search;
                                 let _ = maybe!(async move {
-                                    request.await?;
-
                                     let (buffer_tx, buffer_rx) = bounded(24);
 
                                     let wait_for_remote_buffers = cx.spawn(async move |cx| {
@@ -352,7 +367,6 @@ impl Search {
                                     right?;
 
                                     drop(guard);
-                                    cancel_ongoing_search.abort();
                                     anyhow::Ok(())
                                 })
                                 .await
