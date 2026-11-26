@@ -33,7 +33,7 @@ use zed_actions::editor::{MoveDown, MoveUp};
 use zed_actions::notebook::{
     AddCodeBlock, AddMarkdownBlock, ClearOutputs, DeleteCell, EnterCommandMode, EnterEditMode,
     InterruptKernel, MoveCellDown, MoveCellUp, NotebookMoveDown, NotebookMoveUp, RestartKernel,
-    Run, RunAll, RunAndAdvance,
+    Run, RunAll, RunAndAdvance, SelectKernel,
 };
 
 /// Whether the notebook is in command mode (navigating cells) or edit mode (editing a cell).
@@ -750,6 +750,10 @@ impl NotebookEditor {
                     .unwrap_or(default_python),
             )
         }))
+    }
+
+    fn can_select_kernel(&self, cx: &App) -> bool {
+        self.project.read(cx).is_local() && self.kernel_task.is_none()
     }
 
     fn choose_or_start_kernel(
@@ -1891,12 +1895,13 @@ impl NotebookEditor {
                     Button::new("kernel-selector", name.clone())
                         .full_width()
                         .truncate(true)
-                        .tooltip(Tooltip::text(name))
+                        .tooltip(Tooltip::for_action_title(name, &SelectKernel))
                         .label_size(LabelSize::Small)
-                        .disabled(self.kernel_task.is_some() || !self.project.read(cx).is_local())
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.choose_or_start_kernel(None, window, cx);
-                        })),
+                        .disabled(!self.can_select_kernel(cx))
+                        .on_click({
+                            let notebook = self.focus_handle.clone();
+                            move |_, window, cx| notebook.dispatch_action(&SelectKernel, window, cx)
+                        }),
                 ),
             )
             .when(Self::remote_enabled(cx), |bar| {
@@ -2098,6 +2103,11 @@ impl Render for NotebookEditor {
             .size_full()
             .key_context(key_context)
             .track_focus(&self.focus_handle)
+            .when(self.can_select_kernel(cx), |this| {
+                this.on_action(cx.listener(|this, _: &SelectKernel, window, cx| {
+                    this.choose_or_start_kernel(None, window, cx);
+                }))
+            })
             .on_action(cx.listener(Self::run_all))
             .on_action(cx.listener(Self::confirm_clear_outputs))
             .on_action(
@@ -3712,6 +3722,91 @@ mod tests {
             "env": { "ZED_NOTEBOOK_MARKER": "synthetic-marker" },
         });
         (directory, kernelspec)
+    }
+
+    #[gpui::test]
+    async fn test_notebook_kernel_picker_action(cx: &mut TestAppContext) {
+        use crate::notebook::{
+            NotebookPreview,
+            preview::preview_tests::{notebook_workspace, open_file},
+        };
+        use gpui::UpdateGlobal as _;
+        let mut notebook: serde_json::Value =
+            serde_json::from_str(NOTEBOOK_WITH_ONE_CODE_CELL).unwrap();
+        notebook["cells"].as_array_mut().unwrap().push(json!({
+            "cell_type": "markdown", "id": "notes", "metadata": {}, "source": ["abc"]
+        }));
+        let (fs, workspace, cx) =
+            notebook_workspace(json!({"test.ipynb": notebook.to_string()}), cx).await;
+        cx.update(|_, cx| {
+            command_palette::init(cx);
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.use_system_prompts = Some(false);
+                });
+            });
+        });
+        let python = tempfile::NamedTempFile::new().unwrap();
+        let kernels = jupyter_zmq_client::dirs::data_dirs()
+            .into_iter()
+            .find(|dir| dir.is_absolute())
+            .unwrap()
+            .join("kernels/test-python");
+        fs.insert_tree(&kernels, json!({"kernel.json": json!({
+            "argv": [python.path(), "{connection_file}"], "display_name": "Test Python", "language": "python"
+        }).to_string()})).await;
+        open_file("test.ipynb", &workspace, cx).await;
+        let notebook = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_item_as::<NotebookPreview>(cx)
+                .unwrap()
+                .read(cx)
+                .notebook
+                .clone()
+                .unwrap()
+        });
+        cx.dispatch_action(menu::SelectNext);
+        notebook.read_with(cx, |notebook, _| {
+            assert!(notebook.kernel_task.is_none() && notebook.kernel_notice.is_none());
+        });
+        cx.update(|window, cx| assert!(window.is_action_available(&SelectKernel, cx)));
+        cx.dispatch_action(SelectKernel);
+        notebook.read_with(cx, |notebook, _| {
+            assert!(
+                notebook
+                    .kernel_notice
+                    .as_deref()
+                    .unwrap()
+                    .contains("Restricted Mode")
+            );
+            assert!(notebook.kernel_task.is_none());
+        });
+        trust_notebook(&notebook, cx);
+        cx.executor().allow_parking();
+        cx.dispatch_action(SelectKernel);
+        cx.dispatch_action(menu::Confirm);
+        notebook.update_in(cx, |notebook, window, _| {
+            assert!(notebook.focus_handle.is_focused(window));
+            assert_eq!(notebook.selected_cell_index, 1);
+            assert!(notebook.kernel_specification.is_some());
+            assert!(matches!(notebook.kernel, Kernel::Shutdown));
+        });
+
+        cx.dispatch_action(EnterEditMode);
+        cx.dispatch_action(editor::actions::MoveRight);
+        workspace.update_in(cx, |workspace, window, cx| {
+            command_palette::CommandPalette::toggle(workspace, "", window, cx);
+        });
+        cx.run_until_parked();
+        cx.simulate_input("notebook: select kernel");
+        cx.dispatch_action(menu::Confirm);
+        assert!(notebook.read_with(cx, |notebook, _| notebook.kernel_task.is_some()));
+        cx.dispatch_action(menu::Cancel);
+        cx.simulate_keystrokes("x");
+        notebook.read_with(cx, |notebook, cx| {
+            assert_eq!(notebook.cell(1).unwrap().current_source(cx), "axbc");
+            assert!(matches!(notebook.kernel, Kernel::Shutdown));
+        });
     }
 
     #[gpui::test]

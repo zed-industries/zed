@@ -966,6 +966,8 @@ pub mod notebook {
             AddCodeBlock,
             /// Deletes the current cell.
             DeleteCell,
+            /// Chooses a local kernel without running a cell.
+            SelectKernel,
             /// Restarts the kernel.
             RestartKernel,
             /// Interrupts the current execution.

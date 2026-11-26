@@ -483,6 +483,10 @@ impl MarkdownCell {
 
         let editor_subscription =
             cx.subscribe(&editor, move |this, _editor, event, cx| match event {
+                editor::EditorEvent::Focused if !this.editing => {
+                    this.editing = true;
+                    cx.notify();
+                }
                 editor::EditorEvent::Blurred => {
                     if this.editing {
                         this.editing = false;
@@ -645,6 +649,8 @@ impl Render for MarkdownCell {
 
         v_flex()
             .size_full()
+            // A dismissed prompt or palette can restore this handle while the editor is hidden.
+            .child(div().size_0().track_focus(&self.editor.focus_handle(cx)))
             .children(self.cell_position_spacer(true, window, cx))
             .child(
                 h_flex()
