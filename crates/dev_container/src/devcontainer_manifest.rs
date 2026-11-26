@@ -2379,10 +2379,11 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         if let Some(post_start_command) = &config.post_start_command {
             let script_commands = post_start_command.script_commands();
             if !script_commands.is_empty() {
-                // Write the marker before running commands, matching the reference implementation:
+                // Write the marker before running commands, matching the reference implementation except when noted:
                 // https://github.com/devcontainers/cli/blob/33073dbaba2545c51b4f8396e179c18231e80124/src/spec-common/injectHeadless.ts#L433-L437
                 let should_run = if let Some(started_at) = &devcontainer_up.started_at {
-                    self.docker_client
+                    let marker_status = self
+                        .docker_client
                         .run_docker_exec(
                             &devcontainer_up.container_id,
                             &remote_folder,
@@ -2391,8 +2392,18 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                             post_start_marker_command(started_at, &devcontainer_up.remote_user),
                         )
                         .await?
-                        .status
-                        .success()
+                        .status;
+                    match marker_status.code() {
+                        Some(0) => true,
+                        Some(2) => false,
+                        // The reference Dev Container CLI skips postStartCommand if the marker update fails.
+                        // https://github.com/devcontainers/cli/blob/33073dbaba2545c51b4f8396e179c18231e80124/src/spec-common/injectHeadless.ts#L433-L446
+                        // Zed intentionally differs here. The spec calls for postStartCommand on each
+                        // successful start, so run it if Zed started the container and skip it on attach.
+                        // This was explicitly requested this fallback in review here:
+                        // https://github.com/zed-industries/zed/pull/63034#discussion_r4711401259
+                        _ => container_started,
+                    }
                 } else {
                     container_started
                 };
@@ -3359,7 +3370,10 @@ fn shell_single_quote(value: &str) -> String {
 }
 
 /// Updates the `postStartCommand` marker when `started_at` changes.
-/// Exits successfully if the marker was written; otherwise, skip the command.
+/// Exits with:
+///  * 0 after succesfully writing
+///  * 1 on a write failure, or
+///  * 2 if this start is already marked
 /// Lifecycle commands run separately to preserve their argument boundaries.
 ///
 /// Lifecycle spec: <https://containers.dev/implementors/json_reference/#lifecycle-scripts>
@@ -3383,7 +3397,7 @@ fn post_start_marker_command(started_at: &str, remote_user: &str) -> Command {
         if [ "$content" = {started_at} ]; then
           exit 2
         fi
-        printf '%s' {started_at} > "$marker""#,
+        printf '%s' {started_at} > "$marker" || exit 1"#,
     );
     let mut command = Command::new("/bin/sh");
     command.args(["-c", &script]);
@@ -4040,11 +4054,24 @@ mod test {
         );
     }
 
-    #[gpui::test]
-    async fn should_use_devcontainer_cli_post_start_marker_for_started_container(
+    #[cfg(unix)]
+    fn exit_status(code: i32) -> ExitStatus {
+        // A Unix wait status stores the exit code in the high byte.
+        ExitStatus::from_raw(code << 8)
+    }
+
+    #[cfg(windows)]
+    fn exit_status(code: u32) -> ExitStatus {
+        ExitStatus::from_raw(code)
+    }
+
+    async fn assert_hooks_after_marker(
         cx: &mut TestAppContext,
-    ) {
-        let (test_dependencies, mut devcontainer_manifest) = init_default_devcontainer_manifest(
+        marker_result: Result<ExitStatus, DevContainerError>,
+        container_started: bool,
+        expected_hooks: &[&str],
+    ) -> Result<(), DevContainerError> {
+        let (dependencies, mut manifest) = init_default_devcontainer_manifest(
             cx,
             r#"{
                 "image": "test_image:latest",
@@ -4054,112 +4081,111 @@ mod test {
         )
         .await
         .unwrap();
-        devcontainer_manifest.parse_nonremote_vars().unwrap();
-
+        manifest.parse_nonremote_vars().unwrap();
+        dependencies
+            .docker
+            .set_next_exec_result(marker_result.map(|status| Output {
+                status,
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            }));
+        let started_at = "2026-06-23T10:00:00Z";
         let devcontainer_up = DevContainerUp {
-            started_at: Some("2026-06-23T10:00:00Z".to_string()),
+            started_at: Some(started_at.to_owned()),
             container_id: "container".to_string(),
             remote_user: "root".to_string(),
             remote_workspace_folder: "/workspaces/project".to_string(),
             extension_ids: Vec::new(),
             remote_env: HashMap::new(),
         };
+        let result = manifest
+            .run_remote_scripts(&devcontainer_up, false, container_started)
+            .await;
 
-        devcontainer_manifest
-            .run_remote_scripts(&devcontainer_up, false, false)
-            .await
-            .unwrap();
-
-        let docker_exec_commands = test_dependencies
-            .docker
-            .exec_commands_recorded
-            .lock()
-            .unwrap();
-        assert_eq!(docker_exec_commands.len(), 3);
-
-        // [0]: check and update the marker in a separate exec.
+        let commands = dependencies.docker.exec_commands_recorded.lock().unwrap();
+        let (marker, hooks) = commands.split_first().expect("expected a marker check");
+        let expected_marker =
+            super::post_start_marker_command(started_at, &devcontainer_up.remote_user);
         assert_eq!(
-            docker_exec_commands[0]._inner_command.get_program(),
-            "/bin/sh"
+            marker._inner_command.get_program(),
+            expected_marker.get_program()
         );
-        let marker_args = docker_exec_commands[0]
-            ._inner_command
-            .get_args()
-            .collect::<Vec<_>>();
-        assert_eq!(marker_args[0], OsStr::new("-c"));
-        let marker_script = marker_args[1].to_string_lossy();
-        assert!(!marker_script.contains("echo post-start"));
+        assert_eq!(
+            marker._inner_command.get_args().collect::<Vec<_>>(),
+            expected_marker.get_args().collect::<Vec<_>>()
+        );
 
-        fn assert_clean_sh_c_command(command: &Command, expected_script: &str) {
+        assert_eq!(
+            hooks.len(),
+            expected_hooks.len(),
+            "expected hooks: {expected_hooks:?}"
+        );
+        for (hook, expected_script) in hooks.iter().zip(expected_hooks) {
+            let command = &hook._inner_command;
             assert_eq!(command.get_program(), "/bin/sh");
             assert_eq!(
                 command.get_args().collect::<Vec<_>>(),
-                vec![OsStr::new("-c"), OsStr::new(expected_script)]
+                [OsStr::new("-c"), OsStr::new(expected_script)]
             );
         }
-
-        // [1]: run postStartCommand with its original argument boundaries.
-        assert_clean_sh_c_command(&docker_exec_commands[1]._inner_command, "echo post-start");
-
-        // [2]: run postAttachCommand independently of the marker.
-        assert_clean_sh_c_command(&docker_exec_commands[2]._inner_command, "echo post-attach");
+        result
     }
 
     #[gpui::test]
-    async fn should_handle_post_start_marker_results(cx: &mut TestAppContext) {
-        let execution_error = DevContainerError::ContainerNotValid("container".to_string());
-        for (case, exec_result, expected_result) in [
-            (
-                "already marked",
-                Ok(Output {
-                    status: ExitStatus::from_raw(1),
-                    stdout: Vec::new(),
-                    stderr: Vec::new(),
-                }),
-                Ok(()),
-            ),
-            (
-                "execution failed",
-                Err(execution_error.clone()),
-                Err(execution_error),
-            ),
-        ] {
-            let (dependencies, mut manifest) = init_default_devcontainer_manifest(
+    async fn post_start_command_runs_for_a_new_marker_and_skips_a_matching_marker(
+        cx: &mut TestAppContext,
+    ) {
+        for container_started in [false, true] {
+            assert_hooks_after_marker(
                 cx,
-                r#"{"image": "test_image:latest", "postStartCommand": "echo post-start"}"#,
+                Ok(exit_status(0)),
+                container_started,
+                &["echo post-start", "echo post-attach"],
             )
             .await
             .unwrap();
-            manifest.parse_nonremote_vars().unwrap();
-            dependencies.docker.set_exec_result(exec_result);
-            let devcontainer_up = DevContainerUp {
-                started_at: Some("2026-06-23T10:00:00Z".to_string()),
-                container_id: "container".to_string(),
-                remote_user: "root".to_string(),
-                remote_workspace_folder: "/workspaces/project".to_string(),
-                extension_ids: Vec::new(),
-                remote_env: HashMap::new(),
-            };
-
-            assert_eq!(
-                manifest
-                    .run_remote_scripts(&devcontainer_up, false, false)
-                    .await,
-                expected_result,
-                "{case}"
-            );
-            // Neither case should run the lifecycle command after the marker check.
-            assert_eq!(
-                dependencies
-                    .docker
-                    .exec_commands_recorded
-                    .lock()
-                    .unwrap()
-                    .len(),
-                1,
-                "{case}"
-            );
+            assert_hooks_after_marker(
+                cx,
+                Ok(exit_status(2)),
+                container_started,
+                &["echo post-attach"],
+            )
+            .await
+            .unwrap();
         }
+    }
+
+    #[gpui::test]
+    async fn failed_marker_check_runs_post_start_only_when_zed_started_the_container(
+        cx: &mut TestAppContext,
+    ) {
+        for status in [
+            exit_status(1), // Marker write failure.
+            exit_status(3), // Unexpected exit code.
+            #[cfg(unix)]
+            ExitStatus::from_raw(1), // Terminated by SIGHUP.
+        ] {
+            assert_hooks_after_marker(
+                cx,
+                Ok(status),
+                true,
+                &["echo post-start", "echo post-attach"],
+            )
+            .await
+            .unwrap();
+            assert_hooks_after_marker(cx, Ok(status), false, &["echo post-attach"])
+                .await
+                .unwrap();
+        }
+    }
+
+    #[gpui::test]
+    async fn marker_exec_error_stops_remote_hooks(cx: &mut TestAppContext) {
+        let error = DevContainerError::ContainerNotValid("container".to_string());
+        assert_eq!(
+            assert_hooks_after_marker(cx, Err(error.clone()), true, &[]).await,
+            Err(error)
+        );
     }
 
     #[gpui::test]
@@ -4178,8 +4204,8 @@ mod test {
                     .await
                     .unwrap();
             manifest.parse_nonremote_vars().unwrap();
-            dependencies.docker.set_exec_result(Ok(Output {
-                status: ExitStatus::from_raw(1),
+            dependencies.docker.set_next_exec_result(Ok(Output {
+                status: exit_status(1),
                 stdout: Vec::new(),
                 stderr: format!("{lifecycle} failed\npermission denied\n").into_bytes(),
             }));
@@ -4218,16 +4244,16 @@ mod test {
             .path()
             .join(".devcontainer/.postStartCommandMarker");
 
-        for (case, started_at, should_run) in [
-            ("first start", "2026-06-23T10:00:00Z", true),
-            ("same start", "2026-06-23T10:00:00Z", false),
-            ("new start", "2026-06-23T11:00:00Z", true),
+        for (case, started_at, expected_code) in [
+            ("first start", "2026-06-23T10:00:00Z", 0),
+            ("same start", "2026-06-23T10:00:00Z", 2),
+            ("new start", "2026-06-23T11:00:00Z", 0),
         ] {
             let output = run_shell_command(
                 super::post_start_marker_command(started_at, "container-user"),
                 home_directory.path(),
             );
-            assert_eq!(output.status.success(), should_run, "{case}");
+            assert_eq!(output.status.code(), Some(expected_code), "{case}");
             assert_eq!(
                 std_fs::read_to_string(&marker).unwrap(),
                 started_at,
@@ -4263,16 +4289,26 @@ mod test {
 
     #[cfg(not(target_os = "windows"))]
     #[test]
-    fn post_start_marker_command_reports_should_not_run_when_marker_directory_cannot_be_created() {
+    fn post_start_marker_command_reports_write_failures() {
         let output = run_shell_command(
             super::post_start_marker_command("2026-06-23T10:00:00Z", "container-user"),
             Path::new("/dev/null"),
         );
 
-        assert!(
-            !output.status.success(),
-            "should fail closed (doRun = false) when the marker can't be tracked, matching the reference implementation"
+        assert_eq!(output.status.code(), Some(1));
+
+        let home_directory = tempfile::tempdir().unwrap();
+        std_fs::create_dir_all(
+            home_directory
+                .path()
+                .join(".devcontainer/.postStartCommandMarker"),
+        )
+        .unwrap();
+        let output = run_shell_command(
+            super::post_start_marker_command("2026-06-23T10:00:00Z", "container-user"),
+            home_directory.path(),
         );
+        assert_eq!(output.status.code(), Some(1));
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -7417,8 +7453,7 @@ RUN echo $RUBY_VERSION2
         /// Records the `services` argument passed to each `docker_compose_build`
         /// call so tests can assert which services were built.
         compose_build_services: Mutex<Vec<Option<Vec<String>>>>,
-        /// The result returned for every recorded exec call, including marker checks.
-        exec_result: Mutex<Result<Output, DevContainerError>>,
+        next_exec_result: Mutex<Option<Result<Output, DevContainerError>>>,
     }
 
     impl FakeDocker {
@@ -7429,11 +7464,7 @@ RUN echo $RUBY_VERSION2
                 exec_commands_recorded: Mutex::new(Vec::new()),
                 duplicate_container_ids: Mutex::new(None),
                 compose_build_services: Mutex::new(Vec::new()),
-                exec_result: Mutex::new(Ok(Output {
-                    status: ExitStatus::default(),
-                    stdout: Vec::new(),
-                    stderr: Vec::new(),
-                })),
+                next_exec_result: Mutex::new(None),
             }
         }
 
@@ -7447,8 +7478,8 @@ RUN echo $RUBY_VERSION2
         fn set_podman(&mut self, podman: bool) {
             self.podman = podman;
         }
-        fn set_exec_result(&self, result: Result<Output, DevContainerError>) {
-            *self.exec_result.lock().expect("should be available") = result;
+        fn set_next_exec_result(&self, result: Result<Output, DevContainerError>) {
+            *self.next_exec_result.lock().expect("should be available") = Some(result);
         }
         #[cfg(not(target_os = "windows"))]
         fn set_duplicate_container_ids(&self, ids: Vec<String>) {
@@ -7789,10 +7820,17 @@ RUN echo $RUBY_VERSION2
                 env: env.clone(),
                 _inner_command: inner_command,
             });
-            self.exec_result
+            self.next_exec_result
                 .lock()
                 .expect("should be available")
-                .clone()
+                .take()
+                .unwrap_or_else(|| {
+                    Ok(Output {
+                        status: ExitStatus::default(),
+                        stdout: Vec::new(),
+                        stderr: Vec::new(),
+                    })
+                })
         }
 
         async fn start_container(&self, _id: &str) -> Result<(), DevContainerError> {
