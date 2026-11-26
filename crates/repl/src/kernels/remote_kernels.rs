@@ -1,4 +1,4 @@
-use futures::{SinkExt as _, channel::mpsc};
+use futures::channel::mpsc;
 use gpui::{App, AppContext as _, BackgroundExecutor, Entity, Task, Window};
 use http_client::{AsyncBody, HttpClient, Request};
 use jupyter_protocol::{
@@ -9,7 +9,7 @@ use util::ResultExt as _;
 
 use async_tungstenite::tokio::connect_async_with_tls_connector;
 use async_tungstenite::tungstenite::{
-    Error as SocketError,
+    Error as SocketError, Message as WebSocketMessage,
     error::{ProtocolError, SubProtocolError},
 };
 use async_tungstenite::tungstenite::{client::IntoClientRequest, http::HeaderValue};
@@ -19,10 +19,11 @@ use smol::io::AsyncReadExt as _;
 
 use super::{KernelSession, RunningKernel};
 use anyhow::Result;
-use jupyter_websocket_client::binary_protocol::KERNEL_WEBSOCKET_PROTOCOL;
+use jupyter_websocket_client::binary_protocol::{
+    KERNEL_WEBSOCKET_PROTOCOL, deserialize_v1, serialize_v1,
+};
 use jupyter_websocket_client::{
-    JupyterWebSocket, JupyterWebSocketReader, JupyterWebSocketWriter, KernelLaunchRequest,
-    KernelSpecsResponse, ProtocolMode, RemoteServer,
+    KernelLaunchRequest, KernelSpecsResponse, ProtocolMode, RemoteServer,
 };
 use std::{fmt::Debug, sync::Arc};
 
@@ -119,6 +120,27 @@ impl PartialEq for RemoteKernelSpecification {
 }
 
 impl Eq for RemoteKernelSpecification {}
+
+// The library's binary writer picks the channel from the message type and sends input replies on shell.
+fn encode_message(
+    mut message: JupyterMessage,
+    protocol_mode: ProtocolMode,
+) -> Result<WebSocketMessage> {
+    let (channel, channel_name) = match message.content {
+        JupyterMessageContent::InterruptRequest(_) | JupyterMessageContent::ShutdownRequest(_) => {
+            (Channel::Control, "control")
+        }
+        JupyterMessageContent::InputReply(_) => (Channel::Stdin, "stdin"),
+        _ => (Channel::Shell, "shell"),
+    };
+    Ok(match protocol_mode {
+        ProtocolMode::Json => {
+            message.channel = Some(channel);
+            WebSocketMessage::text(serde_json::to_string(&message)?)
+        }
+        ProtocolMode::BinaryV1 => WebSocketMessage::binary(serialize_v1(&message, channel_name)?),
+    })
+}
 
 pub(super) struct RemoteKernelShutdown {
     executor: BackgroundExecutor,
@@ -277,26 +299,15 @@ impl RemoteRunningKernel {
                 Err(error) => return Err(error.into()),
             };
 
-            let kernel_socket = JupyterWebSocket {
-                inner: ws_stream,
-                protocol_mode,
-            };
-            let (mut w, mut r): (JupyterWebSocketWriter, JupyterWebSocketReader) =
-                kernel_socket.split();
+            let (mut writer, mut reader) = ws_stream.split();
 
             let (request_tx, mut request_rx) =
                 futures::channel::mpsc::channel::<JupyterMessage>(100);
 
             let routing = cx.background_spawn({
                 async move {
-                    while let Some(mut message) = request_rx.next().await {
-                        message.channel = Some(match message.content {
-                            JupyterMessageContent::InterruptRequest(_)
-                            | JupyterMessageContent::ShutdownRequest(_) => Channel::Control,
-                            JupyterMessageContent::InputReply(_) => Channel::Stdin,
-                            _ => Channel::Shell,
-                        });
-                        w.send(message).await?;
+                    while let Some(message) = request_rx.next().await {
+                        writer.send(encode_message(message, protocol_mode)?).await?;
                     }
                     Ok(())
                 }
@@ -307,10 +318,19 @@ impl RemoteRunningKernel {
 
                 async move |cx| {
                     let receiving = async {
-                        while let Some(message) = r.next().await {
+                        while let Some(frame) = reader.next().await {
+                            let message = match frame? {
+                                WebSocketMessage::Text(text) => {
+                                    serde_json::from_str(&text).map_err(anyhow::Error::from)
+                                }
+                                WebSocketMessage::Binary(data) => {
+                                    deserialize_v1(&data).map(|(_channel, message)| message)
+                                }
+                                WebSocketMessage::Close(_) => break,
+                                _ => continue,
+                            };
                             let message = match message {
                                 Ok(message) => message,
-                                Err(error) if error.is::<SocketError>() => return Err(error),
                                 Err(error) => {
                                     log::warn!("Ignoring unsupported Jupyter message: {error}");
                                     continue;
@@ -407,6 +427,43 @@ impl RunningKernel for RemoteRunningKernel {
 mod tests {
     use super::*;
     use futures::channel::oneshot;
+    use jupyter_protocol::{ExecuteRequest, InputReply, InterruptRequest, ReplyStatus};
+
+    #[test]
+    fn messages_are_sent_on_their_jupyter_channel() {
+        let input_request: JupyterMessage = ExecuteRequest::default().into();
+        let cases: [(JupyterMessage, &str); 3] = [
+            (
+                InputReply {
+                    value: "synthetic answer".into(),
+                    status: ReplyStatus::Ok,
+                    error: None,
+                }
+                .as_child_of(&input_request),
+                "stdin",
+            ),
+            (InterruptRequest {}.into(), "control"),
+            (ExecuteRequest::default().into(), "shell"),
+        ];
+        for (message, expected_channel) in cases {
+            let WebSocketMessage::Binary(frame) =
+                encode_message(message.clone(), ProtocolMode::BinaryV1).unwrap()
+            else {
+                panic!("binary protocol must send binary frames");
+            };
+            let (channel, decoded) = deserialize_v1(&frame).unwrap();
+            assert_eq!(channel, expected_channel);
+            assert_eq!(decoded.header.msg_id, message.header.msg_id);
+
+            let WebSocketMessage::Text(frame) =
+                encode_message(message, ProtocolMode::Json).unwrap()
+            else {
+                panic!("JSON protocol must send text frames");
+            };
+            let frame: serde_json::Value = serde_json::from_str(&frame).unwrap();
+            assert_eq!(frame["channel"], expected_channel);
+        }
+    }
 
     #[gpui::test]
     async fn cancel_while_server_is_creating_kernel_still_releases_it(
