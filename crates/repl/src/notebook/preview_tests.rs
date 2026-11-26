@@ -971,6 +971,77 @@ async fn test_cell_source_undo_restores_the_saved_notebook(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+async fn cell_undo_after_structure_undo_restores_the_exact_source(cx: &mut TestAppContext) {
+    let original = r#"{"nbformat": 4, "nbformat_minor": 5, "metadata": {},
+  "cells": [
+    {"cell_type": "markdown", "id": "short", "metadata": {}, "source": ["a\r\n", "b\n", "c"]},
+    {"cell_type": "code", "id": "long", "metadata": {}, "execution_count": null, "outputs": [],
+     "source": ["neighbor = 'long enough that the short cell is the one that moves'"]}
+  ]
+}
+"#;
+    let path = Path::new(path!("/notebooks/field.ipynb"));
+    let (fs, workspace, cx) = notebook_workspace(json!({"field.ipynb": original}), cx).await;
+    open_file("field.ipynb", &workspace, cx).await;
+    let sources = cell_sources(&workspace, cx);
+    let view = workspace.read_with(cx, |workspace, cx| {
+        workspace.active_item_as::<NotebookPreview>(cx).unwrap()
+    });
+    let cell_editor = |index: usize, cx: &mut VisualTestContext| {
+        view.read_with(cx, |view, cx| {
+            let notebook = view.notebook.as_ref().unwrap().read(cx);
+            notebook.cell(index).unwrap().editor(cx).unwrap().clone()
+        })
+    };
+    let undo_cell = |index: usize, cx: &mut VisualTestContext| {
+        cell_editor(index, cx).update_in(cx, |editor, window, cx| {
+            editor.undo(&editor::actions::Undo, window, cx)
+        });
+        cx.run_until_parked();
+    };
+    let assert_source = |expected: &str, dirty, cx: &mut VisualTestContext| {
+        assert_eq!(
+            view.read_with(cx, |view, cx| view.editor.read(cx).text(cx)),
+            expected
+        );
+        assert_eq!(
+            view.read_with(cx, |view, cx| workspace::Item::is_dirty(view, cx)),
+            dirty
+        );
+    };
+
+    cell_editor(0, cx).update_in(cx, |editor, window, cx| {
+        editor.move_to_end(&Default::default(), window, cx);
+        editor.insert("d", window, cx);
+    });
+    cx.run_until_parked();
+    cx.dispatch_action(MoveCellDown);
+    assert!(cell_sources(&workspace, cx)[1].ends_with("cd"));
+    cx.dispatch_action(editor::actions::Undo);
+    assert!(cell_sources(&workspace, cx)[0].ends_with("cd"));
+    undo_cell(0, cx);
+    assert_source(original, false, cx);
+
+    cell_editor(0, cx).update_in(cx, |editor, window, cx| editor.set_text("", window, cx));
+    cx.run_until_parked();
+    cx.dispatch_action(DeleteCell);
+    assert_eq!(cell_sources(&workspace, cx).len(), 1);
+    cx.dispatch_action(editor::actions::Undo);
+    assert_eq!(cell_sources(&workspace, cx)[0], "");
+    undo_cell(0, cx);
+    assert_source(original, false, cx);
+
+    cx.dispatch_action(workspace::SaveAll { save_intent: None });
+    cx.run_until_parked();
+    assert_eq!(fs.load(path).await.unwrap(), original);
+    cx.dispatch_action(workspace::pane::CloseActiveItem::default());
+    cx.run_until_parked();
+    assert!(workspace.read_with(cx, |workspace, cx| workspace.active_item(cx).is_none()));
+    open_file("field.ipynb", &workspace, cx).await;
+    assert_eq!(cell_sources(&workspace, cx), sources);
+}
+
+#[gpui::test]
 async fn switching_to_source_preserves_cell_undo_until_the_raw_file_changes(
     cx: &mut TestAppContext,
 ) {

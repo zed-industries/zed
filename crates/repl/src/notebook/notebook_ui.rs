@@ -95,7 +95,7 @@ struct StructureStep {
     before: usize,
     after: usize,
     rewind: Option<BufferRewind>,
-    output_source: Option<String>,
+    removed: Option<(Cell, SourceTransactions)>,
 }
 
 #[derive(Clone, Copy)]
@@ -122,10 +122,13 @@ impl BufferRewind {
     }
 }
 
+type SourceTransactions =
+    HashMap<clock::Lamport, Option<(language::Transaction, std::ops::Range<language::Anchor>)>>;
+
 struct CellSourceHistory {
     cell: Entity<language::Buffer>,
     observed: clock::Global,
-    transactions: HashMap<clock::Lamport, Option<language::Transaction>>,
+    transactions: SourceTransactions,
     _subscriptions: [gpui::Subscription; 3],
 }
 
@@ -150,11 +153,20 @@ impl CellSourceHistory {
         let text = cell.rope_for_version(&version);
         let source = text::chunks_with_line_ending(&text, cell.line_ending()).collect::<String>();
 
+        // A moved or deleted cell's earlier edits live in hidden notebook text
+        // until a structure undo makes that text visible at the cell again.
         if let text::Operation::Undo(undo) = operation
-            && undo
-                .counts
-                .keys()
-                .all(|id| self.transactions.contains_key(id))
+            && undo.counts.keys().all(|id| {
+                self.transactions.get(id).is_some_and(|edit| {
+                    edit.as_ref().is_none_or(|(_, source)| {
+                        source.start.is_valid(buffer)
+                            && source.end.is_valid(buffer)
+                            && source.start.to_offset(buffer)
+                                == fields.source.start.to_offset(buffer)
+                            && source.end.to_offset(buffer) == fields.source.end.to_offset(buffer)
+                    })
+                })
+            })
         {
             let mut affected: Vec<_> = undo
                 .counts
@@ -163,7 +175,7 @@ impl CellSourceHistory {
                     self.transactions
                         .get(edit)?
                         .as_ref()
-                        .map(|transaction| (transaction, *count))
+                        .map(|(transaction, _)| (transaction, *count))
                 })
                 .collect();
             affected.sort_unstable_by_key(|(transaction, _)| transaction.id);
@@ -204,12 +216,13 @@ impl CellSourceHistory {
         } else {
             buffer.finalize_last_transaction();
             buffer.edit(edits, None, cx);
-            Some(
+            Some((
                 buffer
                     .finalize_last_transaction()
                     .context("Missing notebook source transaction")?
                     .clone(),
-            )
+                fields.source.clone(),
+            ))
         };
         match operation {
             text::Operation::Edit(edit) => {
@@ -323,23 +336,30 @@ impl NotebookEditor {
             remaining_runs: None,
             kernel_notice: None,
         };
+        let languages = editor.project.read(cx).languages().clone();
         for cell in cells {
-            editor.load_cell(&cell, window, cx);
-            editor.cell_order.push(cell.id().clone());
+            let cell = Cell::load(
+                &cell,
+                &languages,
+                editor.notebook_language.clone(),
+                window,
+                cx,
+            );
+            let cell_id = editor.attach_cell(cell, HashMap::default(), window, cx);
+            editor.cell_order.push(cell_id);
         }
         editor.watch_kernel_trust(cx);
         editor
     }
 
-    fn load_cell(
+    fn attach_cell(
         &mut self,
-        cell: &nbformat::v4::Cell,
+        cell_entity: Cell,
+        transactions: SourceTransactions,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        let languages = self.project.read(cx).languages().clone();
-        let cell_id = cell.id();
-        let cell_entity = Cell::load(cell, &languages, self.notebook_language.clone(), window, cx);
+    ) -> CellId {
+        let cell_id = cell_entity.id(cx);
         let cell_events = match &cell_entity {
             Cell::Code(cell) => {
                 Some(
@@ -382,12 +402,13 @@ impl NotebookEditor {
                 CellSourceHistory {
                     observed: buffer.read(cx).version(),
                     cell: buffer,
-                    transactions: HashMap::default(),
+                    transactions,
                     _subscriptions: [cell_events, focus_events, buffer_events],
                 },
             );
         }
         self.cell_map.insert(cell_id.clone(), cell_entity);
+        cell_id
     }
 
     fn check_execution(&self, cx: &mut App) -> Result<()> {
@@ -1203,7 +1224,7 @@ impl NotebookEditor {
             before,
             after,
             rewind: None,
-            output_source: None,
+            removed: None,
         };
         self.structure_error = match self.apply_structure(&step, window, cx) {
             Ok(inverse) => {
@@ -1263,7 +1284,6 @@ impl NotebookEditor {
             buffer.read(cx).capability().editable(),
             "The notebook source is read-only."
         );
-        let mut output_source = None;
         if let CellEdit::Remove(index) = step.edit {
             let id = self
                 .cell_order
@@ -1285,11 +1305,6 @@ impl NotebookEditor {
                 self.preparing_cell.as_ref() != Some(id),
                 "Wait for this cell’s kernel setup to finish before deleting it."
             );
-            if let Some(Cell::Code(cell)) = self.cell_map.get(id)
-                && cell.read(cx).has_stale_outputs(cx)
-            {
-                output_source = Some(cell.read(cx).output_source.clone());
-            }
         }
         let snapshot = buffer.read(cx).as_text_snapshot().clone();
         let mut source = snapshot.text();
@@ -1317,11 +1332,16 @@ impl NotebookEditor {
                 .context("Missing notebook structure transaction")?;
             Ok::<_, anyhow::Error>(BufferRewind::Undo(transaction.id))
         })?;
+        let mut removed = None;
         match projection {
             Projection::Remove(index) => {
                 let id = self.cell_order.remove(index);
-                self.cell_map.remove(&id);
-                self.cell_sources.remove(&id);
+                let transactions = self
+                    .cell_sources
+                    .remove(&id)
+                    .map(|history| history.transactions)
+                    .unwrap_or_default();
+                removed = self.cell_map.remove(&id).map(|cell| (cell, transactions));
                 self.display_slots.remove(&id);
                 self.notebook_item
                     .update(cx, |item, _| item.fields.remove(index));
@@ -1335,13 +1355,22 @@ impl NotebookEditor {
                 let fields = anchor_fields(fields, buffer.read(cx));
                 self.notebook_item
                     .update(cx, |item, _| item.fields.insert(index, fields));
-                self.load_cell(&cell, window, cx);
-                if let Some(source) = &step.output_source
-                    && let Some(Cell::Code(cell)) = self.cell_map.get(cell.id())
-                {
-                    cell.update(cx, |cell, _| cell.output_source.clone_from(source));
-                }
-                self.cell_order.insert(index, cell.id().clone());
+                let (cell, transactions) = match step.removed.clone() {
+                    Some(removed) => removed,
+                    None => {
+                        let languages = self.project.read(cx).languages().clone();
+                        let cell = Cell::load(
+                            &cell,
+                            &languages,
+                            self.notebook_language.clone(),
+                            window,
+                            cx,
+                        );
+                        (cell, HashMap::default())
+                    }
+                };
+                let cell_id = self.attach_cell(cell, transactions, window, cx);
+                self.cell_order.insert(index, cell_id);
                 self.cell_list.splice(index..index, 1);
             }
             Projection::Swap { index, left, right } => {
@@ -1356,19 +1385,10 @@ impl NotebookEditor {
                             (right.start, left.start),
                             (left.start, right.end - left.len()),
                         ])
-                        .enumerate()
-                        .map(|(position, (fields, (from, to)))| {
+                        .map(|(fields, (from, to))| {
                             let relocate = |anchor: language::Anchor| {
                                 to + (anchor.to_offset(&snapshot) - from)
                             };
-                            if fields.source.start.to_offset(buffer)
-                                != relocate(fields.source.start)
-                                && let Some(history) = self
-                                    .cell_sources
-                                    .get_mut(&self.cell_order[index + position])
-                            {
-                                history.transactions.clear();
-                            }
                             fields.map_offsets(|range| {
                                 buffer.anchor_before(relocate(range.start))
                                     ..buffer.anchor_after(relocate(range.end))
@@ -1391,7 +1411,7 @@ impl NotebookEditor {
             before: step.after,
             after: step.before,
             rewind: Some(rewind),
-            output_source,
+            removed,
         })
     }
 
