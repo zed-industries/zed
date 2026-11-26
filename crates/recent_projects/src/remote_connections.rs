@@ -641,14 +641,18 @@ mod tests {
     }
 
     fn dev_container_connection(container_id: &str, config_file: &str) -> Connection {
-        Connection::DevContainer(DevContainerConnection {
+        Connection::DevContainer(dev_container(container_id, config_file))
+    }
+
+    fn dev_container(container_id: &str, config_file: &str) -> DevContainerConnection {
+        DevContainerConnection {
             name: "project".to_string(),
             remote_user: "vscode".to_string(),
             container_id: container_id.to_string(),
             local_folder: "/host/project".to_string(),
             config_file: config_file.to_string(),
             ..Default::default()
-        })
+        }
     }
 
     #[test]
@@ -719,6 +723,18 @@ mod tests {
                 &mut async_cx
             ),
             None
+        );
+
+        assert_eq!(
+            find(
+                Connection::DevContainer(DevContainerConnection {
+                    use_podman: true,
+                    ..dev_container("container-after", config_file)
+                }),
+                &mut async_cx
+            ),
+            None,
+            "a Podman container must not focus the open Docker workspace of the same config"
         );
     }
 

@@ -11425,7 +11425,12 @@ fn matches_requested_host(project: &Project, requested: &ProjectHost<'_>, cx: &A
                 (
                     RemoteConnectionOptions::Docker(options),
                     RemoteConnectionOptions::Docker(requested_options),
-                ) => options.remote_user == requested_options.remote_user,
+                ) => {
+                    // The dev container identity has no engine in it, so keep a
+                    // Docker and a Podman container of the same config apart.
+                    options.remote_user == requested_options.remote_user
+                        && options.use_podman == requested_options.use_podman
+                }
                 _ => true,
             }
         }
