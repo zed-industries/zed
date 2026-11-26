@@ -831,6 +831,10 @@
     "center_on_match": false,
     // Start searching as you type in project search, without pressing Enter.
     "search_on_type": true,
+    // Whether to show a banner when paths are omitted from project search.
+    // Click Learn More, or run the `project_search::OpenSearchOmissions` action, to open a buffer with a grouped report of omitted paths.
+    // Disabling this setting hides only the banner and does not change the search scope.
+    "show_omitted_paths": true,
   },
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:

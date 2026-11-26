@@ -10,7 +10,7 @@ use lsp::LanguageServerId;
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
 use fs::Fs;
-use futures::{channel::oneshot, stream::StreamExt as _};
+use futures::{FutureExt as _, channel::oneshot, select_biased, stream::StreamExt as _};
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel, Task, TaskExt};
 use http_client::HttpClient;
 use language::{Buffer, BufferEvent, LanguageRegistry, proto::serialize_operation};
@@ -100,6 +100,7 @@ struct SearchBufferBatch {
     handle: u64,
     peer_id: proto::PeerId,
     project_id: u64,
+    reports_omissions: bool,
     completion: oneshot::Sender<Result<()>>,
 }
 
@@ -1216,6 +1217,9 @@ impl HeadlessProject {
         let client = this.read_with(&cx, |project, _| project.session.clone());
         let search_buffer_batches =
             this.read_with(&cx, |project, _| project.search_buffer_batches.clone());
+        let reports_omissions = message.report_omissions;
+        let (stop_matches, matches_stopped) = oneshot::channel::<()>();
+        let mut matches_stopped = matches_stopped.fuse();
         let task = cx.spawn(async move |cx| {
             let results = this.update(cx, |this, cx| {
                 project::Search::local(
@@ -1225,30 +1229,79 @@ impl HeadlessProject {
                     message.limit as _,
                     cx,
                 )
+                .include_private_omissions(message.include_private_omissions)
                 .into_handle(query, cx)
                 .matching_buffers(cx)
             });
-            let mut batches = std::pin::pin!(
-                results
-                    .rx
-                    .map(|(buffer, _)| buffer)
-                    .ready_chunks(MAX_SEARCH_CANDIDATES_PER_BATCH)
-            );
-            while let Some(buffers) = batches.next().await {
-                let (completion, completed) = oneshot::channel();
-                search_buffer_batches
-                    .send(SearchBufferBatch {
-                        buffers,
-                        handle,
-                        peer_id,
-                        project_id,
-                        completion,
-                    })
-                    .await?;
-                completed.await??;
+            let omissions_task = if reports_omissions {
+                cx.background_spawn(project::project_search::forward_search_omissions(
+                    results.omissions,
+                    results.omissions_status,
+                    client.clone(),
+                    project_id,
+                    peer_id,
+                    handle,
+                ))
+            } else {
+                drop(results.omissions);
+                Task::ready(Ok(()))
+            };
+            let sender_result = async {
+                let mut batches = std::pin::pin!(
+                    results
+                        .rx
+                        .map(|(buffer, _)| buffer)
+                        .ready_chunks(MAX_SEARCH_CANDIDATES_PER_BATCH)
+                );
+                loop {
+                    let buffers = select_biased! {
+                        _ = matches_stopped => None,
+                        buffers = batches.next().fuse() => buffers,
+                    };
+                    let Some(buffers) = buffers else {
+                        break;
+                    };
+                    let (completion, completed) = oneshot::channel();
+                    search_buffer_batches
+                        .send(SearchBufferBatch {
+                            buffers,
+                            handle,
+                            peer_id,
+                            project_id,
+                            reports_omissions,
+                            completion,
+                        })
+                        .await?;
+                    select_biased! {
+                        _ = matches_stopped => break,
+                        completed = completed.fuse() => completed??,
+                    }
+                }
+                anyhow::Ok(())
             }
+            .await;
+            sender_result.as_ref().log_err();
+            if reports_omissions && sender_result.is_ok() {
+                client
+                    .request(proto::FindSearchCandidatesChunk {
+                        handle,
+                        peer_id: Some(peer_id),
+                        project_id,
+                        variant: Some(proto::find_search_candidates_chunk::Variant::Matches(
+                            proto::FindSearchCandidatesMatches {
+                                buffer_ids: Vec::new(),
+                            },
+                        )),
+                        reports_omissions,
+                        matches_complete: true,
+                        ..proto::FindSearchCandidatesChunk::default()
+                    })
+                    .await
+                    .log_err();
+            }
+            omissions_task.await.log_err();
 
-            client
+            let done_result = client
                 .request(proto::FindSearchCandidatesChunk {
                     handle,
                     peer_id: Some(peer_id),
@@ -1256,12 +1309,15 @@ impl HeadlessProject {
                     variant: Some(proto::find_search_candidates_chunk::Variant::Done(
                         proto::FindSearchCandidatesDone {},
                     )),
+                    ..proto::FindSearchCandidatesChunk::default()
                 })
-                .await?;
+                .await;
+            sender_result?;
+            done_result?;
             anyhow::Ok(())
         });
         buffer_store.update(&mut cx, |store, _| {
-            store.register_ongoing_project_search((peer_id, handle), task);
+            store.register_ongoing_project_search((peer_id, handle), task, stop_matches);
         });
 
         Ok(proto::Ack {})
@@ -1280,6 +1336,8 @@ impl HeadlessProject {
                 variant: Some(proto::find_search_candidates_chunk::Variant::Matches(
                     proto::FindSearchCandidatesMatches { buffer_ids },
                 )),
+                reports_omissions: batch.reports_omissions,
+                ..proto::FindSearchCandidatesChunk::default()
             })
             .await?;
         Ok(())

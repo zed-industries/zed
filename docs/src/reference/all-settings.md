@@ -5068,7 +5068,8 @@ This is separate from `project_panel.sticky_scroll`, which controls sticky folde
     "include_ignored": false,
     "regex": false,
     "center_on_match": false,
-    "search_on_type": true
+    "search_on_type": true,
+    "show_omitted_paths": true
   }
 }
 ```
@@ -5116,6 +5117,30 @@ This is separate from `project_panel.sticky_scroll`, which controls sticky folde
 - Description: Start searching as you type in project search, without pressing Enter.
 - Setting: `search_on_type`
 - Default: `true`
+
+### Show Omitted Paths {#search-show-omitted-paths}
+
+- Description: Show an informational banner when project search skips paths that are not fully indexed.
+- Setting: `show_omitted_paths`
+- Default: `true`
+
+The banner says "Some project paths were not fully searched." when some paths are not fully indexed, for example directories outside git repositories that are deeper than `file_scan_depth`, or symlink targets that are not scanned.
+Paths ignored by Git do not show the banner; the report lists them.
+If the search or its omission reporting did not finish, or a group of paths exceeded its limit of 10240, the report says "INCOMPLETE REPORT" below the query.
+Click **Learn More** or run {#action project_search::OpenSearchOmissions} to open a buffer with a grouped report of omitted paths.
+
+To hide the banner, open the Settings Editor and turn off **Show Omitted Paths** under **Search & Files > Search**.
+This hides only the banner and does not change the search scope; running {#action project_search::OpenSearchOmissions} in a project search tab still opens its report when there is one.
+
+Or add this to your settings.json:
+
+```json [settings]
+{
+  "search": {
+    "show_omitted_paths": false
+  }
+}
+```
 
 ## Search Wrap
 

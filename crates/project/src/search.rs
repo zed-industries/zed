@@ -1,5 +1,6 @@
+use crate::ProjectPath;
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
-use anyhow::{Ok, Result};
+use anyhow::{Context as _, Ok, Result};
 use client::proto;
 use fancy_regex::{Captures, Expander, Regex, RegexBuilder};
 use gpui::Entity;
@@ -19,6 +20,19 @@ use util::{
     rel_path::RelPath,
 };
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SearchOmission {
+    pub path: ProjectPath,
+    pub reason: SearchOmissionReason,
+    pub is_dir: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SearchOmissionReason {
+    NotIndexed,
+    GitIgnored,
+}
+
 #[derive(Debug)]
 pub enum SearchResult {
     Buffer {
@@ -28,6 +42,33 @@ pub enum SearchResult {
     LimitReached,
     WaitingForScan,
     Searching,
+}
+
+impl SearchOmission {
+    pub fn to_proto(&self) -> proto::SearchOmission {
+        proto::SearchOmission {
+            path: Some(self.path.to_proto()),
+            reason: match self.reason {
+                SearchOmissionReason::NotIndexed => proto::SearchOmissionReason::NotIndexed,
+                SearchOmissionReason::GitIgnored => proto::SearchOmissionReason::GitIgnored,
+            } as i32,
+            is_dir: self.is_dir,
+        }
+    }
+
+    pub(crate) fn from_proto(message: proto::SearchOmission) -> Result<Option<Self>> {
+        let reason = match proto::SearchOmissionReason::try_from(message.reason).ok() {
+            Some(proto::SearchOmissionReason::NotIndexed) => SearchOmissionReason::NotIndexed,
+            Some(proto::SearchOmissionReason::GitIgnored) => SearchOmissionReason::GitIgnored,
+            Some(proto::SearchOmissionReason::Unspecified) | None => return Ok(None),
+        };
+        let path = message.path.context("missing search omission path")?;
+        Ok(Some(Self {
+            path: ProjectPath::from_proto(path).context("invalid search omission path")?,
+            reason,
+            is_dir: message.is_dir,
+        }))
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]

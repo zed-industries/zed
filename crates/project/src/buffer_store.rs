@@ -1,6 +1,8 @@
 use crate::{
     ProjectPath,
     lsp_store::OpenLspBufferHandle,
+    project_search::{MAX_SEARCH_OMISSIONS, SearchOmissionsStatus},
+    search::SearchOmission,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 use anyhow::{Context as _, Result, anyhow};
@@ -48,12 +50,32 @@ pub struct BufferStore {
 #[derive(Default)]
 struct RemoteProjectSearchState {
     // List of ongoing project search chunks from our remote host. Used by the side issuing a search RPC request.
-    chunks: HashMap<u64, async_channel::Sender<BufferId>>,
+    chunks: HashMap<u64, RemoteSearchChannels>,
     // Monotonously-increasing handle to hand out to remote host in order to identify the project search result chunk.
     next_id: u64,
     // Used by the side running the actual search for match candidates to potentially cancel the search prematurely.
-    searches_in_progress: HashMap<(PeerId, u64), Task<Result<()>>>,
+    searches_in_progress: HashMap<(PeerId, u64), OngoingProjectSearch>,
     cancelled_before_start: HashSet<(PeerId, u64)>,
+}
+
+struct OngoingProjectSearch {
+    _task: Task<Result<()>>,
+    stop_matches: Option<oneshot::Sender<()>>,
+}
+
+struct RemoteSearchChannels {
+    buffers: Option<async_channel::Sender<BufferId>>,
+    omissions: Option<RemoteSearchOmissions>,
+}
+
+struct RemoteSearchOmissions {
+    sender: async_channel::Sender<Vec<SearchOmission>>,
+    status: SearchOmissionsStatus,
+    next_sequence: u64,
+    received: usize,
+    skipped_unknown_reasons: bool,
+    host_reports_omissions: bool,
+    resolved: Option<oneshot::Sender<()>>,
 }
 
 #[derive(Hash, Eq, PartialEq, Clone)]
@@ -1158,6 +1180,7 @@ impl BufferStore {
     }
 
     pub fn disconnected_from_host(&mut self, cx: &mut App) {
+        self.project_search.chunks.clear();
         for open_buffer in self.opened_buffers.values_mut() {
             if let Some(buffer) = open_buffer.upgrade() {
                 buffer.update(cx, |buffer, _| buffer.give_up_waiting());
@@ -1834,10 +1857,18 @@ impl BufferStore {
 
     pub(crate) fn register_project_search_result_handle(
         &mut self,
+        omissions: async_channel::Sender<Vec<SearchOmission>>,
+        omissions_status: SearchOmissionsStatus,
     ) -> (u64, async_channel::Receiver<BufferId>) {
         let (tx, rx) = async_channel::unbounded();
         let handle = util::post_inc(&mut self.project_search.next_id);
-        let _old_entry = self.project_search.chunks.insert(handle, tx);
+        let _old_entry = self.project_search.chunks.insert(
+            handle,
+            RemoteSearchChannels {
+                buffers: Some(tx),
+                omissions: Some(RemoteSearchOmissions::new(omissions, omissions_status)),
+            },
+        );
         debug_assert!(_old_entry.is_none());
         (handle, rx)
     }
@@ -1846,15 +1877,40 @@ impl BufferStore {
         self.project_search.chunks.remove(&handle);
     }
 
+    pub(crate) fn finish_project_search_matches(
+        &mut self,
+        handle: u64,
+    ) -> Option<oneshot::Receiver<()>> {
+        let channels = self.project_search.chunks.get_mut(&handle)?;
+        if let Some(omissions) = channels.omissions.as_mut()
+            && omissions.host_reports_omissions
+            && !omissions.sender.is_closed()
+        {
+            channels.buffers = None;
+            let (resolved, omissions_resolved) = oneshot::channel();
+            omissions.resolved = Some(resolved);
+            return Some(omissions_resolved);
+        }
+        self.project_search.chunks.remove(&handle);
+        None
+    }
+
     pub fn register_ongoing_project_search(
         &mut self,
         id: (PeerId, u64),
         search: Task<anyhow::Result<()>>,
+        stop_matches: oneshot::Sender<()>,
     ) {
         if self.project_search.cancelled_before_start.remove(&id) {
             return;
         }
-        let _old = self.project_search.searches_in_progress.insert(id, search);
+        let _old = self.project_search.searches_in_progress.insert(
+            id,
+            OngoingProjectSearch {
+                _task: search,
+                stop_matches: Some(stop_matches),
+            },
+        );
         debug_assert!(_old.is_none());
     }
 
@@ -1873,7 +1929,11 @@ impl BufferStore {
             envelope.payload.handle,
         );
         this.update(&mut cx, |this, _| {
-            if this
+            if envelope.payload.keep_omissions {
+                if let Some(search) = this.project_search.searches_in_progress.get_mut(&id) {
+                    search.stop_matches.take();
+                }
+            } else if this
                 .project_search
                 .searches_in_progress
                 .remove(&id)
@@ -1887,11 +1947,32 @@ impl BufferStore {
 
     pub(crate) async fn handle_find_search_candidates_chunk(
         this: Entity<Self>,
-        envelope: TypedEnvelope<proto::FindSearchCandidatesChunk>,
+        mut envelope: TypedEnvelope<proto::FindSearchCandidatesChunk>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         use proto::find_search_candidates_chunk::Variant;
         let handle = envelope.payload.handle;
+        let Some(sender) = this.update(&mut cx, |this, _| {
+            let channels = this.project_search.chunks.get_mut(&handle)?;
+            if let Some(omissions) = channels.omissions.as_mut()
+                && omissions
+                    .receive(&mut envelope.payload)
+                    .log_err()
+                    .unwrap_or(true)
+            {
+                channels.omissions.take();
+            }
+            let sender = channels.buffers.clone();
+            if envelope.payload.matches_complete {
+                channels.buffers = None;
+            }
+            if channels.buffers.is_none() && channels.omissions.is_none() {
+                this.project_search.chunks.remove(&handle);
+            }
+            Some(sender)
+        }) else {
+            return Ok(proto::Ack {});
+        };
 
         let buffer_ids = match envelope
             .payload
@@ -1910,12 +1991,9 @@ impl BufferStore {
                 return Ok(proto::Ack {});
             }
         };
-        let Some(sender) = this.read_with(&mut cx, |this, _| {
-            this.project_search.chunks.get(&handle).cloned()
-        }) else {
+        let Some(sender) = sender else {
             return Ok(proto::Ack {});
         };
-
         for buffer_id in buffer_ids {
             let Ok(_) = sender.send(buffer_id).await else {
                 this.update(&mut cx, |this, _| {
@@ -1934,6 +2012,65 @@ impl BufferStore {
         self.project_search
             .cancelled_before_start
             .retain(|(search_peer_id, _)| search_peer_id != peer_id);
+    }
+}
+
+impl RemoteSearchOmissions {
+    fn new(
+        sender: async_channel::Sender<Vec<SearchOmission>>,
+        status: SearchOmissionsStatus,
+    ) -> Self {
+        Self {
+            sender,
+            status,
+            next_sequence: 0,
+            received: 0,
+            skipped_unknown_reasons: false,
+            host_reports_omissions: false,
+            resolved: None,
+        }
+    }
+
+    fn receive(&mut self, chunk: &mut proto::FindSearchCandidatesChunk) -> Result<bool> {
+        if self.sender.is_closed() {
+            return Ok(true);
+        }
+        self.host_reports_omissions |= chunk.reports_omissions;
+        if let Some(proto::find_search_candidates_chunk::Variant::Done(_)) = &chunk.variant {
+            return Ok(true);
+        }
+        let Some(sequence) = chunk.omissions_sequence else {
+            anyhow::ensure!(
+                chunk.omissions.is_empty(),
+                "Search omission batch has no sequence number"
+            );
+            return Ok(false);
+        };
+        let expected = self.next_sequence;
+        anyhow::ensure!(
+            sequence == expected,
+            "Search omission batch {sequence} arrived instead of {expected}"
+        );
+        if chunk.omissions.is_empty() {
+            if !self.skipped_unknown_reasons {
+                self.status.mark_complete();
+            }
+            return Ok(true);
+        }
+        let batch_len = chunk.omissions.len();
+        let omissions = std::mem::take(&mut chunk.omissions)
+            .into_iter()
+            .filter_map(|omission| SearchOmission::from_proto(omission).transpose())
+            .collect::<Result<Vec<_>>>()?;
+        self.skipped_unknown_reasons |= omissions.len() < batch_len;
+        self.received += omissions.len();
+        anyhow::ensure!(
+            self.received <= 2 * MAX_SEARCH_OMISSIONS,
+            "Search omission report is too large"
+        );
+        self.sender.try_send(omissions)?;
+        self.next_sequence += 1;
+        Ok(false)
     }
 }
 
@@ -1971,5 +2108,139 @@ fn apply_initial_line_ending(buffer: &mut Buffer, cx: &mut Context<Buffer>) {
     };
     if buffer.line_ending() != desired {
         buffer.set_line_ending(desired, cx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::search::SearchOmissionReason;
+
+    #[test]
+    fn test_search_omissions_forwards_batches_in_order() {
+        let (sender, receiver) = async_channel::unbounded();
+        let status = SearchOmissionsStatus::default();
+        let mut omissions = RemoteSearchOmissions::new(sender, status.clone());
+        let mut large_batch = omission_chunk(1);
+        large_batch.omissions = vec![large_batch.omissions[0].clone(); 300];
+        let mut unknown_reason = omission_chunk(2);
+        let skipped = proto::SearchOmission {
+            reason: 7,
+            ..unknown_reason.omissions[0].clone()
+        };
+        unknown_reason.omissions.push(skipped);
+        for mut chunk in [omission_chunk(0), large_batch, unknown_reason] {
+            assert!(!omissions.receive(&mut chunk).unwrap());
+        }
+        let mut paths = Vec::new();
+        while let Ok(batch) = receiver.try_recv() {
+            paths.extend(
+                batch
+                    .into_iter()
+                    .map(|omission| omission.path.path.as_unix_str().to_owned()),
+            );
+        }
+        assert_eq!(
+            paths,
+            std::iter::once("00.log")
+                .chain(std::iter::repeat_n("01.log", 300))
+                .chain(std::iter::once("02.log"))
+                .map(String::from)
+                .collect::<Vec<_>>()
+        );
+        assert!(!status.is_complete());
+        assert!(omissions.receive(&mut completion_chunk(3)).unwrap());
+        drop(omissions);
+        assert_eq!(
+            receiver.try_recv(),
+            Err(async_channel::TryRecvError::Closed)
+        );
+        assert!(!status.is_complete());
+    }
+
+    #[test]
+    fn test_search_omissions_completion_requires_reported_sequence() {
+        for (reported_batch, mut last_chunk, complete) in [
+            (false, done_chunk(), false),
+            (true, done_chunk(), false),
+            (false, completion_chunk(0), true),
+            (false, completion_chunk(1), false),
+            (true, completion_chunk(1), true),
+        ] {
+            let (sender, _receiver) = async_channel::unbounded();
+            let status = SearchOmissionsStatus::default();
+            let mut omissions = RemoteSearchOmissions::new(sender, status.clone());
+            if reported_batch {
+                assert!(!omissions.receive(&mut omission_chunk(0)).unwrap());
+            }
+            assert!(omissions.receive(&mut last_chunk).unwrap_or(true));
+            assert_eq!(status.is_complete(), complete);
+        }
+    }
+
+    #[test]
+    fn test_search_omissions_rejects_invalid_batches() {
+        let mut invalid_path = omission_chunk(0);
+        invalid_path.omissions[0].path.as_mut().unwrap().path = "../private".to_owned();
+        let mut without_sequence = omission_chunk(0);
+        without_sequence.omissions_sequence = None;
+        for (mut chunk, received) in [
+            (invalid_path, 0),
+            (without_sequence, 0),
+            (omission_chunk(1), 0),
+            (omission_chunk(0), 2 * MAX_SEARCH_OMISSIONS),
+        ] {
+            let (sender, receiver) = async_channel::unbounded();
+            let status = SearchOmissionsStatus::default();
+            let mut omissions = RemoteSearchOmissions::new(sender, status.clone());
+            omissions.received = received;
+            assert!(omissions.receive(&mut chunk).is_err());
+            drop(omissions);
+            assert!(!status.is_complete());
+            assert_eq!(
+                receiver.try_recv(),
+                Err(async_channel::TryRecvError::Closed)
+            );
+        }
+        let (sender, _receiver) = async_channel::unbounded();
+        let mut omissions = RemoteSearchOmissions::new(sender, SearchOmissionsStatus::default());
+        omissions.received = MAX_SEARCH_OMISSIONS;
+        assert!(!omissions.receive(&mut omission_chunk(0)).unwrap());
+    }
+
+    fn done_chunk() -> proto::FindSearchCandidatesChunk {
+        proto::FindSearchCandidatesChunk {
+            variant: Some(proto::find_search_candidates_chunk::Variant::Done(
+                proto::FindSearchCandidatesDone {},
+            )),
+            ..proto::FindSearchCandidatesChunk::default()
+        }
+    }
+
+    fn completion_chunk(sequence: u64) -> proto::FindSearchCandidatesChunk {
+        proto::FindSearchCandidatesChunk {
+            omissions_sequence: Some(sequence),
+            ..proto::FindSearchCandidatesChunk::default()
+        }
+    }
+
+    fn omission_chunk(sequence: u64) -> proto::FindSearchCandidatesChunk {
+        proto::FindSearchCandidatesChunk {
+            omissions: vec![
+                SearchOmission {
+                    path: ProjectPath {
+                        worktree_id: WorktreeId::from_proto(1),
+                        path: Arc::from(
+                            RelPath::from_unix_str(&format!("{sequence:02}.log")).unwrap(),
+                        ),
+                    },
+                    reason: SearchOmissionReason::GitIgnored,
+                    is_dir: false,
+                }
+                .to_proto(),
+            ],
+            omissions_sequence: Some(sequence),
+            ..proto::FindSearchCandidatesChunk::default()
+        }
     }
 }

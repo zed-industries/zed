@@ -76,9 +76,13 @@ use debugger::{
 pub use environment::ProjectEnvironment;
 
 use futures::{
-    StreamExt,
-    channel::mpsc::{self, UnboundedReceiver},
+    FutureExt as _, StreamExt,
+    channel::{
+        mpsc::{self, UnboundedReceiver},
+        oneshot,
+    },
     future::try_join_all,
+    select_biased,
 };
 pub use image_store::{ImageItem, ImageStore};
 use image_store::{ImageItemEvent, ImageStoreEvent};
@@ -4956,7 +4960,12 @@ impl Project {
         })
     }
 
-    fn search_impl(&mut self, query: SearchQuery, cx: &mut Context<Self>) -> SearchResultsHandle {
+    fn search_impl(
+        &mut self,
+        query: SearchQuery,
+        include_private_omissions: bool,
+        cx: &mut Context<Self>,
+    ) -> SearchResultsHandle {
         let client: Option<(AnyProtoClient, _)> = if let Some(ssh_client) = &self.remote_client {
             Some((ssh_client.read(cx).proto_client(), 0))
         } else if let Some(remote_id) = self.remote_id() {
@@ -4989,7 +4998,9 @@ impl Project {
                 ),
             }
         };
-        searcher.into_handle(query, cx)
+        searcher
+            .include_private_omissions(include_private_omissions)
+            .into_handle(query, cx)
     }
 
     pub fn search(
@@ -4997,7 +5008,17 @@ impl Project {
         query: SearchQuery,
         cx: &mut Context<Self>,
     ) -> SearchResults<SearchResult> {
-        self.search_impl(query, cx).results(cx)
+        self.search_impl(query, true, cx)
+            .without_omissions()
+            .results(cx)
+    }
+
+    pub fn search_with_omissions(
+        &mut self,
+        query: SearchQuery,
+        cx: &mut Context<Self>,
+    ) -> SearchResults<SearchResult> {
+        self.search_impl(query, true, cx).results(cx)
     }
 
     pub fn request_lsp<R: LspCommand>(
@@ -6231,12 +6252,28 @@ impl Project {
             SearchQuery::from_proto(message.query.context("missing query field")?, path_style)?;
 
         let handle = message.handle;
+        let reports_omissions = message.report_omissions;
         let buffer_store = this.read_with(&cx, |this, _| this.buffer_store().clone());
         let client = this.read_with(&cx, |this, _| this.client());
+        let (stop_matches, matches_stopped) = oneshot::channel::<()>();
+        let mut matches_stopped = matches_stopped.fuse();
         let task = cx.spawn(async move |cx| {
             let results = this.update(cx, |this, cx| {
-                this.search_impl(query, cx).matching_buffers(cx)
+                this.search_impl(query, false, cx).matching_buffers(cx)
             });
+            let omissions_task = if reports_omissions {
+                cx.background_spawn(project_search::forward_search_omissions(
+                    results.omissions,
+                    results.omissions_status,
+                    AnyProtoClient::from(client.clone()),
+                    project_id,
+                    peer_id,
+                    handle,
+                ))
+            } else {
+                drop(results.omissions);
+                Task::ready(Ok(()))
+            };
             let (batcher, batches) = project_search::AdaptiveBatcher::new(cx.background_executor());
             let mut new_matches = Box::pin(results.rx);
 
@@ -6255,6 +6292,8 @@ impl Project {
                                         proto::FindSearchCandidatesMatches { buffer_ids },
                                     ),
                                 ),
+                                reports_omissions,
+                                ..proto::FindSearchCandidatesChunk::default()
                             })
                             .await?;
                     }
@@ -6262,7 +6301,14 @@ impl Project {
                 }
             });
 
-            while let Some((buffer, _)) = new_matches.next().await {
+            loop {
+                let next = select_biased! {
+                    _ = matches_stopped => None,
+                    next = new_matches.next().fuse() => next,
+                };
+                let Some((buffer, _)) = next else {
+                    break;
+                };
                 let is_private = buffer.read_with(cx, |buffer, _| {
                     buffer.file().is_some_and(|file| file.is_private())
                 });
@@ -6275,11 +6321,32 @@ impl Project {
                 });
                 batcher.push(buffer_id).await;
             }
+            drop(new_matches);
             batcher.flush().await;
 
-            sender_task.await?;
+            let sender_result = sender_task.await;
+            sender_result.as_ref().log_err();
+            if reports_omissions && sender_result.is_ok() {
+                client
+                    .request(proto::FindSearchCandidatesChunk {
+                        handle,
+                        peer_id: Some(peer_id),
+                        project_id,
+                        variant: Some(proto::find_search_candidates_chunk::Variant::Matches(
+                            proto::FindSearchCandidatesMatches {
+                                buffer_ids: Vec::new(),
+                            },
+                        )),
+                        reports_omissions,
+                        matches_complete: true,
+                        ..proto::FindSearchCandidatesChunk::default()
+                    })
+                    .await
+                    .log_err();
+            }
+            omissions_task.await.log_err();
 
-            let _ = client
+            let done_result = client
                 .request(proto::FindSearchCandidatesChunk {
                     handle,
                     peer_id: Some(peer_id),
@@ -6287,12 +6354,15 @@ impl Project {
                     variant: Some(proto::find_search_candidates_chunk::Variant::Done(
                         proto::FindSearchCandidatesDone {},
                     )),
+                    ..proto::FindSearchCandidatesChunk::default()
                 })
-                .await?;
+                .await;
+            sender_result?;
+            done_result?;
             anyhow::Ok(())
         });
         buffer_store.update(&mut cx, |this, _| {
-            this.register_ongoing_project_search((peer_id, handle), task);
+            this.register_ongoing_project_search((peer_id, handle), task, stop_matches);
         });
 
         Ok(proto::Ack {})

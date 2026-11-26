@@ -18,8 +18,8 @@ use git::{
     status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode},
 };
 use gpui::{
-    App, BackgroundExecutor, Entity, Modifiers, MouseButton, MouseDownEvent, TestAppContext,
-    UpdateGlobal, px, size,
+    App, AppContext as _, BackgroundExecutor, Entity, Modifiers, MouseButton, MouseDownEvent,
+    TestAppContext, UpdateGlobal, px, size,
 };
 use language::{
     Buffer, Diagnostic, DiagnosticEntry, DiagnosticMessage, DiagnosticSourceKind, FakeLspAdapter,
@@ -36,10 +36,11 @@ use project::{
         FormatTrigger, LspFormatTarget, SymbolLocation,
         log_store::{self, LanguageServerKind, LanguageServerLogKey, LogKind},
     },
-    search::{SearchQuery, SearchResult},
+    search::{SearchOmission, SearchOmissionReason, SearchQuery, SearchResult},
 };
 use rand::prelude::*;
 use rpc::proto;
+use search::project_search::{ProjectSearch, ProjectSearchView, perform_project_search};
 use serde_json::json;
 use settings::{LanguageServerFormatterSpecifier, PrettierSettingsContent, SettingsStore};
 use std::{
@@ -6335,6 +6336,104 @@ async fn test_concurrent_guest_lsp_requests_do_not_cancel_each_other(
     assert_eq!(references_c.await.unwrap().unwrap(), Vec::new());
 }
 
+#[gpui::test(iterations = 10)]
+async fn test_project_search_omissions_exclude_private_paths(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    cx_a.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_depth = Some(1);
+                settings.project.worktree.private_files =
+                    Some(vec!["private".to_owned(), "private.log".to_owned()].into());
+            });
+        });
+    });
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                ".gitignore": "ignored/\nprivate/\n*.log\n",
+                "deferred": { "file.txt": "needle" },
+                "ignored": { "file.txt": "needle" },
+                "private": { "file.txt": "needle" },
+                "private.log": "needle",
+                "single.log": "needle",
+                "visible.txt": "needle"
+            }),
+        )
+        .await;
+    let (project_a, _) = client_a.build_local_project(path!("/root"), cx_a).await;
+    let worktree_id = project_a.read_with(cx_a, |project, cx| {
+        project.visible_worktrees(cx).next().unwrap().read(cx).id()
+    });
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+    let results = project_b.update(cx_b, |project, cx| {
+        project.search_with_omissions(
+            SearchQuery::text(
+                "needle",
+                false,
+                false,
+                false,
+                util::paths::PathMatcher::default(),
+                util::paths::PathMatcher::default(),
+                false,
+                None,
+            )
+            .unwrap(),
+            cx,
+        )
+    });
+    let mut omissions = Vec::new();
+    while let Ok(batch) = results.omissions.recv().await {
+        omissions.extend(batch);
+    }
+    assert!(results.omissions_status.is_complete());
+    assert_eq!(
+        omissions,
+        vec![
+            SearchOmission {
+                path: ProjectPath::from((worktree_id, rel_path("deferred"))),
+                reason: SearchOmissionReason::NotIndexed,
+                is_dir: true,
+            },
+            SearchOmission {
+                path: ProjectPath::from((worktree_id, rel_path("ignored"))),
+                reason: SearchOmissionReason::GitIgnored,
+                is_dir: true,
+            },
+            SearchOmission {
+                path: ProjectPath::from((worktree_id, rel_path("single.log"))),
+                reason: SearchOmissionReason::GitIgnored,
+                is_dir: false,
+            },
+        ]
+    );
+    let mut paths = Vec::new();
+    while let Ok(result) = results.rx.recv().await {
+        if let SearchResult::Buffer { buffer, .. } = result {
+            paths.push(buffer.read_with(cx_b, |buffer, _| buffer.file().unwrap().path().clone()));
+        }
+    }
+    results.task_handle.await;
+    assert_eq!(paths, vec![Arc::from(rel_path("visible.txt"))]);
+}
+
 #[gpui::test]
 async fn test_project_search_cancel_and_chunk_routing(
     executor: BackgroundExecutor,
@@ -6429,6 +6528,7 @@ async fn test_project_search_cancel_and_chunk_routing(
         .send(proto::FindSearchCandidatesCancelled {
             project_id,
             handle: 77,
+            keep_omissions: false,
         })
         .unwrap();
     executor.run_until_parked();
@@ -6451,11 +6551,116 @@ async fn test_project_search_cancel_and_chunk_routing(
             ),
             limit: 10,
             handle: 77,
+            report_omissions: false,
+            include_private_omissions: false,
         })
         .await
         .unwrap();
     executor.run_until_parked();
     assert_eq!(ongoing_searches(cx_a), 0);
+}
+
+#[gpui::test]
+async fn test_project_search_view_finishes_omissions_after_limit(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "a.txt": "needle\n".repeat(project::Search::MAX_SEARCH_RESULT_RANGES + 1),
+                "b.txt": "needle"
+            }),
+        )
+        .await;
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/second"),
+            json!({
+                ".gitignore": "ignored/\n",
+                "ignored": { "c.txt": "needle" }
+            }),
+        )
+        .await;
+    let (project_a, _) = client_a.build_local_project(path!("/root"), cx_a).await;
+    let (second_worktree, _) = project_a
+        .update(cx_a, |project, cx| {
+            project.find_or_create_worktree(path!("/second"), true, cx)
+        })
+        .await
+        .unwrap();
+    let ignored_match = ProjectPath::from((
+        second_worktree.read_with(cx_a, |worktree, _| worktree.id()),
+        rel_path("ignored/c.txt"),
+    ));
+    executor.run_until_parked();
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    let (release, released) = oneshot::channel::<()>();
+    client_a.fs().before_read_dir(
+        path!("/second/ignored"),
+        Box::pin(async move {
+            released.await.ok();
+        }),
+    );
+    cx_b.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                let search = settings.editor.search.get_or_insert_default();
+                search.include_ignored = Some(true);
+                search.search_on_type = Some(false);
+            });
+        });
+    });
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let search_view = workspace_b.update_in(cx_b, |workspace, window, cx| {
+        let search =
+            cx.new(|cx| ProjectSearch::new(project_b.clone(), workspace.weak_handle(), cx));
+        let search_view =
+            cx.new(|cx| ProjectSearchView::new(workspace.weak_handle(), search, window, cx, None));
+        workspace.add_item_to_active_pane(Box::new(search_view.clone()), None, true, window, cx);
+        search_view
+    });
+    perform_project_search(&search_view, "needle", cx_b);
+    executor.advance_clock(Duration::from_millis(500));
+    executor.run_until_parked();
+    search_view.read_with(cx_b, |search_view, cx| {
+        assert_eq!(
+            search_view.get_matches(cx).len(),
+            project::Search::MAX_SEARCH_RESULT_RANGES + 1
+        );
+        assert_eq!(search_view.search_omissions_state(cx), None);
+    });
+    release.send(()).unwrap();
+    executor.run_until_parked();
+    search_view.read_with(cx_b, |search_view, cx| {
+        assert_eq!(search_view.search_omissions_state(cx), Some((true, 0)));
+    });
+    project_a.read_with(cx_a, |project, cx| {
+        assert!(
+            project
+                .buffer_store()
+                .read(cx)
+                .get_by_path(&ignored_match)
+                .is_none()
+        );
+    });
 }
 
 #[gpui::test]

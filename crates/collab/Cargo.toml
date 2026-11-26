@@ -118,6 +118,7 @@ remote = { workspace = true, features = ["test-support"] }
 remote_server.workspace = true
 rpc = { workspace = true, features = ["test-support"] }
 sea-orm.workspace = true
+search = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 session = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
