@@ -2401,10 +2401,14 @@ impl Editor {
         let Some(provider) = self.semantics_provider.clone() else {
             return Task::ready(Ok(Navigated::No));
         };
-        let head = self
+        let selection = self
             .selections
-            .newest::<MultiBufferOffset>(&self.display_snapshot(cx))
-            .head();
+            .newest::<MultiBufferOffset>(&self.display_snapshot(cx));
+        let head = if selection.is_empty() {
+            selection.head()
+        } else {
+            selection.start
+        };
         let buffer = self.buffer.read(cx);
         let Some((buffer, head)) = buffer.text_anchor_for_position(head, cx) else {
             return Task::ready(Ok(Navigated::No));
