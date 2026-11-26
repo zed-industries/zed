@@ -22,7 +22,7 @@ use buffer_diff::{
 use client::ProjectId;
 use collections::HashMap;
 pub use conflict_set::{ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate};
-use encoding_rs::{ISO_2022_JP, UTF_16BE, UTF_16LE};
+use encoding_rs::{Encoding, ISO_2022_JP, UTF_8, UTF_16BE, UTF_16LE};
 use file_content::{decode_text, encode_text};
 use fs::{Fs, RemoveOptions};
 use futures::{
@@ -869,6 +869,7 @@ pub struct Repository {
     initial_graph_data: HashMap<(LogSource, LogOrder), InitialGitGraphData>,
     commit_data_handler: CommitDataHandlerState,
     commit_data: HashMap<Oid, CommitDataState>,
+    revision_encodings: Arc<Mutex<HashMap<String, &'static Encoding>>>,
     auto_fetch: AutoFetchState,
 }
 
@@ -6784,6 +6785,7 @@ impl Repository {
             job_debug_queue: job_debug_queue::GitJobDebugQueue::new(),
             initial_graph_data: Default::default(),
             commit_data: Default::default(),
+            revision_encodings: Arc::default(),
             commit_data_handler: CommitDataHandlerState::Closed,
             auto_fetch: AutoFetchState::default(),
         };
@@ -6838,6 +6840,7 @@ impl Repository {
             pending_diff_base_loads: Default::default(),
             initial_graph_data: Default::default(),
             commit_data: Default::default(),
+            revision_encodings: Arc::default(),
             commit_data_handler: CommitDataHandlerState::Closed,
             auto_fetch: AutoFetchState::default(),
         }
@@ -11680,11 +11683,12 @@ fn blame_at_head(
         .head_commit
         .as_ref()
         .map(|commit| commit.sha.clone())
-        .filter(|_| !is_untracked && !repo_path.as_unix_str().contains('\n'))
+        .filter(|_| !is_untracked)
     else {
         return Task::ready(Ok(None));
     };
     let repository_state = repo.repository_state.clone();
+    let revision_encodings = repo.revision_encodings.clone();
 
     cx.background_spawn(async move {
         let revision: Oid = head_sha.parse()?;
@@ -11693,17 +11697,16 @@ fn blame_at_head(
         else {
             return Ok(None);
         };
+        let head_version = format!("{revision}:{}", repo_path.as_unix_str());
         let Some(mut head) = backend
-            .load_textconv_revision(format!("{revision}:{}", repo_path.as_unix_str()))
+            .load_textconv_revision(head_version.clone())
             .await
             .ok()
             .and_then(|content| decode_text(content).ok())
         else {
             return Ok(None);
         };
-        if is_binary_content(head.text.as_bytes())
-            || [ISO_2022_JP, UTF_16LE, UTF_16BE].contains(&head.encoding)
-        {
+        if [ISO_2022_JP, UTF_16LE, UTF_16BE].contains(&head.encoding) {
             return Ok(None);
         }
         if head.text.is_empty() {
@@ -11726,8 +11729,26 @@ fn blame_at_head(
             .await
             .with_context(|| format!("Failed to blame {:?}", repo_path.as_ref()))?;
         let buffer_text = (!is_unchanged).then(|| content.to_string());
-        let entries =
-            map_head_blame_through_diff(blame.entries, &head.text, buffer_text.as_deref());
+        let Some(entries) =
+            map_head_blame_through_diff(blame.entries, &head.text, buffer_text.as_deref())
+        else {
+            return Ok(None);
+        };
+        let entries = if head.encoding == UTF_8 {
+            Some(entries)
+        } else {
+            retain_credits_decoded_as_head(
+                backend.as_ref(),
+                &revision_encodings,
+                entries,
+                head_version,
+                head.encoding,
+                &content,
+            )
+            .await
+            .log_err()
+            .flatten()
+        };
         Ok(entries.map(|entries| Blame { entries, ..blame }))
     })
 }
@@ -11757,7 +11778,7 @@ fn map_head_blame_through_diff(
                 mapped.push(git::blame::BlameEntry {
                     range: start - head_rows.start + buffer_start
                         ..end - head_rows.start + buffer_start,
-                    ..entry.clone()
+                    ..blame_entry_for_rows(entry, start..end)
                 });
             }
             if entry.range.end > head_rows.end {
@@ -11773,6 +11794,88 @@ fn map_head_blame_through_diff(
     }
     keep_rows(head_row..head_row_count, buffer_row);
     Some(mapped)
+}
+
+async fn retain_credits_decoded_as_head(
+    backend: &dyn GitRepository,
+    revision_encodings: &Mutex<HashMap<String, &'static Encoding>>,
+    entries: Vec<git::blame::BlameEntry>,
+    head_version: String,
+    head_encoding: &'static Encoding,
+    content: &Rope,
+) -> Result<Option<Vec<git::blame::BlameEntry>>> {
+    let ascii_rows = {
+        let mut ascii_rows = Vec::new();
+        let mut lines = content.chunks().lines();
+        while let Some(line) = lines.next() {
+            ascii_rows.push(line.is_ascii());
+        }
+        ascii_rows
+    };
+    let entry_ascii_rows = |entry: &git::blame::BlameEntry| {
+        ascii_rows
+            .get(entry.range.start as usize..entry.range.end as usize)
+            .unwrap_or_default()
+    };
+    let version = |entry: &git::blame::BlameEntry| format!("{}:{}", entry.sha, entry.filename);
+
+    let mut versions = entries
+        .iter()
+        .filter(|entry| entry_ascii_rows(entry).contains(&false))
+        .map(version)
+        .collect::<BTreeSet<_>>();
+    if versions.is_empty() {
+        return Ok(Some(entries));
+    }
+    versions.insert(head_version.clone());
+    let unread_versions = {
+        let revision_encodings = revision_encodings.lock();
+        versions
+            .into_iter()
+            .filter(|version| !revision_encodings.contains_key(version))
+            .collect::<Vec<_>>()
+    };
+    if !unread_versions.is_empty() {
+        let encodings = backend.revision_encodings(unread_versions.clone()).await?;
+        revision_encodings.lock().extend(
+            unread_versions
+                .into_iter()
+                .zip(encodings)
+                .filter_map(|(version, encoding)| Some((version, encoding?))),
+        );
+    }
+    let revision_encodings = revision_encodings.lock();
+    if revision_encodings.get(&head_version) != Some(&head_encoding) {
+        return Ok(None);
+    }
+
+    let mut retained = Vec::new();
+    for entry in entries {
+        if revision_encodings.get(&version(&entry)) == Some(&head_encoding) {
+            retained.push(entry);
+            continue;
+        }
+        let mut start = entry.range.start;
+        for run in entry_ascii_rows(&entry).chunk_by(|left, right| left == right) {
+            let end = start + run.len() as u32;
+            if run.first() == Some(&true) {
+                retained.push(blame_entry_for_rows(&entry, start..end));
+            }
+            start = end;
+        }
+    }
+    Ok(Some(retained))
+}
+
+fn blame_entry_for_rows(
+    entry: &git::blame::BlameEntry,
+    rows: Range<u32>,
+) -> git::blame::BlameEntry {
+    git::blame::BlameEntry {
+        original_line_number: entry.original_line_number + (rows.start - entry.range.start),
+        range: rows,
+        ..entry.clone()
+    }
 }
 
 #[cfg(test)]
@@ -11892,6 +11995,14 @@ mod tests {
         );
         assert_eq!(map_blame(head, Some("\n"), &blame), Some(vec![]));
         assert_eq!(map_blame(head, Some(""), &blame), Some(vec![]));
+        assert_eq!(
+            map_head_blame_through_diff(head_blame(&[(1, 0..4)]), head, Some("b\nX\nd\n"))
+                .unwrap()
+                .into_iter()
+                .map(|entry| (entry.range, entry.original_line_number))
+                .collect::<Vec<_>>(),
+            [(0..1, 2), (2..3, 4)]
+        );
 
         for buffer_text in [None, Some("a\nB\nc\nd\n")] {
             assert_eq!(map_blame(head, buffer_text, &[(1, 0..5)]), None);

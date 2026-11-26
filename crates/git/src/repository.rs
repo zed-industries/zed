@@ -7,7 +7,8 @@ use crate::{Oid, RunHook, SHA256_HEX_LENGTH, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_channel::Sender;
 use collections::HashMap;
-use file_content::{ByteContent, decode_byte_header};
+use encoding_rs::Encoding;
+use file_content::{ByteContent, decode_byte_header, decode_text};
 use futures::channel::oneshot;
 use futures::future::BoxFuture;
 use futures::io::BufWriter;
@@ -823,6 +824,14 @@ pub trait GitRepository: Send + Sync {
 
     fn load_revisions(&self, revisions: Vec<String>)
     -> BoxFuture<'_, Result<Vec<Option<Vec<u8>>>>>;
+
+    fn revision_encodings(
+        &self,
+        revisions: Vec<String>,
+    ) -> BoxFuture<'_, Result<Vec<Option<&'static Encoding>>>> {
+        let contents = self.load_revisions(revisions);
+        async move { Ok(contents.await?.into_iter().map(blob_encoding).collect()) }.boxed()
+    }
 
     fn load_textconv_revision(&self, revision: String) -> BoxFuture<'_, Result<Vec<u8>>>;
 
@@ -1858,71 +1867,21 @@ impl GitRepository for RealGitRepository {
         &self,
         revisions: Vec<String>,
     ) -> BoxFuture<'_, Result<Vec<Option<Vec<u8>>>>> {
-        let git = self.git_binary();
         self.executor
-            .spawn(async move {
-                if revisions.is_empty() {
-                    return Ok(Vec::new());
-                }
-                if let Some(revision) = revisions.iter().find(|revision| revision.contains('\n')) {
-                    anyhow::bail!(
-                        "revision spec {revision:?} contains a newline and cannot be passed to git cat-file --batch"
-                    );
-                }
+            .spawn(read_revisions(
+                self.git_binary(),
+                revisions,
+                std::convert::identity,
+            ))
+            .boxed()
+    }
 
-                // `git` blocks once an unread stderr pipe fills, for example with one ambiguity
-                // warning per `HEAD` lookup when `refs/tags/HEAD` exists.
-                let mut process = git
-                    .build_command(&["cat-file", "--batch"])
-                    .stdin(Stdio::piped())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::null())
-                    .kill_on_drop(true)
-                    .spawn()?;
-
-                let mut stdin = BufWriter::new(process.stdin.take().context("no stdin")?);
-                let mut stdout = BufReader::new(process.stdout.take().context("no stdout")?);
-                let mut newline = [0u8; 1];
-
-                let mut header_bytes = Vec::new();
-                let mut results = Vec::with_capacity(revisions.len());
-                for rev in &revisions {
-                    stdin.write_all(rev.as_bytes()).await?;
-                    stdin.write_all(b"\n").await?;
-                    stdin.flush().await?;
-
-                    header_bytes.clear();
-                    stdout.read_until(b'\n', &mut header_bytes).await?;
-                    let header_line = String::from_utf8_lossy(&header_bytes);
-
-                    let parts: Vec<&str> = header_line.trim().split(' ').collect();
-                    match parts[..] {
-                        [.., "missing"] => {
-                            results.push(None);
-                        }
-                        [_, object_type, size_str] => {
-                            let size: usize = size_str
-                                .parse()
-                                .with_context(|| format!("invalid object size: {size_str}"))?;
-
-                            let mut content = vec![0u8; size];
-                            stdout.read_exact(&mut content).await?;
-                            stdout.read_exact(&mut newline).await?;
-
-                            if object_type == "blob" {
-                                results.push(Some(content));
-                            } else {
-                                results.push(None);
-                            }
-                        }
-                        _ => bail!("invalid cat-file header: {header_line}"),
-                    }
-                }
-
-                drop(stdin);
-                process.output().await?;
-                Ok(results)
-            })
+    fn revision_encodings(
+        &self,
+        revisions: Vec<String>,
+    ) -> BoxFuture<'_, Result<Vec<Option<&'static Encoding>>>> {
+        self.executor
+            .spawn(read_revisions(self.git_binary(), revisions, blob_encoding))
             .boxed()
     }
 
@@ -3565,6 +3524,74 @@ impl GitRepository for RealGitRepository {
     fn is_trusted(&self) -> bool {
         self.is_trusted.load(std::sync::atomic::Ordering::Acquire)
     }
+}
+
+async fn read_revisions<T>(
+    git: GitBinary,
+    revisions: Vec<String>,
+    mut read_blob: impl FnMut(Option<Vec<u8>>) -> T,
+) -> Result<Vec<T>> {
+    if revisions.is_empty() {
+        return Ok(Vec::new());
+    }
+    if let Some(revision) = revisions.iter().find(|revision| revision.contains('\n')) {
+        anyhow::bail!(
+            "revision spec {revision:?} contains a newline and cannot be passed to git cat-file --batch"
+        );
+    }
+
+    // `git` blocks once an unread stderr pipe fills, for example with one ambiguity
+    // warning per `HEAD` lookup when `refs/tags/HEAD` exists.
+    let mut process = git
+        .build_command(&["cat-file", "--batch"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()?;
+
+    let mut stdin = BufWriter::new(process.stdin.take().context("no stdin")?);
+    let mut stdout = BufReader::new(process.stdout.take().context("no stdout")?);
+    let mut newline = [0u8; 1];
+
+    let mut header_bytes = Vec::new();
+    let mut results = Vec::with_capacity(revisions.len());
+    for rev in &revisions {
+        stdin.write_all(rev.as_bytes()).await?;
+        stdin.write_all(b"\n").await?;
+        stdin.flush().await?;
+
+        header_bytes.clear();
+        stdout.read_until(b'\n', &mut header_bytes).await?;
+        let header_line = String::from_utf8_lossy(&header_bytes);
+
+        let parts: Vec<&str> = header_line.trim().split(' ').collect();
+        match parts[..] {
+            [.., "missing"] => {
+                results.push(read_blob(None));
+            }
+            [_, object_type, size_str] => {
+                let size: usize = size_str
+                    .parse()
+                    .with_context(|| format!("invalid object size: {size_str}"))?;
+
+                let mut content = vec![0u8; size];
+                stdout.read_exact(&mut content).await?;
+                stdout.read_exact(&mut newline).await?;
+
+                results.push(read_blob((object_type == "blob").then_some(content)));
+            }
+            _ => bail!("invalid cat-file header: {header_line}"),
+        }
+    }
+
+    drop(stdin);
+    process.output().await?;
+    Ok(results)
+}
+
+fn blob_encoding(content: Option<Vec<u8>>) -> Option<&'static Encoding> {
+    Some(decode_text(content?).ok()?.encoding)
 }
 
 async fn run_commit_data_reader(

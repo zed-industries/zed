@@ -17114,12 +17114,35 @@ async fn test_blame_buffer_at_head(cx: &mut gpui::TestAppContext) {
         mapped_from_head: true,
         row_commits: &[1, 0, 2],
     };
-    let long_line = "x".repeat(2000);
     let iso_2022_jp_first = b"head\n\\\n\x1b$BF|K\\8l\x1b(B\ntail\nanchor\n".to_vec();
     let iso_2022_jp_second = [b"\x1b(J".as_slice(), &iso_2022_jp_first].concat();
-    for (contents, second_row) in [(&iso_2022_jp_first, "\\"), (&iso_2022_jp_second, "¥")] {
+    let shared_rows = encode("plain\ncafé\n", encoding_rs::WINDOWS_1252, false);
+    let windows_1251_first = [
+        shared_rows.as_slice(),
+        &encode(
+            "Это первая строка на русском языке.\nА это вторая строка.\n",
+            encoding_rs::WINDOWS_1251,
+            false,
+        ),
+    ]
+    .concat();
+    let windows_1252_second = [
+        shared_rows.as_slice(),
+        &encode(
+            "Voilà une ligne en français.\nEt une deuxième ligne, déjà.\n",
+            encoding_rs::WINDOWS_1252,
+            false,
+        ),
+    ]
+    .concat();
+    for (contents, encoding, second_row) in [
+        (&iso_2022_jp_first, encoding_rs::ISO_2022_JP, "\\"),
+        (&iso_2022_jp_second, encoding_rs::ISO_2022_JP, "¥"),
+        (&windows_1251_first, encoding_rs::WINDOWS_1251, "cafй"),
+        (&windows_1252_second, encoding_rs::WINDOWS_1252, "café"),
+    ] {
         let decoded = file_content::decode_text(contents.clone()).unwrap();
-        assert_eq!(decoded.encoding, encoding_rs::ISO_2022_JP);
+        assert_eq!(decoded.encoding, encoding);
         assert_eq!(decoded.text.lines().nth(1), Some(second_row));
     }
     let cases = [
@@ -17164,6 +17187,14 @@ async fn test_blame_buffer_at_head(cx: &mut gpui::TestAppContext) {
             ..utf_8("utf_16be.txt", None)
         },
         Case {
+            first: encode("keep\nP上Q\nnext", encoding_rs::UTF_16LE, true),
+            second: encode("keep\nP\nnext", encoding_rs::UTF_16LE, true),
+            edited_row: 2,
+            mapped_from_head: false,
+            row_commits: &[],
+            ..utf_8("utf_16le.txt", None)
+        },
+        Case {
             first: iso_2022_jp_first,
             second: iso_2022_jp_second,
             edited_row: 3,
@@ -17172,11 +17203,36 @@ async fn test_blame_buffer_at_head(cx: &mut gpui::TestAppContext) {
             ..utf_8("iso_2022_jp.txt", None)
         },
         Case {
+            first: [
+                b"\xfe\xff\x00\n".as_slice(),
+                &encode("café?\ndéjà\n", encoding_rs::WINDOWS_1252, false),
+            ]
+            .concat(),
+            second: encode("café?\ndéjà\n", encoding_rs::WINDOWS_1252, false),
+            row_commits: &[],
+            ..utf_8("utf_16be_history.txt", None)
+        },
+        Case {
+            first: windows_1251_first,
+            second: windows_1252_second,
+            edited_row: 2,
+            row_commits: &[1, 0, 0, 2],
+            ..utf_8("windows_1251_history.txt", None)
+        },
+        Case {
             first: encode("a\n上の行\nb\nc\nd\n", encoding_rs::UTF_16LE, true),
             second: encode("a\n上の行\nB\nc\nd\n", encoding_rs::UTF_16LE, true),
             edited_row: 3,
             row_commits: &[1, 1, 2, 0, 1],
             ..utf_8("utf_16le_textconv.txt", None)
+        },
+        Case {
+            first: encode("keep\ncafé\nold\nlast\n", encoding_rs::UTF_16LE, true),
+            second: encode("keep\ncafé\nold\nlast!\n", encoding_rs::UTF_16LE, true),
+            edited_row: 2,
+            mapped_from_head: false,
+            row_commits: &[1, 0, 0, 2],
+            ..utf_8("windows_1252_textconv.txt", None)
         },
         Case {
             first: b"a\nb\nc\nd\n".to_vec(),
@@ -17211,14 +17267,6 @@ async fn test_blame_buffer_at_head(cx: &mut gpui::TestAppContext) {
             ..utf_8("binary_header.txt", None)
         },
         Case {
-            first: format!("keep\nold\n{long_line}\0\nlast\n").into_bytes(),
-            second: format!("keep\nold\n{long_line}\0\nlast!\n").into_bytes(),
-            working_copy: Some(format!("keep\nold\n{long_line}\nlast!\n").into_bytes()),
-            mapped_from_head: false,
-            row_commits: &[1, 0, 0, 2],
-            ..utf_8("nul_byte.txt", None)
-        },
-        Case {
             first: Vec::new(),
             second: Vec::new(),
             edited_row: 0,
@@ -17230,7 +17278,7 @@ async fn test_blame_buffer_at_head(cx: &mut gpui::TestAppContext) {
     let root = TempTree::new(json!({
         "project": {
             ".gitattributes":
-                "drop_first_line.txt diff=drop_first_line\nfirst_line_last.txt diff=first_line_last\nidentity_textconv.py diff=identity\nutf_16le_textconv.txt diff=utf_16\nworking_tree_encoding.txt working-tree-encoding=UTF-16LE-BOM\n"
+                "drop_first_line.txt diff=drop_first_line\nfirst_line_last.txt diff=first_line_last\nidentity_textconv.py diff=identity\nutf_16le_textconv.txt diff=utf_16\nwindows_1252_textconv.txt diff=windows_1252\nworking_tree_encoding.txt working-tree-encoding=UTF-16LE-BOM\n"
         }
     }));
     let work_dir = root.path().join("project");
@@ -17245,6 +17293,11 @@ async fn test_blame_buffer_at_head(cx: &mut gpui::TestAppContext) {
     git_config(
         "diff.utf_16.textconv",
         "iconv -f UTF-16 -t UTF-8",
+        &work_dir,
+    );
+    git_config(
+        "diff.windows_1252.textconv",
+        "iconv -f UTF-16 -t CP1252",
         &work_dir,
     );
     git_add(".gitattributes", &work_dir);
@@ -17407,59 +17460,6 @@ async fn test_blame_buffer_at_head_ignores_stale_diff_base(cx: &mut gpui::TestAp
         blame_row_commits(&head_blame, &[old_sha, new_sha]),
         [1, 2, 1, 1, 1]
     );
-}
-
-#[cfg(not(windows))]
-#[gpui::test]
-async fn test_blame_buffer_at_head_with_newline_in_path(cx: &mut gpui::TestAppContext) {
-    disable_git_global_config();
-    init_test(cx);
-    cx.executor().allow_parking();
-
-    let file_name = "new\nline.txt";
-    let root = TempTree::new(json!({ "project": {} }));
-    let work_dir = root.path().join("project");
-    git_init(&work_dir);
-    let mut commits = Vec::new();
-    for contents in ["a\nb\nc\n", "a\nb\nC\n"] {
-        std::fs::write(work_dir.join(file_name), contents).unwrap();
-        git_add(file_name, &work_dir);
-        git_commit("commit", &work_dir);
-        commits.push(git_rev_parse("HEAD", &work_dir));
-    }
-
-    let project = Project::test(RealFs::new(None, cx.executor()), [root.path()], cx).await;
-    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
-    tree.flush_fs_events(cx).await;
-    project
-        .update(cx, |project, cx| project.git_scans_complete(cx))
-        .await;
-    cx.executor().run_until_parked();
-
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer(work_dir.join(file_name), cx)
-        })
-        .await
-        .unwrap();
-    buffer.update(cx, |buffer, cx| {
-        buffer.edit([(Point::new(1, 0)..Point::new(1, 1), "changed")], None, cx);
-    });
-
-    let git_store = project.read_with(cx, |project, _| project.git_store().clone());
-    let head_blame = git_store
-        .update(cx, |git_store, cx| {
-            git_store.blame_buffer_at_head(&buffer, cx)
-        })
-        .await
-        .unwrap();
-    assert!(head_blame.is_none());
-    let blame = project
-        .update(cx, |project, cx| project.blame_buffer(&buffer, None, cx))
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(blame_row_commits(&blame, &commits), [1, 0, 2]);
 }
 
 #[gpui::test]

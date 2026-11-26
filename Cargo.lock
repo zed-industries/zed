@@ -6992,6 +6992,7 @@ dependencies = [
  "async-trait",
  "collections",
  "derive_more",
+ "encoding_rs",
  "file_content",
  "futures 0.3.34",
  "gpui",

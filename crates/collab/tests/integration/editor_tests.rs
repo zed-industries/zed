@@ -16,7 +16,7 @@ use editor::{
         expand_macro_recursively, wrap_with_abbreviation,
     },
 };
-use fs::Fs;
+use fs::{FakeCommitSnapshot, Fs};
 use futures::{
     FutureExt as _, SinkExt, StreamExt,
     channel::{mpsc, oneshot},
@@ -54,6 +54,7 @@ use settings::{
 use std::{
     any::TypeId,
     collections::BTreeSet,
+    mem,
     num::NonZeroU32,
     ops::{Deref as _, Range},
     path::{Path, PathBuf},
@@ -5318,7 +5319,25 @@ async fn test_git_blame_for_requested_version(
         .await;
     let dot_git = Path::new(path!("/my-repo/.git"));
     let head_sha = "a".repeat(40);
+    let shift_jis_blame = [
+        ("1b1b1b", "shift_jis.txt", 0..2),
+        ("0d0d0d", "renamed_from.txt", 2..3),
+    ]
+    .map(|(sha, filename, rows)| git::blame::BlameEntry {
+        filename: filename.to_owned(),
+        ..blame_entry(sha, rows)
+    });
     fs.with_git_state(dot_git, true, |state| {
+        for entry in &shift_jis_blame {
+            state.commit_history.push(FakeCommitSnapshot {
+                head_contents: HashMap::from_iter([(
+                    repo_path(&entry.filename),
+                    shift_jis_bytes.clone(),
+                )]),
+                index_contents: HashMap::default(),
+                sha: entry.sha.to_string(),
+            });
+        }
         state
             .head_contents
             .insert(repo_path("shift_jis.txt"), shift_jis_bytes);
@@ -5330,7 +5349,7 @@ async fn test_git_blame_for_requested_version(
         state.blames_at_revision.insert(
             (repo_path("shift_jis.txt"), head_sha.parse().unwrap()),
             git::blame::Blame {
-                entries: vec![blame_entry("1b1b1b", 0..2), blame_entry("0d0d0d", 2..3)],
+                entries: shift_jis_blame.to_vec(),
                 ..Default::default()
             },
         );
@@ -5417,7 +5436,10 @@ async fn test_git_blame_for_requested_version(
         ]
     );
     buffer_b.read_with(cx_b, |buffer, _| {
-        assert!(buffer.text().starts_with("later\n"))
+        assert_eq!(
+            buffer.text(),
+            "later\n一行目の日本語\nchanged\n三行目の日本語\n"
+        )
     });
     editor_b.update(cx_b, |editor, cx| {
         let rows = (0..4)
@@ -5443,6 +5465,32 @@ async fn test_git_blame_for_requested_version(
             ]
         );
     });
+
+    fs.with_git_state(dot_git, false, |state| state.load_revisions_calls.clear())
+        .unwrap();
+    let blame = project_b
+        .update(cx_b, |project, cx| {
+            project.blame_buffer(&buffer_b, None, cx)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        commit_rows(blame),
+        [
+            ("1b1b1b".parse().unwrap(), 1..2),
+            ("0d0d0d".parse().unwrap(), 3..4)
+        ]
+    );
+    let load_revisions_calls = fs
+        .with_git_state(dot_git, false, |state| {
+            mem::take(&mut state.load_revisions_calls)
+        })
+        .unwrap();
+    assert_eq!(
+        load_revisions_calls,
+        [vec![format!("{head_sha}:shift_jis.txt")]]
+    );
 
     let filtered_buffer_b = project_b
         .update(cx_b, |project, cx| {
