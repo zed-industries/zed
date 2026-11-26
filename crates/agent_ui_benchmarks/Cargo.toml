@@ -10,7 +10,7 @@ workspace = true
 
 [package.metadata.cargo-shear]
 # Used by the path-included production module and the gpui::bench expansion.
-ignored = ["futures", "gpui_platform"]
+ignored = ["gpui_platform"]
 
 [dev-dependencies]
 collections.workspace = true

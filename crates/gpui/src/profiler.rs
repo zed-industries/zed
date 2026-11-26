@@ -954,8 +954,9 @@ pub struct PresentTiming {
     pub present_start: Instant,
     /// When the platform submission completed.
     pub present_end: Instant,
-    /// The interval since the previous newly drawn frame was submitted, when
-    /// both frames belong to an active animation.
+    /// The interval since the previous animation frame was submitted, when
+    /// both belong to an active animation. Animation frames are newly drawn
+    /// frames and presents that only advance GPU scene animations.
     pub animation_interval: Option<Duration>,
 }
 
@@ -998,7 +999,7 @@ pub struct FrameDurationSnapshot {
 /// [`RefreshIntervalFrames`]. Each bucket counts values up to and including its
 /// bound; a final bucket counts everything longer.
 #[cfg(feature = "profiler")]
-pub const FRAME_DURATION_BUCKETS_MS: [u64; 9] = [4, 8, 16, 33, 50, 100, 250, 500, 1000];
+pub const FRAME_DURATION_BUCKETS_MS: [u64; 11] = [1, 2, 4, 8, 16, 33, 50, 100, 250, 500, 1000];
 
 /// Upper bounds, in percent of the display's real refresh interval, of the
 /// work-per-frame buckets in [`RefreshIntervalFrames`]. Each bucket counts
@@ -1203,6 +1204,7 @@ pub struct WindowProfiler {
     mid_draw_events_dropped: u64,
     last_present_at: Option<Instant>,
     animating_at_last_present: bool,
+    throttled_since_present: bool,
     pending_frame: Option<FrameTiming>,
     refresh_interval: Option<Duration>,
     frame_signal_at: Option<Instant>,
@@ -1244,6 +1246,7 @@ impl WindowProfiler {
             mid_draw_events_dropped: 0,
             last_present_at: None,
             animating_at_last_present: false,
+            throttled_since_present: false,
             pending_frame: None,
             refresh_interval: None,
             frame_signal_at: None,
@@ -1336,6 +1339,12 @@ impl WindowProfiler {
         journal::end_foreground_turn();
     }
 
+    /// Records that frame pacing deferred the pending frame, so its latency
+    /// measures the frame rate limit and isn't recorded when it presents.
+    pub fn record_frame_throttled(&mut self) {
+        self.throttled_since_present = true;
+    }
+
     /// Records when the frame signal for the frame the next draw will produce
     /// fired. Coalesced signals report the first.
     pub fn record_frame_signal(&mut self, signal_at: Option<Instant>) {
@@ -1426,19 +1435,23 @@ impl WindowProfiler {
     /// Records that a frame was presented.
     ///
     /// `next_frame_scheduled` marks the animation state for the interval
-    /// ending at the next newly drawn frame's presentation.
+    /// ending at the next animation frame's presentation. `scene_animating`
+    /// marks a present that advances GPU scene animations, which is an
+    /// animation frame even when nothing was newly drawn.
     pub fn record_present(
         &mut self,
         present_start: Instant,
         present_end: Instant,
         window_active: bool,
         next_frame_scheduled: bool,
+        scene_animating: bool,
     ) {
         self.record_present_at(
             present_start,
             present_end,
             window_active,
             next_frame_scheduled,
+            scene_animating,
         );
     }
 
@@ -1485,9 +1498,12 @@ impl WindowProfiler {
         present_end: Instant,
         window_active: bool,
         next_frame_scheduled: bool,
+        scene_animating: bool,
     ) {
+        let throttled = std::mem::take(&mut self.throttled_since_present);
         let mut responded_to_input = false;
         if let Some(first_input_at) = self.first_input_at.take()
+            && !throttled
             && journal::frame_sample_is_valid(self.window_id, first_input_at)
         {
             responded_to_input = true;
@@ -1508,11 +1524,12 @@ impl WindowProfiler {
             .map(|mut frame| {
                 frame.dirty_at = frame
                     .dirty_at
-                    .filter(|at| journal::frame_sample_is_valid(self.window_id, *at));
+                    .filter(|at| !throttled && journal::frame_sample_is_valid(self.window_id, *at));
                 frame
             });
+        let is_animation_frame = frame.is_some() || scene_animating;
         let animation_interval =
-            if frame.is_some() && self.animating_at_last_present && window_active {
+            if is_animation_frame && self.animating_at_last_present && window_active {
                 self.last_present_at
                     .filter(|at| journal::frame_sample_is_valid(self.window_id, *at))
                     .map(|last_present_at| present_end.duration_since(last_present_at))
@@ -1527,6 +1544,16 @@ impl WindowProfiler {
         };
         journal::record_present(present_timing, frame);
 
+        if is_animation_frame {
+            if let Some(animation_interval) = animation_interval {
+                self.present_interval_histogram
+                    .record(animation_interval.as_nanos() as u64)
+                    .ok();
+            }
+            self.last_present_at = Some(present_end);
+            self.animating_at_last_present = next_frame_scheduled && window_active;
+        }
+
         let Some(frame) = frame else {
             return;
         };
@@ -1540,16 +1567,7 @@ impl WindowProfiler {
         {
             log::error!("failed to record dirty-to-present frame timing: {error}");
         }
-
-        if let Some(animation_interval) = animation_interval {
-            self.present_interval_histogram
-                .record(animation_interval.as_nanos() as u64)
-                .ok();
-        }
         record_frame_event(FrameEvent::Present(present_timing));
-
-        self.last_present_at = Some(present_end);
-        self.animating_at_last_present = next_frame_scheduled && window_active;
     }
 
     fn record_draw_timing(&mut self, timing: FrameTiming) {
@@ -1665,7 +1683,7 @@ mod tests {
             let mut profiler = WindowProfiler::new(id).expect("valid histograms");
             let old = Instant::now() - Duration::from_secs(1);
             record_test_draw(&mut profiler, old);
-            profiler.record_present_at(old, old, true, true);
+            profiler.record_present_at(old, old, true, true, false);
             profiler.first_input_at = Some(old);
             profiler.pending_input_count = 1;
             profiler.begin_draw();
@@ -1678,7 +1696,7 @@ mod tests {
             }
             profiler.end_draw(Some(old), 1);
             let now = Instant::now();
-            profiler.record_present_at(now, now, true, true);
+            profiler.record_present_at(now, now, true, true, false);
             assert_eq!(
                 profiler.draw_duration_histogram.len(),
                 if sleep { 1 } else { 2 }
@@ -1689,7 +1707,7 @@ mod tests {
             profiler.begin_draw();
             profiler.end_draw(Some(Instant::now()), 1);
             let now = Instant::now();
-            profiler.record_present_at(now, now, true, true);
+            profiler.record_present_at(now, now, true, true, false);
             assert_eq!(profiler.dirty_to_present_histogram.len(), 2);
         }
     }
@@ -1816,6 +1834,7 @@ mod tests {
                 at(frame.present_start_ms + 1),
                 true,
                 false,
+                false,
             );
         }
 
@@ -1929,14 +1948,15 @@ mod tests {
         let mut collector = FrameTimingCollector::new();
 
         record_test_draw(&mut window_profiler, start);
-        window_profiler.record_present_at(start, start, true, true);
+        window_profiler.record_present_at(start, start, true, true, false);
         record_test_draw(&mut window_profiler, start + FRAME);
-        window_profiler.record_present_at(start + FRAME, start + FRAME, true, true);
+        window_profiler.record_present_at(start + FRAME, start + FRAME, true, true, false);
         window_profiler.record_present_at(
             start + FRAME + FRAME / 2,
             start + FRAME + FRAME / 2,
             true,
             true,
+            false,
         );
 
         let present_timings = collector
@@ -2037,13 +2057,36 @@ mod tests {
         let start = Instant::now();
 
         draw_and_present(&mut window_profiler, start, true, true);
-        window_profiler.record_present_at(start + FRAME / 2, start + FRAME / 2, true, true);
+        window_profiler.record_present_at(start + FRAME / 2, start + FRAME / 2, true, true, false);
         draw_and_present(&mut window_profiler, start + FRAME, true, true);
 
         assert_eq!(window_profiler.present_interval_histogram.len(), 1);
         assert!(
             window_profiler.present_interval_histogram.max() >= (FRAME * 3 / 4).as_nanos() as u64
         );
+    }
+
+    #[test]
+    fn records_intervals_between_presents_of_gpu_scene_animations() {
+        let mut window_profiler =
+            WindowProfiler::new(WindowId::from(10)).expect("window profiler should initialize");
+        let start = Instant::now();
+
+        draw_and_present(&mut window_profiler, start, true, true);
+        // Frames that only advance GPU animations present without drawing.
+        for frame in 1..=3 {
+            let presented_at = start + FRAME * frame;
+            window_profiler.record_present_at(presented_at, presented_at, true, true, true);
+        }
+        assert_eq!(window_profiler.present_interval_histogram.len(), 3);
+        assert!(window_profiler.present_interval_histogram.max() < (FRAME * 2).as_nanos() as u64);
+
+        // The last animation frame ends the animation.
+        let presented_at = start + FRAME * 4;
+        window_profiler.record_present_at(presented_at, presented_at, true, false, true);
+        let presented_at = start + FRAME * 50;
+        window_profiler.record_present_at(presented_at, presented_at, true, true, true);
+        assert_eq!(window_profiler.present_interval_histogram.len(), 4);
     }
 
     #[cfg(feature = "profiler")]
@@ -2072,7 +2115,7 @@ mod tests {
         let present_end = draw_end + Duration::from_millis(6);
 
         record_test_draw(&mut window_profiler, draw_end);
-        window_profiler.record_present_at(present_end, present_end, true, false);
+        window_profiler.record_present_at(present_end, present_end, true, false, false);
 
         let snapshot = window_profiler.frame_duration_snapshot();
         let histogram = snapshot.dirty_to_present_histogram;
@@ -2109,7 +2152,7 @@ mod tests {
         );
         window_profiler.end_input(true);
         record_test_draw(&mut window_profiler, presented_at);
-        window_profiler.record_present_at(presented_at, presented_at, true, false);
+        window_profiler.record_present_at(presented_at, presented_at, true, false, false);
 
         let snapshot = window_profiler.input_latency_snapshot();
         assert_eq!(snapshot.latency_histogram.len(), 1);
@@ -2208,6 +2251,7 @@ mod tests {
             presented_at,
             window_active,
             next_frame_scheduled,
+            false,
         );
     }
 

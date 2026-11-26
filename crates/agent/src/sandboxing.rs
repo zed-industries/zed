@@ -192,6 +192,7 @@ pub fn settings_sandbox_policy(persistent: &SandboxPermissions) -> SandboxPolicy
         SandboxNetPolicy::Restricted {
             allowed_domains: persistent.network_hosts.clone(),
             allowed_tcp_ports: Vec::new(),
+            allow_system_network_services: true,
         }
     };
     SandboxPolicy {
@@ -226,8 +227,7 @@ pub(crate) fn terminal_shell(project: &Project, cx: &App) -> String {
         // So, we avoid selecting Git Bash or MSIX versions of PowerShell when the
         // native Windows sandbox is enabled.
         let shell = util::get_windows_system_shell();
-        let is_packaged = shell.to_ascii_lowercase().contains(r"\windowsapps\");
-        if !is_packaged || sandbox::can_launch_packaged_apps() {
+        if !shell.to_ascii_lowercase().contains(r"\windowsapps\") {
             return shell;
         }
         let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
@@ -515,6 +515,7 @@ impl ThreadSandboxGrants {
                     .map(|host| host.to_string())
                     .collect(),
                 allowed_tcp_ports: Vec::new(),
+                allow_system_network_services: true,
             }
         };
         SandboxPolicy {
@@ -761,6 +762,7 @@ mod tests {
                 SandboxNetPolicy::Restricted {
                     allowed_domains: hosts.iter().map(|h| h.to_string()).collect(),
                     allowed_tcp_ports: Vec::new(),
+                    allow_system_network_services: true,
                 }
             },
             allowed_unix_sockets: Vec::new(),
@@ -880,6 +882,7 @@ mod tests {
             SandboxNetPolicy::Restricted {
                 allowed_domains: vec!["github.com".to_string()],
                 allowed_tcp_ports: Vec::new(),
+                allow_system_network_services: true,
             }
         );
 
@@ -942,6 +945,7 @@ mod tests {
             SandboxNetPolicy::Restricted {
                 allowed_domains: vec!["*.npmjs.org".to_string()],
                 allowed_tcp_ports: Vec::new(),
+                allow_system_network_services: true,
             }
         );
 

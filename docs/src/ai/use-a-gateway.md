@@ -123,7 +123,7 @@ You can set a custom endpoint for Vercel AI Gateway in settings:
 
 ## Amazon Bedrock {#amazon-bedrock}
 
-Use Amazon Bedrock when you want model access through AWS.
+Use Amazon Bedrock when you want model access through AWS. Zed lists the models that have an [inference profile](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles.html) in your Region.
 
 Bedrock supports models that support streaming tool use. See [Amazon Bedrock's Tool Use documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-supported-models-features.html).
 
@@ -131,15 +131,17 @@ Your AWS credentials need these permissions:
 
 - `bedrock:InvokeModelWithResponseStream`
 - `bedrock:InvokeModel`
+- `bedrock:ListInferenceProfiles`
+- `bedrock:ListFoundationModels`
+
+Without the two `List` permissions, Zed offers the models that [models.dev](https://models.dev) lists for your Region.
 
 Bedrock supports Zed-prefixed AWS environment variables so Zed does not override or consume your normal AWS credentials:
 
 - `ZED_ACCESS_KEY_ID`
 - `ZED_SECRET_ACCESS_KEY`
 - `ZED_SESSION_TOKEN`
-- `ZED_AWS_PROFILE`
 - `ZED_AWS_REGION`
-- `ZED_AWS_ENDPOINT`
 - `ZED_BEDROCK_BEARER_TOKEN`
 
 ### Bedrock Authentication {#bedrock-authentication}
@@ -215,7 +217,7 @@ Some AWS environments require a guardrail on every Bedrock API call. Add `guardr
 
 ### Custom Bedrock Models {#bedrock-custom-models}
 
-Add models that are not yet built into Zed with `available_models`. Use the Bedrock model ID as `name`, including a region prefix when you want a specific inference profile:
+Add models that Zed does not list with `available_models`. Use the Bedrock model ID as `name`, including a region prefix when you want a specific inference profile:
 
 ```json [settings]
 {
@@ -268,7 +270,7 @@ To send Bedrock Converse requests to a proxy or gateway instead of AWS, set `end
 }
 ```
 
-[Mantle models](#bedrock-mantle-models), including the built-in GPT-5.6, GPT-5.5, GPT-5.4, and Grok 4.3 models and any models in `mantle_available_models`, are called through a different service with a different request shape, so they ignore `endpoint_url` and go to AWS.
+[Mantle models](#bedrock-mantle-models) are called through a different service with a different request shape, so they ignore `endpoint_url` and go to AWS.
 
 If your gateway serves one of those models over the Converse API, add it as a [custom Bedrock model](#bedrock-custom-models) so Zed calls it through `endpoint_url`. Use the model ID your gateway expects as `name`:
 
@@ -292,11 +294,11 @@ If your gateway serves one of those models over the Converse API, add it as a [c
 }
 ```
 
-Don't use an ID that a Mantle model already uses as `name`, whether it's built in (such as `gpt-5.6-luna`) or listed in `mantle_available_models`. A Mantle model with the same ID replaces the custom model, so requests go to AWS instead of your gateway.
+Don't use an ID that a model in `mantle_available_models` already uses as `name`. A Mantle model with the same ID replaces the custom model, so requests go to AWS instead of your gateway.
 
 ### Bedrock Mantle Models {#bedrock-mantle-models}
 
-Some models, such as the GPT-5.6 family (Sol, Terra, and Luna), GPT-5.5, GPT-5.4, and Grok 4.3, aren't available through Bedrock's Converse API and are only reachable through `bedrock-mantle`, AWS's OpenAI-compatible inference endpoint. Zed routes these models through `bedrock-mantle` automatically; they appear alongside the rest of the Bedrock models in the model picker once you're authenticated, with no extra configuration required.
+`bedrock-mantle` is AWS's OpenAI-compatible inference endpoint. Zed has no built-in Mantle models.
 
 Mantle models require IAM permissions for the `bedrock-mantle` endpoint (for example via the `AmazonBedrockMantleInferenceAccess` managed policy) in addition to whatever permissions your existing Bedrock credentials already have, and `bedrock-mantle` is only available in [some AWS Regions](https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-mantle.html#regions). Zed surfaces an error naming the current Region and the supported ones if you try to use a Mantle model outside of them.
 

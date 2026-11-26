@@ -1726,6 +1726,7 @@ impl Terminal {
         &mut self,
         event: &InternalEvent,
         term: &mut AlacrittyTerm,
+        mode: MouseInputMode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1766,7 +1767,7 @@ impl Terminal {
             InternalEvent::Scroll(scroll) => {
                 trace!("Scrolling: scroll={scroll:?}");
                 scroll_display(term, *scroll);
-                self.refresh_hovered_word(window, cx);
+                self.refresh_hovered_word(mode, window, cx);
 
                 if self.vi_mode_enabled {
                     update_vi_cursor_for_scroll(term, *scroll);
@@ -1829,12 +1830,12 @@ impl Terminal {
             InternalEvent::ScrollToPoint(point) => {
                 trace!("Scrolling to point: point={point:?}");
                 scroll_to_point(term, *point);
-                self.refresh_hovered_word(window, cx);
+                self.refresh_hovered_word(mode, window, cx);
             }
             InternalEvent::MoveViCursorToPoint(point) => {
                 trace!("Move vi cursor to point: point={point:?}");
                 vi_goto_point(term, *point);
-                self.refresh_hovered_word(window, cx);
+                self.refresh_hovered_word(mode, window, cx);
             }
             InternalEvent::ToggleViMode => {
                 trace!("Toggling vi mode");
@@ -2465,10 +2466,11 @@ impl Terminal {
     pub fn try_modifiers_change(
         &mut self,
         modifiers: &Modifiers,
+        mode: MouseInputMode,
         window: &Window,
         cx: &mut Context<Self>,
     ) {
-        self.schedule_find_hyperlink(*modifiers, window.mouse_position(), cx);
+        self.schedule_find_hyperlink(*modifiers, window.mouse_position(), mode, cx);
     }
 
     ///Paste text into the terminal
@@ -2482,18 +2484,18 @@ impl Terminal {
         self.input(paste_text.into_bytes());
     }
 
-    pub fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn sync(&mut self, mode: MouseInputMode, window: &mut Window, cx: &mut Context<Self>) {
         let term = self.term.clone();
         let mut terminal = term.lock_unfair();
         //Note that the ordering of events matters for event processing
         while let Some(e) = self.events.pop_front() {
-            self.process_terminal_event(&e, &mut terminal, window, cx)
+            self.process_terminal_event(&e, &mut terminal, mode, window, cx)
         }
 
         self.last_content = make_content(&terminal, &self.last_content);
         if self.last_content.grid_lines_change == GridLinesChange::Changed {
             debug_assert!(self.last_content.last_hovered_word.is_none());
-            self.refresh_hovered_word(window, cx);
+            self.refresh_hovered_word(mode, window, cx);
 
             // Because refresh_hovered_word() may result
             // in new events, but will not trigger a repaint
@@ -2553,6 +2555,10 @@ impl Terminal {
             && !shift
     }
 
+    fn can_open_links(&self, shift: bool, mode: MouseInputMode, cx: &App) -> bool {
+        TerminalSettings::get_global(cx).open_links_in_mouse_mode || !self.mouse_mode(shift, mode)
+    }
+
     pub fn mouse_move(&mut self, e: &MouseMoveEvent, mode: MouseInputMode, cx: &mut Context<Self>) {
         let position = e.position - self.last_content.terminal_bounds.bounds.origin;
         if self.mouse_mode(e.modifiers.shift, mode) {
@@ -2582,9 +2588,23 @@ impl Terminal {
                     }
                 }
             }
-        } else {
-            self.schedule_find_hyperlink(e.modifiers, e.position, cx);
+            // A drag that did not start on a link belongs to the app, so
+            // releasing over a link will not open it.
+            if e.pressed_button.is_some()
+                && !self.mouse_down_hyperlink.as_ref().is_some_and(|hyperlink| {
+                    hyperlink.range.contains(grid_point(
+                        position,
+                        self.last_content.terminal_bounds,
+                        self.last_content.display_offset,
+                    ))
+                })
+            {
+                self.clear_hyperlink(cx);
+                cx.notify();
+                return;
+            }
         }
+        self.schedule_find_hyperlink(e.modifiers, e.position, mode, cx);
         cx.notify();
     }
 
@@ -2592,11 +2612,13 @@ impl Terminal {
         &mut self,
         modifiers: Modifiers,
         position: GpuiPoint<Pixels>,
+        mode: MouseInputMode,
         cx: &mut Context<Self>,
     ) {
         if self.selection_phase == SelectionPhase::Selecting
             || !modifiers.secondary(cx)
             || !self.last_content.terminal_bounds.bounds.contains(&position)
+            || !self.can_open_links(modifiers.shift, mode, cx)
         {
             self.clear_hyperlink(cx);
             return;
@@ -2730,8 +2752,7 @@ impl Terminal {
 
         if e.button == MouseButton::Left
             && e.modifiers.secondary(cx)
-            && (TerminalSettings::get_global(cx).open_links_in_mouse_mode
-                || !self.mouse_mode(e.modifiers.shift, mode))
+            && self.can_open_links(e.modifiers.shift, mode, cx)
         {
             self.mouse_down_hyperlink = self.find_hyperlink_at_point(point);
 
@@ -2911,8 +2932,13 @@ impl Terminal {
         }
     }
 
-    fn refresh_hovered_word(&mut self, window: &Window, cx: &mut Context<Self>) {
-        self.schedule_find_hyperlink(window.modifiers(), window.mouse_position(), cx);
+    fn refresh_hovered_word(
+        &mut self,
+        mode: MouseInputMode,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.schedule_find_hyperlink(window.modifiers(), window.mouse_position(), mode, cx);
     }
 
     fn determine_scroll_lines(&mut self, e: &ScrollEvent, scroll_multiplier: f32) -> Option<i32> {
@@ -4127,7 +4153,7 @@ mod tests {
         cx.run_until_parked();
 
         cx.update_window_entity(&terminal, |terminal, window, cx| {
-            terminal.sync(window, cx);
+            terminal.sync(MouseInputMode::ReportToTerminal, window, cx);
             assert!(terminal.last_content.mode.intersects(Modes::MOUSE_MODE));
             assert_eq!(display_offset(&terminal.term.lock()), 0);
 
@@ -4138,7 +4164,7 @@ mod tests {
             };
 
             terminal.scroll_wheel(&scroll_event, 1.0, MouseInputMode::LocalSelection);
-            terminal.sync(window, cx);
+            terminal.sync(MouseInputMode::ReportToTerminal, window, cx);
             assert!(display_offset(&terminal.term.lock()) > 0);
             assert!(terminal.take_input_log().is_empty());
             assert!(terminal.take_pty_write_log().is_empty());
@@ -4151,7 +4177,7 @@ mod tests {
         cx.run_until_parked();
 
         cx.update_window_entity(&terminal, |terminal, window, cx| {
-            terminal.sync(window, cx);
+            terminal.sync(MouseInputMode::ReportToTerminal, window, cx);
             assert!(
                 terminal
                     .last_content
@@ -4166,7 +4192,7 @@ mod tests {
                 ..Default::default()
             };
             terminal.scroll_wheel(&scroll_event, 1.0, MouseInputMode::LocalSelection);
-            terminal.sync(window, cx);
+            terminal.sync(MouseInputMode::ReportToTerminal, window, cx);
             assert_eq!(display_offset(&terminal.term.lock()), 0);
             assert!(terminal.take_input_log().is_empty());
             assert!(terminal.take_pty_write_log().is_empty());
@@ -5044,7 +5070,7 @@ mod tests {
                 bounds(point(px(0.), px(0.)), size(px(50.), px(160.))),
             );
             terminal.set_size(wide);
-            terminal.sync(window, cx);
+            terminal.sync(MouseInputMode::ReportToTerminal, window, cx);
             terminal.set_size(narrow);
             terminal.scroll_up_by(1);
             terminal.set_size(wide);
@@ -5052,7 +5078,7 @@ mod tests {
                 .replace_display_output(b"\x1b[?1049habcdefghijklmnop", cx)
                 .expect("snapshot at latest dimensions");
             assert_eq!(terminal.get_content().trim(), "abcdefghijklmnop");
-            terminal.sync(window, cx);
+            terminal.sync(MouseInputMode::ReportToTerminal, window, cx);
             assert_eq!(terminal.get_content().trim(), "abcdefghijklmnop");
             assert_eq!(terminal.last_content.terminal_bounds, wide);
         });
@@ -5189,8 +5215,9 @@ mod tests {
         };
         use crate::*;
         use gpui::{
-            Context, Entity, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-            Pixels, Subscription, TestAppContext, VisualContext, VisualTestContext, point,
+            BorrowAppContext as _, Context, Entity, Modifiers, MouseButton, MouseDownEvent,
+            MouseMoveEvent, MouseUpEvent, Pixels, Subscription, TestAppContext, VisualContext,
+            VisualTestContext, point,
         };
         use std::ops::RangeInclusive;
         use util::default;
@@ -5620,11 +5647,19 @@ mod tests {
             }
 
             fn ctrl_mouse_move_to(&mut self, position: GpuiPoint<Pixels>) {
+                self.ctrl_mouse_move(position, None);
+            }
+
+            fn ctrl_mouse_move(
+                &mut self,
+                position: GpuiPoint<Pixels>,
+                pressed_button: Option<MouseButton>,
+            ) {
                 let modifiers = Modifiers::secondary_key(self.cx);
                 let move_event = MouseMoveEvent {
                     position,
+                    pressed_button,
                     modifiers,
-                    ..default()
                 };
                 self.window.simulate_mouse_move(position, self.cx);
                 self.unthrottle();
@@ -5635,8 +5670,12 @@ mod tests {
             fn try_modifiers_change(&mut self, modifiers: Modifiers) {
                 self.window.set_modifiers(modifiers);
                 self.unthrottle();
-                self.terminal
-                    .try_modifiers_change(&modifiers, self.window, self.cx);
+                self.terminal.try_modifiers_change(
+                    &modifiers,
+                    MouseInputMode::ReportToTerminal,
+                    self.window,
+                    self.cx,
+                );
             }
 
             fn write_output_lines(&mut self, output: &str, repeat: usize) {
@@ -5658,7 +5697,8 @@ mod tests {
 
             fn sync(&mut self) {
                 self.unthrottle();
-                self.terminal.sync(self.window, self.cx);
+                self.terminal
+                    .sync(MouseInputMode::ReportToTerminal, self.window, self.cx);
             }
 
             fn unthrottle(&mut self) {
@@ -5706,7 +5746,7 @@ mod tests {
                         test_view.notifies += 1;
                         cx.update_entity(&terminal, |terminal, cx| {
                             terminal.suppress_hyperlink_throttle_once = true;
-                            terminal.sync(window, cx)
+                            terminal.sync(MouseInputMode::ReportToTerminal, window, cx)
                         })
                     });
                 let terminal_events_subscription = cx.subscribe_in(
@@ -5717,7 +5757,7 @@ mod tests {
                             test_view.wakeups += 1;
                             cx.update_entity(terminal, |terminal, cx| {
                                 terminal.suppress_hyperlink_throttle_once = true;
-                                terminal.sync(window, cx)
+                                terminal.sync(MouseInputMode::ReportToTerminal, window, cx)
                             })
                         }
                         _ => {}
@@ -5809,6 +5849,63 @@ mod tests {
         const OUTPUT_NONE: &str = "None";
         const ZED_DEV_STR: &str = "https://zed.dev/";
         const ZED_DEV_PT: GpuiPoint<Pixels> = point(px(30.0), px(2.5));
+
+        #[gpui::test]
+        async fn test_ctrl_hover_in_mouse_mode(cx: &mut TestAppContext) {
+            let (test_entities, hovered_word, cx) =
+                init_ctrl_hover_hyperlink_test_with_window(cx).await;
+            let steps: [(fn(&mut HyperlinkVisualTestContext), Option<HoveredWord>); 8] = [
+                (
+                    |cx| cx.terminal.write_output(b"\x1b[?1002h", cx.cx),
+                    Some(hovered_word.clone()),
+                ),
+                (|cx| cx.ctrl_mouse_move_to(point(px(2.5), px(2.5))), None),
+                (
+                    |cx| cx.ctrl_mouse_move_to(ZED_DEV_PT),
+                    Some(hovered_word.with_id(1)),
+                ),
+                (
+                    |cx| cx.ctrl_mouse_move(ZED_DEV_PT, Some(MouseButton::Left)),
+                    None,
+                ),
+                (
+                    |cx| {
+                        ctrl_mouse_down_at(cx.terminal, ZED_DEV_PT, cx.cx);
+                        cx.ctrl_mouse_move(ZED_DEV_PT, Some(MouseButton::Left));
+                    },
+                    Some(hovered_word.with_id(2)),
+                ),
+                (
+                    |cx| {
+                        cx.cx
+                            .update_global(|store: &mut settings::SettingsStore, cx| {
+                                store.update_user_settings(cx, |settings| {
+                                    settings
+                                        .terminal
+                                        .get_or_insert_default()
+                                        .open_links_in_mouse_mode = Some(false);
+                                });
+                            });
+                        cx.try_modifiers_change(Modifiers::secondary_key(cx.cx));
+                    },
+                    None,
+                ),
+                (|cx| cx.ctrl_mouse_move_to(ZED_DEV_PT), None),
+                (|cx| cx.write_output_lines(OUTPUT_ZED_DEV, 8), None),
+            ];
+            for (index, (step, expected)) in steps.into_iter().enumerate() {
+                update_test_entities(&test_entities, cx, |cx| {
+                    step(cx);
+                    None
+                });
+                update_test_entities(&test_entities, cx, |cx| {
+                    let content = &cx.terminal.last_content;
+                    assert!(content.mode.intersects(Modes::MOUSE_MODE), "step {index}");
+                    assert_eq!(content.last_hovered_word, expected, "step {index}");
+                    None
+                });
+            }
+        }
 
         #[gpui::test]
         async fn test_ctrl_hover_with_changing_content(cx: &mut TestAppContext) {
@@ -6199,7 +6296,7 @@ mod tests {
                             .any(|event| matches!(event, InternalEvent::Scroll(_))),
                         "Should have Scroll event when scrolling within terminal bounds"
                     );
-                    terminal.sync(window, cx);
+                    terminal.sync(MouseInputMode::ReportToTerminal, window, cx);
                 });
             };
 
