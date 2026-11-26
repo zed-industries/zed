@@ -7660,7 +7660,7 @@ async fn managed_resource_approvals_reach_the_client(
         fn permission(&self, _: &()) -> Option<ResourcePermission> {
             None
         }
-        fn permission_description(&self, _: &Self) -> String {
+        fn permission_description(&self, _: &Self) -> managed_resources::PermissionDescription {
             "unused".into()
         }
         async fn run(self, _: &Self, _: &gpui::BackgroundExecutor) {
@@ -7728,7 +7728,7 @@ async fn managed_resource_approvals_reach_the_client(
             assert!(title.contains("remote host"));
             assert!(detail.contains("remote-runtime"));
             assert!(detail.contains("remote-extension"));
-            assert!(detail.contains("network checks"));
+            assert!(detail.contains("check for updates"));
             cx.simulate_prompt_answer(answer);
         }
         let result = task.await;

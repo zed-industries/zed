@@ -84,6 +84,57 @@ pub trait ManagedResource: Sized + Send + Sync + 'static {
     ) -> anyhow::Result<ResourceAcquisition<Self>>;
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PermissionText {
+    Plain(String),
+    Emphasis(String),
+    Code(String),
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PermissionDescription(pub Vec<PermissionText>);
+
+impl PermissionDescription {
+    pub fn text(mut self, text: impl Into<String>) -> Self {
+        self.0.push(PermissionText::Plain(text.into()));
+        self
+    }
+
+    pub fn emphasis(mut self, text: impl Into<String>) -> Self {
+        self.0.push(PermissionText::Emphasis(text.into()));
+        self
+    }
+
+    pub fn code(mut self, text: impl Into<String>) -> Self {
+        self.0.push(PermissionText::Code(text.into()));
+        self
+    }
+}
+
+impl From<String> for PermissionDescription {
+    fn from(text: String) -> Self {
+        Self::default().text(text)
+    }
+}
+
+impl From<&str> for PermissionDescription {
+    fn from(text: &str) -> Self {
+        Self::default().text(text)
+    }
+}
+
+impl std::fmt::Display for PermissionDescription {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for span in &self.0 {
+            let (PermissionText::Plain(text)
+            | PermissionText::Emphasis(text)
+            | PermissionText::Code(text)) = span;
+            formatter.write_str(text)?;
+        }
+        Ok(())
+    }
+}
+
 pub trait ManagedResourceCommand<Resource: ManagedResource>: Sized + 'static {
     type Output: 'static;
     type PermissionSettings: serde::de::DeserializeOwned + Default;
@@ -93,7 +144,7 @@ pub trait ManagedResourceCommand<Resource: ManagedResource>: Sized + 'static {
     fn permission(&self, settings: &Self::PermissionSettings) -> Option<ResourcePermission>;
 
     /// Describe the specific operation for approval without performing it.
-    fn permission_description(&self, resource: &Resource) -> String;
+    fn permission_description(&self, resource: &Resource) -> PermissionDescription;
 
     /// Await background work so completion, errors, and cancellation follow this command.
     fn run(
@@ -111,18 +162,20 @@ pub enum ResourcePermissionRequest {
     },
     ExecuteCommand {
         resource: ResourceId,
-        description: String,
+        description: PermissionDescription,
         payload: serde_json::Value,
         bill: ResourceExecutionBill,
     },
 }
 
 impl ResourcePermissionRequest {
-    pub fn description(&self) -> String {
+    pub fn summary(&self) -> PermissionDescription {
         let (resource, operation, bill) = match self {
             Self::Manage { resource, bill } => (
                 resource,
-                "Let Zed manage this binary (including network checks, downloads, and updates)",
+                PermissionDescription::default()
+                    .emphasis("manage this binary")
+                    .text(" (check for updates, download and update)"),
                 bill,
             ),
             Self::ExecuteCommand {
@@ -130,22 +183,43 @@ impl ResourcePermissionRequest {
                 description,
                 bill,
                 ..
-            } => (resource, description.as_str(), bill),
+            } => (resource, description.clone(), bill),
+        };
+        let requester = match &bill.root {
+            ExecutionBillRoot::Extension { id } => format!("Extension {id}"),
+            ExecutionBillRoot::Debugger { name } => format!("Debugger {name}"),
+            ExecutionBillRoot::LanguageServer { name } => format!("Language server {name}"),
+            ExecutionBillRoot::Formatter { name } => format!("Formatter {name}"),
+            ExecutionBillRoot::AgentServer { name } => format!("Agent server {name}"),
+        };
+        let mut summary = PermissionDescription::default()
+            .text(requester)
+            .text(" wants to ");
+        summary.0.extend(operation.0);
+        if matches!(self, Self::Manage { .. }) {
+            let ResourceId::Npm { payload } = resource;
+            summary = summary.text(": ").code(&payload.name);
+        }
+        summary
+    }
+
+    pub fn details(&self) -> String {
+        let (resource, bill) = match self {
+            Self::Manage { resource, bill } | Self::ExecuteCommand { resource, bill, .. } => {
+                (resource, bill)
+            }
         };
         let ResourceId::Npm { payload } = resource;
-        let requester = match &bill.root {
-            ExecutionBillRoot::Extension { id } => format!("Extension: {id}"),
-            ExecutionBillRoot::Debugger { name } => format!("Debugger: {name}"),
-            ExecutionBillRoot::LanguageServer { name } => format!("Language server: {name}"),
-            ExecutionBillRoot::Formatter { name } => format!("Formatter: {name}"),
-            ExecutionBillRoot::AgentServer { name } => format!("Agent server: {name}"),
-        };
-        let mut description = format!("{operation}\n\nnpm runtime: {}\n{requester}", payload.name);
+        let mut description = format!("npm runtime: {}", payload.name);
         for reason in &bill.reasoning {
             description.push('\n');
             description.push_str(reason);
         }
         description
+    }
+
+    pub fn description(&self) -> String {
+        format!("{}\n\n{}", self.summary(), self.details())
     }
 }
 
@@ -902,7 +976,7 @@ mod tests {
                 .map(|rule| rule.permission)
         }
 
-        fn permission_description(&self, resource: &Counter<KIND>) -> String {
+        fn permission_description(&self, resource: &Counter<KIND>) -> PermissionDescription {
             let operation = match self {
                 Self::Read => "Read".into(),
                 Self::Add(value) => format!("Add {value}"),
@@ -914,6 +988,7 @@ mod tests {
                 "{operation} (current value: {})",
                 resource.value.load(SeqCst)
             )
+            .into()
         }
 
         async fn run(
@@ -1858,7 +1933,7 @@ mod tests {
                 panic!("a conflicting resource must not check command permissions")
             }
 
-            fn permission_description(&self, _: &Self) -> String {
+            fn permission_description(&self, _: &Self) -> PermissionDescription {
                 panic!("a conflicting resource must not request command approval")
             }
 

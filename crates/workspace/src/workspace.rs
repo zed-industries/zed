@@ -13297,7 +13297,7 @@ mod tests {
                         serde_json::from_value(permission.clone()).expect("valid permission")
                     })
             }
-            fn permission_description(&self, _: &Self) -> String {
+            fn permission_description(&self, _: &Self) -> managed_resources::PermissionDescription {
                 "Run test command".into()
             }
             async fn run(self, _: &Self, _: &gpui::BackgroundExecutor) -> bool {
@@ -13418,6 +13418,20 @@ mod tests {
                 if answer == "Dismiss" {
                     notification.update(cx, |notification, cx| notification.dismiss(cx));
                 } else {
+                    assert!(cx.debug_bounds("Permission details").is_none());
+                    let toggle = cx
+                        .debug_bounds("Permission details toggle")
+                        .expect("details toggle");
+                    cx.simulate_click(toggle.center(), Modifiers::none());
+                    cx.run_until_parked();
+                    assert!(cx.debug_bounds("Permission details").is_some());
+                    assert!((&mut task).now_or_never().is_none());
+                    let toggle = cx
+                        .debug_bounds("Permission details toggle")
+                        .expect("details toggle");
+                    cx.simulate_click(toggle.center(), Modifiers::none());
+                    cx.run_until_parked();
+                    assert!(cx.debug_bounds("Permission details").is_none());
                     let bounds = cx.debug_bounds(answer).expect("visible approval button");
                     let position = if answer.ends_with("Always") {
                         bounds.center()

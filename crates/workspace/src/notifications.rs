@@ -16,7 +16,7 @@ use theme_settings::ThemeSettings;
 use std::ops::Deref;
 use std::sync::{Arc, LazyLock};
 use std::{any::TypeId, time::Duration};
-use ui::{CopyButton, SplitButton, SplitButtonStyle, TintColor, Tooltip, prelude::*};
+use ui::{CopyButton, LabelLike, SplitButton, SplitButtonStyle, TintColor, Tooltip, prelude::*};
 use util::ResultExt;
 
 #[derive(Default)]
@@ -91,8 +91,24 @@ pub(crate) fn request_resource_approval(
     let (sender, receiver) = futures::channel::oneshot::channel();
     let sender = Arc::new(Mutex::new(Some(sender)));
     let dismissed = sender.clone();
+    let expanded = std::rc::Rc::new(std::cell::Cell::new(false));
     let notification = cx.new(|cx| {
-        simple_message_notification::MessageNotification::new_from_builder(cx, move |_, cx| {
+        simple_message_notification::MessageNotification::new_from_builder(cx, move |window, cx| {
+            let mut text = String::new();
+            let runs = request.summary().0.into_iter().map(|span| {
+                use managed_resources::PermissionText;
+                let (PermissionText::Plain(value) | PermissionText::Emphasis(value) | PermissionText::Code(value)) = &span;
+                let mut run = window.text_style().to_run(value.len());
+                match &span {
+                    PermissionText::Emphasis(_) => run.font.weight = gpui::FontWeight::SEMIBOLD,
+                    PermissionText::Code(_) => run.font = ThemeSettings::get_global(cx).buffer_font.clone(),
+                    PermissionText::Plain(_) => {}
+                }
+                text.push_str(value);
+                run
+            }).collect();
+            let show_details = expanded.get();
+            let expanded = expanded.clone();
             let controls = h_flex().gap_2().flex_wrap().children([
                     ("Allow", ResourcePermission::Allowed),
                     ("Deny", ResourcePermission::Denied),
@@ -138,11 +154,18 @@ pub(crate) fn request_resource_approval(
                 }));
             v_flex()
                 .gap_2()
-                .child(Label::new(request.description()))
+                .child(LabelLike::new().child(gpui::StyledText::new(text).with_runs(runs)))
+                .child(div().debug_selector(|| "Permission details toggle".to_owned()).child(Button::new("permission-details", if show_details { "Hide details" } else { "Details" })
+                    .label_size(LabelSize::Small).color(Color::Muted)
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        expanded.set(!expanded.get());
+                        cx.notify();
+                    }))))
+                .when(show_details, |this| this.child(div().debug_selector(|| "Permission details".to_owned()).child(Label::new(request.details()).size(LabelSize::Small).color(Color::Muted))))
                 .child(controls)
                 .into_any_element()
             })
-            .with_title("Allow managed resource operation?")
+            .with_title("Permission required")
             .show_suppress_button(false)
     });
     cx.subscribe(&notification, move |_, _: &DismissEvent, _| {

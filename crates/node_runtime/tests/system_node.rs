@@ -229,7 +229,7 @@ fn managed_npm_obtains_and_installs_packages() -> Result<()> {
                     ("another-package".into(), "4.5.6".into()),
                 ],
             };
-            let description = install().permission_description(&npm);
+            let description = install().permission_description(&npm).to_string();
             for detail in [
                 "@example/server",
                 "1.2.3",

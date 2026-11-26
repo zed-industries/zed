@@ -168,8 +168,9 @@ impl ManagedResourceCommand<Npm> for NodeBinaryPath {
             .map(|rule| rule.permission)
     }
 
-    fn permission_description(&self, _: &Npm) -> String {
-        "Get the Node.js executable path".into()
+    fn permission_description(&self, _: &Npm) -> managed_resources::PermissionDescription {
+        managed_resources::PermissionDescription::default()
+            .emphasis("get the Node.js executable path")
     }
 
     async fn run(self, npm: &Npm, _: &gpui::BackgroundExecutor) -> Self::Output {
@@ -198,13 +199,13 @@ impl ManagedResourceCommand<Npm> for LatestNpmPackageVersion {
             .map(|rule| rule.permission)
     }
 
-    fn permission_description(&self, _: &Npm) -> String {
-        let description = format!(
-            "Query the npm registry for the latest version of {}",
-            self.package
-        );
+    fn permission_description(&self, _: &Npm) -> managed_resources::PermissionDescription {
+        let description = managed_resources::PermissionDescription::default()
+            .emphasis("query the npm registry")
+            .text(" for the latest version of ")
+            .code(&self.package);
         match &self.requirement {
-            Some(requirement) => format!("{description} matching {requirement}"),
+            Some(requirement) => description.text(" matching ").code(requirement.to_string()),
             None => description,
         }
     }
@@ -237,11 +238,13 @@ impl ManagedResourceCommand<Npm> for InstalledNpmPackageVersion {
             .map(|rule| rule.permission)
     }
 
-    fn permission_description(&self, _: &Npm) -> String {
-        format!(
-            "Look up the installed version of {} in {:?}",
-            self.package, self.directory
-        )
+    fn permission_description(&self, _: &Npm) -> managed_resources::PermissionDescription {
+        managed_resources::PermissionDescription::default()
+            .emphasis("look up the installed version")
+            .text(" of ")
+            .code(&self.package)
+            .text(" in ")
+            .code(self.directory.display().to_string())
     }
 
     async fn run(self, npm: &Npm, _: &gpui::BackgroundExecutor) -> Self::Output {
@@ -268,11 +271,19 @@ impl ManagedResourceCommand<Npm> for InstallNpmPackages {
             .map(|rule| rule.permission)
     }
 
-    fn permission_description(&self, _: &Npm) -> String {
-        format!(
-            "Install npm packages {:?} in {:?}",
-            self.packages, self.directory
-        )
+    fn permission_description(&self, _: &Npm) -> managed_resources::PermissionDescription {
+        let mut description = managed_resources::PermissionDescription::default()
+            .emphasis("install npm packages")
+            .text(" ");
+        for (index, (name, version)) in self.packages.iter().enumerate() {
+            if index > 0 {
+                description = description.text(", ");
+            }
+            description = description.code(format!("{name}@{version}"));
+        }
+        description
+            .text(" in ")
+            .code(self.directory.display().to_string())
     }
 
     async fn run(self, npm: &Npm, _: &gpui::BackgroundExecutor) -> Self::Output {
@@ -313,11 +324,20 @@ impl ManagedResourceCommand<Npm> for RunNpmSubcommand {
             .map(|rule| rule.permission)
     }
 
-    fn permission_description(&self, _: &Npm) -> String {
-        format!(
-            "Run npm {} {:?} in {:?}",
-            self.subcommand, self.args, self.directory
-        )
+    fn permission_description(&self, _: &Npm) -> managed_resources::PermissionDescription {
+        let mut description = managed_resources::PermissionDescription::default()
+            .emphasis("run npm")
+            .text(" ")
+            .code(&self.subcommand);
+        for argument in &self.args {
+            description = description.text(" ").code(argument);
+        }
+        if let Some(directory) = &self.directory {
+            description = description
+                .text(" in ")
+                .code(directory.display().to_string());
+        }
+        description
     }
 
     async fn run(self, npm: &Npm, executor: &gpui::BackgroundExecutor) -> Self::Output {
