@@ -163,6 +163,10 @@ impl Key {
     const MIN: Key = Key(0);
 
     fn new(ordering: u32, kind: PrimitiveKind) -> Self {
+        debug_assert!(
+            (kind as u64) < 1 << 8,
+            "{kind:?} doesn't fit in the kind bits"
+        );
         Self((u64::from(ordering) << 8) | kind as u64)
     }
 
@@ -184,12 +188,18 @@ impl NodeId {
     const LEAF_PAGE_BIT: u32 = 1 << 31;
 
     fn leaf_page(index: usize) -> Self {
-        debug_assert!(index < Self::LEAF_PAGE_BIT as usize);
+        debug_assert!(
+            index < Self::LEAF_PAGE_BIT as usize,
+            "page index {index} collides with the leaf page bit"
+        );
         Self(index as u32 | Self::LEAF_PAGE_BIT)
     }
 
     fn internal_page(index: usize) -> Self {
-        debug_assert!(index < Self::LEAF_PAGE_BIT as usize);
+        debug_assert!(
+            index < Self::LEAF_PAGE_BIT as usize,
+            "page index {index} collides with the leaf page bit"
+        );
         Self(index as u32)
     }
 
@@ -505,10 +515,10 @@ impl<U: BoundsScalar, Child: Copy + Default> Page<U, Child> {
         }
         let width = U::heuristic_extent(union.min_x, union.max_x);
         let height = U::heuristic_extent(union.min_y, union.max_y);
-        let split_horizontally = height.partial_cmp(&width) != Some(Ordering::Greater);
+        let split_along_x = height.partial_cmp(&width) != Some(Ordering::Greater);
         let mut centers: [f32; PAGE_CAPACITY + 1] = std::array::from_fn(|slot| {
             let bounds = &entries[slot].bounds;
-            if split_horizontally {
+            if split_along_x {
                 U::heuristic_center(bounds.min_x, bounds.max_x)
             } else {
                 U::heuristic_center(bounds.min_y, bounds.max_y)
@@ -613,9 +623,9 @@ impl<U: BoundsScalar> InternalPage<U> {
     }
 }
 
-/// `mask` must be nonzero.
 #[inline(always)]
 fn highest_slot(mask: u8) -> usize {
+    debug_assert_ne!(mask, 0, "callers skip pages with no intersecting slots");
     7 - mask.leading_zeros() as usize
 }
 
