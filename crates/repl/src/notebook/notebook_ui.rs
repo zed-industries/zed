@@ -460,14 +460,28 @@ impl NotebookEditor {
             project.is_local(),
             "Notebook execution requires a local project."
         );
+        if matches!(
+            &self.kernel_specification,
+            Some(KernelSpecification::Jupyter(spec)) if !spec.is_notebook_python()
+        ) {
+            anyhow::ensure!(
+                Self::remote_enabled(cx),
+                "Choose a Python kernel. Other local kernels are disabled."
+            );
+            return Ok(());
+        }
         anyhow::ensure!(
-            self.notebook_item
-                .read(cx)
-                .language_name()
-                .is_none_or(|language| language.eq_ignore_ascii_case("python")),
+            self.is_python_notebook(cx),
             "Only Python notebooks can be executed."
         );
         Ok(())
+    }
+
+    fn is_python_notebook(&self, cx: &App) -> bool {
+        self.notebook_item
+            .read(cx)
+            .language_name()
+            .is_none_or(|language| language.eq_ignore_ascii_case("python"))
     }
 
     fn remote_enabled(cx: &App) -> bool {
@@ -744,13 +758,7 @@ impl NotebookEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Err(error) = self.check_execution(cx).and_then(|_| {
-            anyhow::ensure!(
-                run.is_some() || self.project.read(cx).is_local(),
-                "Choose a remote kernel for this project."
-            );
-            Ok(())
-        }) {
+        if let Err(error) = self.check_run(run.as_ref(), cx) {
             self.kernel_notice = Some(error.to_string());
             cx.notify();
             return;
@@ -798,15 +806,25 @@ impl NotebookEditor {
     }
 
     fn check_run(&self, run: Option<&CellRun>, cx: &mut App) -> Result<()> {
-        self.check_execution(cx)?;
-        if let Some(run) = run {
+        let Some(run) = run else {
+            self.check_trust(cx)?;
             anyhow::ensure!(
-                self.cell_map
-                    .get(&run.cell_id)
-                    .is_some_and(|cell| cell.current_source(cx) == run.source),
-                "The cell changed. Run it again."
+                self.project.read(cx).is_local(),
+                "Choose a remote kernel for this project."
             );
-        }
+            anyhow::ensure!(
+                Self::remote_enabled(cx) || self.is_python_notebook(cx),
+                "Only Python notebooks can be executed."
+            );
+            return Ok(());
+        };
+        self.check_execution(cx)?;
+        anyhow::ensure!(
+            self.cell_map
+                .get(&run.cell_id)
+                .is_some_and(|cell| cell.current_source(cx) == run.source),
+            "The cell changed. Run it again."
+        );
         Ok(())
     }
 
@@ -886,25 +904,37 @@ impl NotebookEditor {
         run: Option<&CellRun>,
         cx: &mut gpui::AsyncWindowContext,
     ) -> Result<Option<KernelSpecification>> {
-        let (mut specs, preferred) = if let Some(spec) = selected {
-            let KernelSpecification::Jupyter(spec) = spec else {
-                return Ok(Some(spec));
-            };
-            (vec![spec], None)
+        let (mut specs, preferred, list_kernelspecs) = if let Some(spec) = selected {
+            match spec {
+                KernelSpecification::Jupyter(spec) if spec.is_notebook_python() => {
+                    (vec![spec], None, false)
+                }
+                spec => return Ok(Some(spec)),
+            }
         } else {
-            let project_python = this
-                .update(cx, |editor, cx| {
-                    editor.check_run(run, cx)?;
-                    editor.project_python(run.is_some(), cx)
-                })??
-                .await;
-            let specs = cx
-                .background_spawn(crate::kernels::notebook_python_kernels(
-                    fs,
-                    project_python.clone(),
+            let (project_python, list_kernelspecs) = this.update(cx, |editor, cx| {
+                editor.check_run(run, cx)?;
+                anyhow::Ok((
+                    editor.project_python(run.is_some(), cx)?,
+                    run.is_none() && Self::remote_enabled(cx),
                 ))
+            })??;
+            let project_python = project_python.await;
+            let specs = cx
+                .background_spawn({
+                    let project_python = project_python.clone();
+                    async move {
+                        let mut specs =
+                            crate::kernels::notebook_python_kernels(fs.clone(), project_python)
+                                .await?;
+                        if list_kernelspecs {
+                            specs.extend(crate::kernels::notebook_kernelspecs(fs.as_ref()).await?);
+                        }
+                        anyhow::Ok(specs)
+                    }
+                })
                 .await?;
-            (specs, project_python)
+            (specs, project_python, list_kernelspecs)
         };
         let mut diagnostic = None;
         if run.is_some() {
@@ -958,12 +988,18 @@ impl NotebookEditor {
         } else {
             let choices = specs
                 .iter()
-                .map(|spec| format!("{} ({})", spec.name, spec.path.display()).into())
+                .map(|spec| {
+                    format!("{} ({})", spec.kernelspec.display_name, spec.path.display()).into()
+                })
                 .collect();
             let choice = cx
                 .update(|window, cx| {
                     ui_prompt::prompt_for_choices(
-                        "Select a local Python kernel",
+                        if list_kernelspecs {
+                            "Select a local kernel"
+                        } else {
+                            "Select a local Python kernel"
+                        },
                         if run.is_some() {
                             "The requested execution will use this kernel."
                         } else {
@@ -3646,6 +3682,125 @@ mod tests {
                 "the next Run can rediscover a usable kernel"
             );
             assert_eq!(editor.notebook_item.read(cx).buffer.read(cx).text(), raw);
+        });
+    }
+
+    fn set_notebook_flag(enabled: bool, cx: &mut gpui::VisualTestContext) {
+        use feature_flags::{FeatureFlag as _, FeatureFlagStore};
+        use gpui::UpdateGlobal as _;
+        cx.update(|_, cx| {
+            FeatureFlagStore::init(cx);
+            if enabled {
+                cx.update_flags(false, vec![NotebookFeatureFlag::NAME.into()]);
+            } else {
+                SettingsStore::update_global(cx, |store, cx| {
+                    store.update_user_settings(cx, |settings| {
+                        settings
+                            .feature_flags
+                            .get_or_insert_default()
+                            .insert(NotebookFeatureFlag::NAME.into(), "off".into());
+                    });
+                });
+            }
+            assert_eq!(NotebookEditor::remote_enabled(cx), enabled);
+        });
+    }
+
+    fn fake_r_kernelspec() -> (std::path::PathBuf, serde_json::Value) {
+        let directory = jupyter_zmq_client::dirs::data_dirs()
+            .into_iter()
+            .find(|directory| directory.is_absolute())
+            .unwrap()
+            .join("kernels/fake-r");
+        let kernelspec = json!({
+            "argv": [path!("/missing/fake-r"), "--vanilla", "{connection_file}"],
+            "display_name": "Fake R",
+            "language": "R",
+            "env": { "ZED_NOTEBOOK_MARKER": "synthetic-marker" },
+        });
+        (directory, kernelspec)
+    }
+
+    #[gpui::test]
+    async fn test_flagged_picker_launches_a_local_kernelspec_unchanged(cx: &mut TestAppContext) {
+        let raw = NOTEBOOK_WITH_ONE_CODE_CELL.replace("python", "R");
+        let (editor, cx) = kernel_test_editor(&raw, cx).await;
+        set_notebook_flag(true, cx);
+        let (directory, kernelspec) = fake_r_kernelspec();
+        let fs = editor.read_with(cx, |editor, cx| editor.project.read(cx).fs().as_fake());
+        fs.insert_tree(&directory, json!({ "kernel.json": kernelspec.to_string() }))
+            .await;
+        trust_notebook(&editor, cx);
+        cx.executor().allow_parking();
+
+        let pick = editor.update_in(cx, |editor, window, cx| {
+            editor.choose_or_start_kernel(None, window, cx);
+            editor
+                .kernel_task
+                .clone()
+                .expect("the picker lists kernels")
+        });
+        cx.run_until_parked();
+        cx.simulate_resize(gpui::size(px(800.), px(600.)));
+        cx.run_until_parked();
+        cx.dispatch_action(menu::SelectFirst);
+        cx.dispatch_action(menu::SelectPrevious);
+        cx.dispatch_action(menu::Confirm);
+        pick.await;
+        editor.read_with(cx, |editor, _| {
+            let Some(KernelSpecification::Jupyter(selected)) = &editor.kernel_specification else {
+                panic!("expected the kernelspec, got {:?}", editor.kernel_notice)
+            };
+            assert_eq!(selected.path, directory);
+            assert_eq!(selected.kernelspec.argv[1], "--vanilla");
+            assert_eq!(
+                selected.kernelspec.env.as_ref().unwrap()["ZED_NOTEBOOK_MARKER"],
+                "synthetic-marker"
+            );
+        });
+
+        let run = editor.update_in(cx, |editor, window, cx| {
+            editor.run_current_cell(&Run, window, cx);
+            editor
+                .kernel_task
+                .clone()
+                .expect("Run launches the selected kernel")
+        });
+        run.await;
+        editor.read_with(cx, |editor, cx| {
+            let notice = editor.kernel_notice.as_deref().unwrap();
+            assert!(notice.contains("failed to spawn command"), "{notice}");
+            assert!(
+                notice.contains(r#"ZED_NOTEBOOK_MARKER="synthetic-marker""#),
+                "{notice}"
+            );
+            assert!(
+                notice.contains(&format!(r#""{}" "--vanilla" "#, path!("/missing/fake-r"))),
+                "{notice}"
+            );
+            assert_eq!(editor.notebook_item.read(cx).buffer.read(cx).text(), raw);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_unflagged_notebook_refuses_local_kernelspecs(cx: &mut TestAppContext) {
+        let (editor, cx) = kernel_test_editor(NOTEBOOK_WITH_ONE_CODE_CELL, cx).await;
+        set_notebook_flag(false, cx);
+        trust_notebook(&editor, cx);
+        editor.update_in(cx, |editor, window, cx| {
+            let (path, kernelspec) = fake_r_kernelspec();
+            let stale = LocalKernelSpecification {
+                name: "fake-r".into(),
+                path,
+                kernelspec: serde_json::from_value(kernelspec).unwrap(),
+            };
+            editor.select_kernel(KernelSpecification::Jupyter(stale), cx);
+            editor.run_current_cell(&Run, window, cx);
+            assert_eq!(
+                editor.kernel_notice.as_deref(),
+                Some("Choose a Python kernel. Other local kernels are disabled.")
+            );
+            assert!(editor.kernel_task.is_none());
         });
     }
 

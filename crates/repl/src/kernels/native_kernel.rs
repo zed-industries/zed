@@ -41,6 +41,15 @@ impl PartialEq for LocalKernelSpecification {
 impl Eq for LocalKernelSpecification {}
 
 impl LocalKernelSpecification {
+    /// Specs read from a kernelspec directory have a directory path, so their
+    /// own argv and env must be launched unchanged.
+    pub(crate) fn is_notebook_python(&self) -> bool {
+        self.kernelspec
+            .argv
+            .first()
+            .is_some_and(|program| std::path::Path::new(program) == self.path)
+    }
+
     pub(crate) fn for_notebook_python(path: PathBuf, name: String) -> Result<Self> {
         anyhow::ensure!(
             path.is_absolute(),
@@ -515,21 +524,12 @@ pub(crate) async fn notebook_python_kernels(
     if let Some(path) = crate::notebook::kernel_setup::installed_python() {
         candidates.push((path, "Zed Python".to_string()));
     }
-    for dir in dirs::data_dirs()
-        .into_iter()
-        .filter(|dir| dir.is_absolute())
-    {
-        let kernels = dir.join("kernels");
-        if fs.metadata(&kernels).await?.is_none() {
-            continue;
-        }
-        for spec in read_kernels_dir(kernels, fs.as_ref()).await? {
-            if spec.kernelspec.language.eq_ignore_ascii_case("python")
-                && let Some(path) = spec.kernelspec.argv.first().map(PathBuf::from)
-                && path.is_absolute()
-            {
-                candidates.push((path, spec.kernelspec.display_name));
-            }
+    for spec in notebook_kernelspecs(fs.as_ref()).await? {
+        if spec.kernelspec.language.eq_ignore_ascii_case("python")
+            && let Some(path) = spec.kernelspec.argv.first().map(PathBuf::from)
+            && path.is_absolute()
+        {
+            candidates.push((path, spec.kernelspec.display_name));
         }
     }
     let names: &[&str] = if cfg!(windows) {
@@ -555,6 +555,22 @@ pub(crate) async fn notebook_python_kernels(
             continue;
         }
         specs.push(LocalKernelSpecification::for_notebook_python(path, name)?);
+    }
+    Ok(specs)
+}
+
+/// Reads kernelspecs without running any program, unlike
+/// [`local_kernel_specifications`], which asks `python` for its prefix.
+pub(crate) async fn notebook_kernelspecs(fs: &dyn Fs) -> Result<Vec<LocalKernelSpecification>> {
+    let mut specs = Vec::new();
+    for dir in dirs::data_dirs()
+        .into_iter()
+        .filter(|dir| dir.is_absolute())
+    {
+        let kernels = dir.join("kernels");
+        if fs.metadata(&kernels).await?.is_some() {
+            specs.extend(read_kernels_dir(kernels, fs).await?);
+        }
     }
     Ok(specs)
 }
