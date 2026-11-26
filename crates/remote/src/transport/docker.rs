@@ -68,6 +68,18 @@ pub(crate) struct DockerExecConnection {
 }
 
 impl DockerExecConnection {
+    fn remote_binary_path(&self) -> Result<String> {
+        let relative_path = self
+            .remote_binary_relpath
+            .as_ref()
+            .context("Remote binary path not set")?;
+        Ok(format!(
+            "{}/{}",
+            self.remote_dir_for_server.trim_end_matches('/'),
+            relative_path.display(PathStyle::Unix),
+        ))
+    }
+
     pub async fn new(
         connection_options: DockerConnectionOptions,
         delegate: Arc<dyn RemoteClientDelegate>,
@@ -778,31 +790,32 @@ impl RemoteConnection for DockerExecConnection {
         self.proxy_process.lock().is_none()
     }
 
-    fn tcp_proxy_command(
+    fn tcp_proxy_commands(
         &self,
         address: SocketAddr,
         timeout: u64,
         program: Option<&str>,
         args: &[String],
-    ) -> Result<Option<CommandTemplate>> {
-        let remote_binary_relpath = self
-            .remote_binary_relpath
-            .as_ref()
-            .context("Remote binary path not set")?;
+    ) -> Result<Option<(CommandTemplate, CommandTemplate)>> {
+        let proxy_program = self.remote_binary_path()?;
         let mut arguments = vec!["tcp".to_owned(), address.to_string(), timeout.to_string()];
+        let attach_arguments = arguments.clone();
         if let Some(program) = program {
             arguments.extend(["--".to_owned(), program.to_owned()]);
             arguments.extend_from_slice(args);
         }
-        Ok(Some(CommandTemplate {
-            program: format!(
-                "{}/{}",
-                self.remote_dir_for_server.trim_end_matches('/'),
-                remote_binary_relpath.display(PathStyle::Unix),
-            ),
-            args: arguments,
-            env: HashMap::default(),
-        }))
+        Ok(Some((
+            CommandTemplate {
+                program: proxy_program.clone(),
+                args: arguments,
+                env: Default::default(),
+            },
+            CommandTemplate {
+                program: proxy_program,
+                args: attach_arguments,
+                env: Default::default(),
+            },
+        )))
     }
 
     fn build_command(
@@ -881,10 +894,6 @@ impl RemoteConnection for DockerExecConnection {
         &self,
         mut command: RemoteCommand,
     ) -> Result<(CommandTemplate, Vec<u8>)> {
-        let remote_binary_relpath = self
-            .remote_binary_relpath
-            .as_ref()
-            .context("Remote binary path not set")?;
         let mut env = self
             .connection_options
             .remote_env
@@ -905,11 +914,6 @@ impl RemoteConnection for DockerExecConnection {
                 None => working_dir,
             });
         }
-        let remote_binary_path = format!(
-            "{}/{}",
-            self.remote_dir_for_server.trim_end_matches('/'),
-            remote_binary_relpath.display(PathStyle::Unix),
-        );
         let mut args = vec![
             String::from("exec"),
             String::from("-u"),
@@ -922,7 +926,7 @@ impl RemoteConnection for DockerExecConnection {
         args.extend([
             String::from("-i"),
             self.connection_options.container_id.clone(),
-            remote_binary_path,
+            self.remote_binary_path()?,
             String::from("exec"),
         ]);
         Ok((
@@ -1151,14 +1155,16 @@ mod tests {
             connection.connection_options.use_podman = use_podman;
             for address in ["127.0.0.1:4567", "[::1]:4567"] {
                 for program in [Some("/python with spaces"), None] {
-                    let proxy = connection
-                        .tcp_proxy_command(
+                    let (proxy, attach_proxy) = connection
+                        .tcp_proxy_commands(
                             address.parse()?,
                             1234,
                             program,
                             &["argument with spaces".to_owned(), "--flag".to_owned()],
                         )?
                         .context("Missing proxy")?;
+                    assert_eq!(attach_proxy.program, proxy.program);
+                    assert_eq!(attach_proxy.args, ["tcp", address, "1234"]);
                     let template = connection.build_command(
                         Some(proxy.program),
                         &proxy.args,

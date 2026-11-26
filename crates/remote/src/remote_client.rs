@@ -1007,15 +1007,15 @@ impl RemoteClient {
         connection.build_stdio_command(command)
     }
 
-    pub fn tcp_proxy_command(
+    pub fn tcp_proxy_commands(
         &self,
         address: SocketAddr,
         timeout: u64,
         program: Option<&str>,
         args: &[String],
-    ) -> Result<Option<CommandTemplate>> {
+    ) -> Result<Option<(CommandTemplate, CommandTemplate)>> {
         let connection = self.remote_connection().context("no remote connection")?;
-        connection.tcp_proxy_command(address, timeout, program, args)
+        connection.tcp_proxy_commands(address, timeout, program, args)
     }
 
     pub fn build_forward_ports_command(
@@ -1478,14 +1478,15 @@ pub trait RemoteConnection: Send + Sync {
     fn shares_network_interface(&self) -> bool {
         false
     }
-    /// Returns a remote command that exposes TCP over stdio when port forwarding is unavailable.
-    fn tcp_proxy_command(
+    /// Returns the launch and attach commands for exposing TCP over stdio.
+    /// The attach command connects to the existing adapter without starting another one.
+    fn tcp_proxy_commands(
         &self,
         _address: SocketAddr,
         _timeout: u64,
         _program: Option<&str>,
         _args: &[String],
-    ) -> Result<Option<CommandTemplate>> {
+    ) -> Result<Option<(CommandTemplate, CommandTemplate)>> {
         Ok(None)
     }
     fn build_command(

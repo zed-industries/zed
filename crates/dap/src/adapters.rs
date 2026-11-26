@@ -467,7 +467,7 @@ impl DebugAdapter for FakeAdapter {
         task_definition: &DebugTaskDefinition,
         _: Option<PathBuf>,
         _: Option<Vec<String>>,
-        _: Option<HashMap<String, String>>,
+        env: Option<HashMap<String, String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let connection = task_definition
@@ -483,8 +483,12 @@ impl DebugAdapter for FakeAdapter {
             command: Some("command".into()),
             arguments: vec![],
             connection,
-            envs: HashMap::default(),
-            cwd: None,
+            envs: env.unwrap_or_default(),
+            cwd: task_definition
+                .config
+                .get("cwd")
+                .and_then(|cwd| cwd.as_str())
+                .map(PathBuf::from),
             request_args: StartDebuggingRequestArguments {
                 request: self.request_kind(&task_definition.config).await?,
                 configuration: task_definition.config.clone(),

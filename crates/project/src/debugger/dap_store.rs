@@ -326,47 +326,39 @@ impl DapStore {
                                 dap::debugger_settings::DebuggerSettings::get_global(cx).timeout
                             })
                         });
-                        let proxy = remote.read_with(cx, |remote, _cx| {
-                            remote.tcp_proxy_command(
-                                SocketAddr::new(connection.host, connection.port),
+                        let address = SocketAddr::new(connection.host, connection.port);
+                        let working_dir =
+                            binary.cwd.as_ref().map(|path| path.display().to_string());
+                        let commands = remote.read_with(cx, |remote, _cx| -> Result<_> {
+                            let Some((proxy, child_proxy)) = remote.tcp_proxy_commands(
+                                address,
                                 timeout,
                                 binary.command.as_deref(),
                                 &binary.arguments,
-                            )
+                            )?
+                            else {
+                                return Ok(None);
+                            };
+                            let build = |proxy: remote::CommandTemplate| {
+                                remote.build_command(
+                                    Some(proxy.program),
+                                    &proxy.args,
+                                    &binary.envs,
+                                    working_dir.clone(),
+                                    None,
+                                    Interactive::No,
+                                )
+                            };
+                            Ok(Some((build(proxy)?, build(child_proxy)?)))
                         })?;
-                        if let Some(proxy) = proxy {
-                            let address = SocketAddr::new(connection.host, connection.port);
-                            let (command, child_command) =
-                                remote.read_with(cx, |remote, _cx| -> Result<_> {
-                                    let child_proxy = remote
-                                        .tcp_proxy_command(address, timeout, None, &[])?
-                                        .context("Missing TCP stdio proxy command")?;
-                                    let working_dir =
-                                        binary.cwd.as_ref().map(|path| path.display().to_string());
-                                    let command = remote.build_command(
-                                        Some(proxy.program),
-                                        &proxy.args,
-                                        &binary.envs,
-                                        working_dir.clone(),
-                                        None,
-                                        Interactive::No,
-                                    )?;
-                                    let child_command = remote.build_command(
-                                        Some(child_proxy.program),
-                                        &child_proxy.args,
-                                        &binary.envs,
-                                        working_dir,
-                                        None,
-                                        Interactive::No,
-                                    )?;
-                                    Ok((command, child_command))
-                                })?;
+                        if let Some((command, child_command)) = commands {
                             return Ok(DebugAdapterBinary {
                                 command: Some(command.program),
                                 arguments: command.args,
                                 envs: command.env,
                                 cwd: None,
                                 connection: Some(TcpArguments {
+                                    timeout: Some(timeout),
                                     stdio_proxy: Some(dap::adapters::StdioProxy {
                                         command: child_command.program,
                                         arguments: child_command.args,

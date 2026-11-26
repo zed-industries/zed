@@ -1,4 +1,5 @@
 mod headless_project;
+mod tcp;
 
 #[cfg(test)]
 mod remote_editing_tests;
@@ -125,10 +126,11 @@ pub fn run(command: Commands) -> anyhow::Result<()> {
             address,
             timeout,
             command,
-        } => smol::block_on(remote::tcp::proxy(
+        } => smol::block_on(tcp::proxy(
             address,
             std::time::Duration::from_millis(timeout),
             &command,
+            smol::net::TcpStream::connect,
             smol::Unblock::new(std::io::stdin()),
             smol::Unblock::new(std::io::stdout()),
         )),

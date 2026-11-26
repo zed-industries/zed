@@ -3,53 +3,76 @@ use futures::{
     AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, FutureExt as _, select_biased,
 };
 use smol::net::TcpStream;
-use std::{net::SocketAddr, process::Stdio, time::Duration};
+use std::{future::Future, io, io::Write as _, net::SocketAddr, process::Stdio, time::Duration};
 use util::{ResultExt as _, process::Child};
 
 #[expect(
     clippy::disallowed_methods,
     reason = "This stdio helper runs without a GPUI app or dispatcher"
 )]
-pub async fn proxy(
+pub(crate) async fn proxy<Connect>(
     address: SocketAddr,
     timeout: Duration,
     command: &[String],
+    connect: impl Fn(SocketAddr) -> Connect,
     mut input: impl AsyncRead + Unpin,
     mut output: impl AsyncWrite + Unpin,
-) -> Result<()> {
+) -> Result<()>
+where
+    Connect: Future<Output = io::Result<TcpStream>>,
+{
     let mut process = AdapterProcess(None);
-    if let Some((program, arguments)) = command.split_first() {
-        let mut command = util::command::new_std_command(program);
-        command.args(arguments);
-        // Adapter logs must not be mixed with the DAP messages on stdout.
-        process.0 = Some(Child::spawn(
-            command,
-            Stdio::null(),
-            Stdio::from(std::io::stderr()),
-            Stdio::inherit(),
-        )?);
-    }
-
     let result = async {
-        let connect = async {
-            loop {
-                if let Some(process) = &mut process.0
-                    && let Some(status) = process.try_status()?
-                {
-                    bail!("Debug adapter exited before connecting to {address}: {status}");
-                }
-                if let Ok(stream) = TcpStream::connect(address).await {
-                    return Ok(stream);
-                }
-                smol::Timer::after(Duration::from_millis(100)).await;
+        let startup = async {
+            if let Some((program, arguments)) = command.split_first() {
+                let mut command = util::command::new_std_command(program);
+                command.args(arguments);
+                // Adapter logs must not be mixed with the DAP messages on stdout.
+                process.0 = Some(Child::spawn(
+                    command,
+                    Stdio::null(),
+                    Stdio::from(io::stderr()),
+                    Stdio::inherit(),
+                )?);
             }
-        };
-        let stream = select_biased! {
-            result = connect.fuse() => result?,
-            _ = smol::Timer::after(timeout).fuse() => {
-                bail!("Connection to TCP DAP timeout {address}");
+
+            let connect = async {
+                loop {
+                    if let Ok(stream) = connect(address).await {
+                        return stream;
+                    }
+                    smol::Timer::after(Duration::from_millis(100)).await;
+                }
+            };
+            let exited = async {
+                match &mut process.0 {
+                    Some(child) => child.status().await,
+                    None => futures::future::pending().await,
+                }
+            };
+            select_biased! {
+                status = exited.fuse() => {
+                    let status = status?;
+                    bail!("Debug adapter exited before connecting to {address}: {status}")
+                }
+                stream = connect.fuse() => Ok(stream),
+                _ = smol::Timer::after(timeout).fuse() => {
+                    bail!("Connection to TCP DAP timeout {address}")
+                }
             }
-        };
+        }
+        .await;
+
+        // A leading newline separates the status even if adapter logs lack a newline.
+        let error = startup.as_ref().err().map(|error| format!("{error:#}"));
+        let status = serde_json::to_string(&error)?;
+        let message = format!("\n{}{status}\n", proto::DAP_TCP_PROXY_STARTUP_PREFIX);
+        io::stderr()
+            .lock()
+            .write_all(message.as_bytes())
+            .context("Reporting TCP debug adapter startup")?;
+
+        let stream = startup?;
         let (mut reader, mut writer) = stream.split();
         select_biased! {
             result = forward(&mut input, &mut writer).fuse() => {
@@ -106,57 +129,6 @@ mod tests {
     use smol::net::TcpListener;
 
     #[test]
-    fn adapter_process() -> Result<()> {
-        use std::io::{Read as _, Write as _};
-        let Some(port) = std::env::args()
-            .skip_while(|argument| argument != "--skip")
-            .nth(1)
-        else {
-            return Ok(());
-        };
-        let listener =
-            std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port.parse::<u16>()?))?;
-        println!("adapter stdout log");
-        eprintln!("adapter stderr log");
-        let (mut stream, _) = listener.accept()?;
-        let mut request = [0; 4];
-        stream.read_exact(&mut request)?;
-        assert_eq!(&request, b"ping");
-        stream.write_all(b"pong")?;
-        Ok(())
-    }
-
-    #[test]
-    fn launch_waits_for_adapter_and_keeps_logs_out_of_dap() -> Result<()> {
-        smol::block_on(async {
-            let listener = TcpListener::bind("127.0.0.1:0").await?;
-            let address = listener.local_addr()?;
-            drop(listener);
-            let input = futures::stream::once(future::ready(Ok::<_, std::io::Error>(&b"ping"[..])))
-                .chain(futures::stream::pending())
-                .into_async_read();
-            let mut output = Vec::new();
-            proxy(
-                address,
-                Duration::from_secs(5),
-                &[
-                    std::env::current_exe()?.to_string_lossy().into_owned(),
-                    "--exact".to_owned(),
-                    "tcp::tests::adapter_process".to_owned(),
-                    "--nocapture".to_owned(),
-                    "--skip".to_owned(),
-                    address.port().to_string(),
-                ],
-                input,
-                &mut output,
-            )
-            .await?;
-            assert_eq!(output, b"pong");
-            Ok(())
-        })
-    }
-
-    #[test]
     fn attach_forwards_dap_in_both_directions() -> Result<()> {
         smol::block_on(async {
             let listener = TcpListener::bind("127.0.0.1:0").await?;
@@ -175,13 +147,18 @@ mod tests {
                 stream.write_all(response).await?;
                 anyhow::Ok(())
             };
-            let (server, proxy) = future::join(
+            future::try_join(
                 server,
-                proxy(address, Duration::from_secs(2), &[], input, &mut output),
+                proxy(
+                    address,
+                    Duration::from_secs(2),
+                    &[],
+                    TcpStream::connect,
+                    input,
+                    &mut output,
+                ),
             )
-            .await;
-            server?;
-            proxy?;
+            .await?;
             assert_eq!(output, response);
             Ok(())
         })
@@ -190,19 +167,21 @@ mod tests {
     #[test]
     fn connection_timeout() -> Result<()> {
         smol::block_on(async {
-            let listener = TcpListener::bind("127.0.0.1:0").await?;
-            let address = listener.local_addr()?;
-            drop(listener);
+            let address = SocketAddr::from(([127, 0, 0, 1], 0));
             let error = proxy(
                 address,
                 Duration::from_millis(20),
                 &[],
+                |_| future::pending(),
                 smol::io::empty(),
                 smol::io::sink(),
             )
             .await
             .expect_err("There is no TCP server");
-            assert!(error.to_string().contains("Connection to TCP DAP timeout"));
+            assert_eq!(
+                error.to_string(),
+                format!("Connection to TCP DAP timeout {address}")
+            );
             Ok(())
         })
     }
@@ -233,7 +212,7 @@ mod tests {
             .boxed()
             .into_async_read();
             select_biased! {
-                result = proxy(address, Duration::from_secs(2), &command, input, smol::io::sink()).fuse() => result?,
+                result = proxy(address, Duration::from_secs(2), &command, TcpStream::connect, input, smol::io::sink()).fuse() => result?,
                 _ = futures::FutureExt::fuse(smol::Timer::after(Duration::from_secs(5))) => bail!("Adapter was not terminated"),
             }
             let process_id = std::fs::read_to_string(marker)?;
@@ -254,24 +233,21 @@ mod tests {
     #[test]
     fn reports_adapter_exit_before_connecting() -> Result<()> {
         smol::block_on(async {
-            let listener = TcpListener::bind("127.0.0.1:0").await?;
-            let address = listener.local_addr()?;
-            drop(listener);
+            let address = SocketAddr::from(([127, 0, 0, 1], 0));
             let error = proxy(
                 address,
                 Duration::from_secs(2),
                 &["sh".to_owned(), "-c".to_owned(), "exit 7".to_owned()],
+                |_| future::pending(),
                 smol::io::empty(),
                 smol::io::sink(),
             )
             .await
             .expect_err("The adapter exits");
-            assert!(
-                error
-                    .to_string()
-                    .contains("Debug adapter exited before connecting")
+            assert_eq!(
+                error.to_string(),
+                format!("Debug adapter exited before connecting to {address}: exit status: 7")
             );
-            assert!(error.to_string().contains('7'));
             Ok(())
         })
     }

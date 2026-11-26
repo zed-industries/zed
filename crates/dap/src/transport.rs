@@ -80,20 +80,23 @@ async fn start(
     log_handlers: LogHandlers,
     cx: &mut AsyncApp,
 ) -> Result<Box<dyn Transport>> {
+    let tcp_connection = binary
+        .connection
+        .as_ref()
+        .filter(|connection| connection.stdio_proxy.is_none());
+
     #[cfg(any(test, feature = "test-support"))]
     if cfg!(any(test, feature = "test-support")) {
-        if let Some(connection) = binary.connection.clone() {
-            return Ok(Box::new(FakeTransport::start_tcp(connection, cx).await?));
+        if let Some(connection) = tcp_connection {
+            return Ok(Box::new(
+                FakeTransport::start_tcp(connection.clone(), cx).await?,
+            ));
         } else {
             return Ok(Box::new(FakeTransport::start_stdio(cx).await?));
         }
     }
 
-    if binary
-        .connection
-        .as_ref()
-        .is_some_and(|connection| connection.stdio_proxy.is_none())
-    {
+    if tcp_connection.is_some() {
         Ok(Box::new(
             TcpTransport::start(binary, log_handlers, cx).await?,
         ))
@@ -265,12 +268,15 @@ impl TransportDelegate {
             // Clean up logs by trimming unnecessary whitespace/newlines before inserting into log.
             let line = line.trim();
 
-            log::debug!("stderr: {line}");
+            Self::log_adapter_line(&log_handlers, iokind, line);
+        }
+    }
 
-            for (kind, handler) in log_handlers.lock().iter_mut() {
-                if matches!(kind, LogKind::Adapter) {
-                    handler(iokind, None, line);
-                }
+    fn log_adapter_line(log_handlers: &LogHandlers, iokind: IoKind, line: &str) {
+        log::debug!("stderr: {line}");
+        for (kind, handler) in log_handlers.lock().iter_mut() {
+            if matches!(kind, LogKind::Adapter) {
+                handler(iokind, None, line);
             }
         }
     }
@@ -730,20 +736,66 @@ impl StdioTransport {
 
         let mut process = Child::spawn(command, Stdio::piped(), Stdio::piped(), Stdio::piped())?;
 
-        let _stderr_task = process.stderr.take().map(|stderr| {
-            cx.background_spawn(TransportDelegate::handle_adapter_log(
-                stderr,
-                IoKind::StdErr,
-                log_handlers,
-            ))
-        });
+        let stderr = process
+            .stderr
+            .take()
+            .context("Missing debug adapter stderr")?;
+        let mut transport = Self {
+            process: Mutex::new(process),
+            _stderr_task: None,
+        };
 
-        let process = Mutex::new(process);
+        let mut stderr = BufReader::new(stderr);
+        if let Some(connection) = binary
+            .connection
+            .as_ref()
+            .filter(|args| args.stdio_proxy.is_some())
+        {
+            let timeout = connection
+                .timeout
+                .unwrap_or_else(|| cx.update(|cx| DebuggerSettings::get_global(cx).timeout));
+            let address = SocketAddr::new(connection.host, connection.port);
+            // Give Docker time to start the helper in addition to the in-container TCP deadline.
+            let deadline = Duration::from_millis(timeout).saturating_add(Duration::from_secs(5));
+            select! {
+                result = read_tcp_proxy_startup(&mut stderr, &log_handlers).fuse() => result?,
+                _ = cx.background_executor().timer(deadline).fuse() => {
+                    bail!("Timed out waiting for the TCP debug adapter proxy for {address}");
+                }
+            }
+        }
+        transport._stderr_task = Some(cx.background_spawn(TransportDelegate::handle_adapter_log(
+            stderr,
+            IoKind::StdErr,
+            log_handlers,
+        )));
+        Ok(transport)
+    }
+}
 
-        Ok(Self {
-            process,
-            _stderr_task,
-        })
+async fn read_tcp_proxy_startup(
+    stderr: &mut (impl smol::io::AsyncBufRead + Unpin),
+    log_handlers: &LogHandlers,
+) -> Result<()> {
+    let mut bytes = Vec::new();
+    loop {
+        bytes.clear();
+        if stderr.read_until(b'\n', &mut bytes).await? == 0 {
+            bail!("TCP debug adapter proxy exited before reporting startup");
+        }
+        let line = String::from_utf8_lossy(&bytes);
+        if let Some(status) = line
+            .trim_end()
+            .strip_prefix(proto::DAP_TCP_PROXY_STARTUP_PREFIX)
+        {
+            if let Some(error) = serde_json::from_str::<Option<String>>(status)
+                .context("Invalid TCP debug adapter proxy startup response")?
+            {
+                bail!(error);
+            }
+            return Ok(());
+        }
+        TransportDelegate::log_adapter_line(log_handlers, IoKind::StdErr, line.trim());
     }
 }
 
@@ -1163,5 +1215,39 @@ mod tests {
 
         let error = TransportDelegate::process_response(response).unwrap_err();
         assert_eq!(error.to_string(), "plain error");
+    }
+}
+
+#[cfg(test)]
+mod tcp_proxy_tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    #[gpui::test]
+    async fn reads_tcp_proxy_startup_error(_cx: &mut TestAppContext) {
+        let reason = "Debug adapter exited before connecting to 127.0.0.1:7000: exit status: 7";
+        let status = serde_json::to_string(&Some(reason)).unwrap();
+        let stderr = format!(
+            "adapter log\n{}{}\n",
+            proto::DAP_TCP_PROXY_STARTUP_PREFIX,
+            status
+        );
+        let mut reader = BufReader::new(stderr.as_bytes());
+        let error = read_tcp_proxy_startup(&mut reader, &Default::default())
+            .await
+            .expect_err("The startup failed");
+        assert_eq!(error.to_string(), reason);
+    }
+
+    #[gpui::test]
+    async fn reads_tcp_proxy_ready_and_preserves_remaining_logs(_cx: &mut TestAppContext) {
+        let stderr = format!("\n{}null\nmore logs\n", proto::DAP_TCP_PROXY_STARTUP_PREFIX);
+        let mut reader = BufReader::new(stderr.as_bytes());
+        read_tcp_proxy_startup(&mut reader, &Default::default())
+            .await
+            .unwrap();
+        let mut remaining = String::new();
+        reader.read_to_string(&mut remaining).await.unwrap();
+        assert_eq!(remaining, "more logs\n");
     }
 }

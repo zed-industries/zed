@@ -4,7 +4,6 @@ pub mod protocol;
 pub mod proxy;
 pub mod remote_client;
 pub mod remote_identity;
-pub mod tcp;
 mod transport;
 
 #[cfg(target_os = "windows")]
