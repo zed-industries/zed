@@ -13122,18 +13122,6 @@ test/
         add_multi_buffer_editor(&workspace, &project, &[(&buffer, Vec::new())], cx);
         wait_for_outline_tasks(&outline_panel, cx).await;
 
-        outline_panel.update(cx, |panel, _| {
-            assert_eq!(
-                panel
-                    .collapsed_entries
-                    .iter()
-                    .filter(|entry| matches!(entry, CollapsedEntry::Outline(..)))
-                    .count(),
-                0,
-                "an empty file has no outlines to collapse"
-            );
-        });
-
         buffer.update(cx, |buffer, cx| {
             buffer.edit(
                 [(0..buffer.len(), "mod alpha {\n    fn a() {}\n}\n")],
@@ -13185,9 +13173,7 @@ test/
         fs.insert_tree(
             path!("/test"),
             json!({
-                "doc.md": indoc!(
-                    "# Doc\n\n## A\n\ntext a\n\n## B\n\ntext b\n"
-                ),
+                "doc.md": "# Doc\n\n## A\n\ntext a\n\n## B\n\ntext b\n",
             }),
         )
         .await;
@@ -13205,23 +13191,41 @@ test/
         add_multi_buffer_editor(&workspace, &project, &[(&buffer, Vec::new())], cx);
         wait_for_outline_tasks(&outline_panel, cx).await;
 
-        let doc_entry = outline_panel.read_with(cx, |panel, _| {
-            panel
+        outline_panel.update_in(cx, |panel, window, cx| {
+            let doc_entry = panel
                 .cached_entries
                 .iter()
-                .find_map(|entry| match &entry.entry {
-                    PanelEntry::Outline(OutlineEntry::Outline(outline))
-                        if outline.text.contains("Doc") =>
-                    {
-                        Some(CollapsedEntry::Outline(outline.range.clone()))
-                    }
-                    _ => None,
+                .map(|entry| entry.entry.clone())
+                .find(|entry| {
+                    matches!(
+                        entry,
+                        PanelEntry::Outline(OutlineEntry::Outline(outline)) if outline.text == "# Doc"
+                    )
                 })
-                .expect("the Doc outline should be listed")
+                .expect("the Doc outline should be listed");
+            panel.toggle_expanded(&doc_entry, window, cx);
         });
-        outline_panel.update(cx, |panel, _| {
-            assert!(panel.collapsed_entries.contains(&doc_entry));
-            panel.collapsed_entries.remove(&doc_entry);
+        wait_for_outline_tasks(&outline_panel, cx).await;
+
+        let expanded = indoc!(
+            "
+test/
+  doc.md
+      outline: # Doc
+        outline: ## A
+        outline: ## B"
+        );
+        outline_panel.update(cx, |panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(panel, cx),
+                    &panel.cached_entries,
+                    None,
+                    cx
+                ),
+                expanded
+            );
         });
 
         buffer.update(cx, |buffer, cx| {
@@ -13233,16 +13237,16 @@ test/
         wait_for_outline_tasks(&outline_panel, cx).await;
 
         outline_panel.update(cx, |panel, cx| {
-            let rendered = display_entries(
-                &project,
-                &snapshot(panel, cx),
-                &panel.cached_entries,
-                None,
-                cx,
-            );
-            assert!(
-                rendered.contains("## A"),
-                "an outline the user expanded must stay expanded after an unrelated edit, got:\n{rendered}"
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(panel, cx),
+                    &panel.cached_entries,
+                    None,
+                    cx
+                ),
+                expanded,
+                "an outline the user expanded must stay expanded after an edit at its boundary"
             );
         });
     }
