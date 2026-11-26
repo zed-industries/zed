@@ -2766,6 +2766,54 @@ impl PyreflyLspAdapter {
     }
 }
 
+/// Pyrefly reads its interpreter from the `python` section, so the selected
+/// toolchain must be nested there rather than sent at the top level.
+fn apply_python_toolchain_to_pyrefly_settings(
+    mut settings: Value,
+    toolchain: Option<Toolchain>,
+) -> Value {
+    let Some(toolchain) = toolchain else {
+        return settings;
+    };
+
+    let Ok(env) = serde_json::from_value::<PythonToolchainData>(toolchain.as_json) else {
+        return settings;
+    };
+
+    let Some(interpreter_path) = env.environment.executable else {
+        return settings;
+    };
+
+    if !settings.is_object() {
+        settings = Value::Object(serde_json::Map::default());
+    }
+
+    let Some(object) = settings.as_object_mut() else {
+        return settings;
+    };
+
+    let python = object
+        .entry("python")
+        .and_modify(|value| {
+            if !value.is_object() {
+                *value = Value::Object(serde_json::Map::default());
+            }
+        })
+        .or_insert_with(|| Value::Object(serde_json::Map::default()));
+
+    if let Some(python) = python.as_object_mut()
+        && !python.contains_key("pythonPath")
+        && !python.contains_key("venvPath")
+    {
+        python.insert(
+            "pythonPath".to_owned(),
+            Value::String(interpreter_path.to_string_lossy().into_owned()),
+        );
+    }
+
+    settings
+}
+
 #[async_trait(?Send)]
 impl LspAdapter for PyreflyLspAdapter {
     fn name(&self) -> LanguageServerName {
@@ -2812,30 +2860,17 @@ impl LspAdapter for PyreflyLspAdapter {
         _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
-        let mut user_settings = cx
+        let user_settings = cx
             .update(move |cx| {
                 language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
                     .and_then(|s| s.settings.clone())
             })
             .unwrap_or_default();
 
-        if let Some(toolchain) = toolchain
-            && let Ok(env) = serde_json::from_value::<PythonToolchainData>(toolchain.as_json)
-        {
-            if !user_settings.is_object() {
-                user_settings = Value::Object(serde_json::Map::default());
-            }
-            let object = user_settings.as_object_mut().unwrap();
-
-            if let Some(interpreter_path) = &env.environment.executable {
-                object.insert(
-                    "pythonPath".to_owned(),
-                    Value::String(interpreter_path.to_string_lossy().into_owned()),
-                );
-            }
-        }
-
-        Ok(user_settings)
+        Ok(apply_python_toolchain_to_pyrefly_settings(
+            user_settings,
+            toolchain,
+        ))
     }
 }
 
@@ -3029,7 +3064,8 @@ mod tests {
     use std::num::NonZeroU32;
 
     use crate::python::{
-        normalize_pyright_analysis_configuration, python_module_name_from_relative_path,
+        apply_python_toolchain_to_pyrefly_settings, normalize_pyright_analysis_configuration,
+        python_module_name_from_relative_path,
     };
 
     #[test]
@@ -3148,6 +3184,105 @@ mod tests {
                     "typeCheckingMode": "basic"
                 }
             })
+        );
+    }
+
+    fn pyrefly_toolchain(executable: Option<&str>) -> language::Toolchain {
+        language::Toolchain {
+            name: "test".into(),
+            path: executable.unwrap_or("/default/python").into(),
+            language_name: language::LanguageName::new_static("Python"),
+            as_json: match executable {
+                Some(executable) => serde_json::json!({ "executable": executable }),
+                None => serde_json::json!({}),
+            },
+        }
+    }
+
+    #[test]
+    fn test_pyrefly_workspace_configuration_nests_python_path() {
+        let settings = apply_python_toolchain_to_pyrefly_settings(
+            serde_json::json!({}),
+            Some(pyrefly_toolchain(Some("/tmp/venv/bin/python"))),
+        );
+
+        assert_eq!(
+            settings["python"]["pythonPath"],
+            serde_json::json!("/tmp/venv/bin/python")
+        );
+        assert!(settings.get("pythonPath").is_none());
+    }
+
+    #[test]
+    fn test_pyrefly_workspace_configuration_respects_user_override() {
+        let python_path_settings = apply_python_toolchain_to_pyrefly_settings(
+            serde_json::json!({ "python": { "pythonPath": "/user/python" } }),
+            Some(pyrefly_toolchain(Some("/tmp/venv/bin/python"))),
+        );
+        assert_eq!(
+            python_path_settings,
+            serde_json::json!({ "python": { "pythonPath": "/user/python" } })
+        );
+
+        let venv_path_settings = apply_python_toolchain_to_pyrefly_settings(
+            serde_json::json!({ "python": { "venvPath": "/user/venv" } }),
+            Some(pyrefly_toolchain(Some("/tmp/venv/bin/python"))),
+        );
+        assert_eq!(
+            venv_path_settings,
+            serde_json::json!({ "python": { "venvPath": "/user/venv" } })
+        );
+    }
+
+    #[test]
+    fn test_pyrefly_workspace_configuration_preserves_other_python_settings() {
+        let settings = apply_python_toolchain_to_pyrefly_settings(
+            serde_json::json!({
+                "python": { "analysis": { "typeCheckingMode": "basic" } },
+                "other": true
+            }),
+            Some(pyrefly_toolchain(Some("/tmp/venv/bin/python"))),
+        );
+
+        assert_eq!(
+            settings["python"]["pythonPath"],
+            serde_json::json!("/tmp/venv/bin/python")
+        );
+        assert_eq!(
+            settings["python"]["analysis"]["typeCheckingMode"],
+            serde_json::json!("basic")
+        );
+        assert_eq!(settings["other"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn test_pyrefly_workspace_configuration_without_toolchain() {
+        let settings =
+            apply_python_toolchain_to_pyrefly_settings(serde_json::json!({ "other": true }), None);
+
+        assert_eq!(settings, serde_json::json!({ "other": true }));
+    }
+
+    #[test]
+    fn test_pyrefly_workspace_configuration_without_executable() {
+        let settings = apply_python_toolchain_to_pyrefly_settings(
+            serde_json::json!({ "other": true }),
+            Some(pyrefly_toolchain(None)),
+        );
+
+        assert_eq!(settings, serde_json::json!({ "other": true }));
+    }
+
+    #[test]
+    fn test_pyrefly_workspace_configuration_replaces_non_object_settings() {
+        let settings = apply_python_toolchain_to_pyrefly_settings(
+            serde_json::json!("invalid"),
+            Some(pyrefly_toolchain(Some("/tmp/venv/bin/python"))),
+        );
+
+        assert_eq!(
+            settings["python"]["pythonPath"],
+            serde_json::json!("/tmp/venv/bin/python")
         );
     }
 
