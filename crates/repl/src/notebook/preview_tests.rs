@@ -1655,3 +1655,85 @@ async fn save_all_in_an_action_sequence_includes_a_new_cell_edit(cx: &mut TestAp
         );
     }
 }
+
+#[gpui::test]
+async fn saved_rich_outputs_render_passively_and_save_unchanged(cx: &mut TestAppContext) {
+    use crate::outputs::Output;
+    use gpui::{px, size};
+
+    let outputs = r#"[
+      {"output_type":"display_data", "metadata":{}, "data":{"image/jpeg":"/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDABALDA4MChAODQ4SERATGCgaGBYWGDEjJR0oOjM9PDkzODdASFxOQERXRTc4UG1RV19iZ2hnPk1xeXBkeFxlZ2P/wAALCAABAAIBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAABf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AMf/Z"}},
+      {"output_type":"display_data", "metadata":{}, "data":{"application/json":{"marker":[1, 2.50]}}},
+      {"output_type":"execute_result", "execution_count":7, "metadata":{}, "data":{"text/plain":"plain",
+        "text/markdown":["**Summary** ", "![remote](https://example.com/remote.png) [site](https://example.com)"]}},
+      {"output_type":"execute_result", "execution_count":7, "metadata":{}, "data":{"text/plain":"frame",
+        "text/html":"<table></table>", "application/vnd.dataresource+json":{
+          "schema":{"fields":[{"name":"id","type":"integer"}]}, "data":[{"id":1}]}}},
+      {"output_type":"display_data", "metadata":{}, "data":{"text/plain":"html fallback",
+        "text/html":"<img src='https://example.com/remote.png'>"}}
+    ]"#;
+    let file = NOTEBOOK.replace(
+        r#"[{"output_type":"stream", "name":"stdout", "text":["saved result\n"]}]"#,
+        outputs,
+    );
+    assert!(file.contains(outputs));
+    let (fs, workspace, cx) = notebook_workspace(json!({"rich.ipynb": file}), cx).await;
+    cx.update(|_, cx| {
+        cx.set_http_client(http_client::FakeHttpClient::create(|request| async move {
+            panic!("saved output fetched {}", request.uri())
+        }));
+    });
+    cx.simulate_resize(size(px(1200.), px(1600.)));
+    let check_outputs = |cx: &mut VisualTestContext| {
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            let preview = workspace.active_item_as::<NotebookPreview>(cx).unwrap();
+            let notebook = preview.read(cx).notebook.as_ref().unwrap().read(cx);
+            let cell = (0..)
+                .map_while(|index| notebook.cell(index))
+                .find_map(|cell| match cell {
+                    crate::notebook::Cell::Code(cell)
+                        if !cell.read(cx).output_views().is_empty() =>
+                    {
+                        Some(cell)
+                    }
+                    _ => None,
+                })
+                .expect("code cell with saved outputs");
+            let [
+                Output::Image { .. },
+                Output::Json { .. },
+                Output::Markdown { .. },
+                Output::Table { .. },
+                Output::Plain { content, .. },
+            ] = cell.read(cx).output_views()
+            else {
+                panic!("expected JPEG, JSON, Markdown, table, and plain fallback for HTML")
+            };
+            assert_eq!(content.read(cx).full_text(cx), "html fallback\n");
+        })
+    };
+
+    open_file("rich.ipynb", &workspace, cx).await;
+    check_outputs(cx);
+    cx.dispatch_action(AddCodeBlock);
+    cx.simulate_keystrokes("x");
+    cx.dispatch_action(workspace::SaveAll { save_intent: None });
+    cx.run_until_parked();
+    let saved = fs
+        .load(Path::new(path!("/notebooks/rich.ipynb")))
+        .await
+        .unwrap();
+    assert!(
+        saved.contains(outputs),
+        "saved outputs keep their raw bytes"
+    );
+    assert!(cell_sources(&workspace, cx).contains(&"x".to_string()));
+    let saved_cells = serde_json::from_str::<Value>(&saved).unwrap()["cells"].clone();
+    assert_eq!(saved_cells.as_array().map(Vec::len), Some(3));
+
+    cx.dispatch_action(workspace::pane::CloseActiveItem::default());
+    cx.run_until_parked();
+    open_file("rich.ipynb", &workspace, cx).await;
+    check_outputs(cx);
+}

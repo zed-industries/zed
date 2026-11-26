@@ -35,6 +35,10 @@ impl ImageView {
         Self::decode(base64_encoded_data, Some(image::ImageFormat::Png))
     }
 
+    pub fn from_jpeg(base64_encoded_data: &str) -> Result<Self> {
+        Self::decode(base64_encoded_data, Some(image::ImageFormat::Jpeg))
+    }
+
     fn decode(base64_encoded_data: &str, format: Option<image::ImageFormat>) -> Result<Self> {
         let filtered =
             base64_encoded_data.replace(&[' ', '\n', '\t', '\r', '\x0b', '\x0c'][..], "");

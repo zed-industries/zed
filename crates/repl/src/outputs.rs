@@ -348,11 +348,22 @@ impl Output {
     }
 
     pub(crate) fn for_notebook(data: &Media, window: &mut Window, cx: &mut App) -> Self {
+        // Converted HTML can embed remote images, so saved notebooks fall back to its alternatives.
         match data.richest(|media| match media {
-            MediaType::Png(_) => 2,
-            MediaType::Plain(_) => 1,
-            _ => 0,
+            MediaType::Html(_) => 0,
+            media => rank_mime_type(media),
         }) {
+            Some(MediaType::DataTable(table)) => Self::Table {
+                content: cx.new(|cx| TableView::new(table, window, cx)),
+                display_id: None,
+            },
+            Some(MediaType::Json(value)) => match JsonView::from_value(value.clone()) {
+                Ok(view) => Self::Json {
+                    content: cx.new(|_| view),
+                    display_id: None,
+                },
+                Err(error) => Self::Message(format!("Failed to load JSON: {error}")),
+            },
             Some(MediaType::Png(data)) => match ImageView::from_png(data) {
                 Ok(view) => Self::Image {
                     content: cx.new(|_| view),
@@ -360,11 +371,22 @@ impl Output {
                 },
                 Err(error) => Self::Message(format!("Failed to load PNG: {error}")),
             },
+            Some(MediaType::Jpeg(data)) => match ImageView::from_jpeg(data) {
+                Ok(view) => Self::Image {
+                    content: cx.new(|_| view),
+                    display_id: None,
+                },
+                Err(error) => Self::Message(format!("Failed to load JPEG: {error}")),
+            },
+            Some(MediaType::Markdown(text)) => Self::Markdown {
+                content: cx.new(|cx| MarkdownView::without_links(text.clone(), cx)),
+                display_id: None,
+            },
             Some(MediaType::Plain(text)) => Self::Plain {
                 content: cx.new(|cx| TerminalOutput::from(text, window, cx)),
                 display_id: None,
             },
-            _ => Self::Message("No PNG or plain text representation available.".into()),
+            _ => Self::Message("No supported output representation available.".into()),
         }
     }
 

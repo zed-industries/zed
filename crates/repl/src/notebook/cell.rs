@@ -1540,16 +1540,15 @@ mod tests {
             assert!(!cell.has_stale_outputs(cx));
             let [
                 Output::Image { .. },
-                Output::Plain { content, .. },
+                Output::Markdown { .. },
                 Output::Message(_),
                 Output::Message(image_error),
                 Output::Stream { content: stream },
                 Output::ErrorOutput(error),
             ] = cell.outputs.as_slice()
             else {
-                panic!("expected PNG, text, unsupported notice, invalid PNG, stream, and error")
+                panic!("expected PNG, Markdown, unsupported notice, invalid PNG, stream, and error")
             };
-            assert_eq!(content.read(cx).full_text(cx), "42\n");
             assert!(image_error.contains("Failed to load PNG"));
             assert_eq!(stream.read(cx).full_text(cx), "one\ntwo\n");
             assert_eq!(error.evalue, "bad value");
