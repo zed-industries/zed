@@ -768,6 +768,24 @@ mod tests {
             None,
             "a Podman container must not focus the open Docker workspace of the same config"
         );
+
+        let saved_before_labels = RemoteConnectionOptions::Docker(DockerConnectionOptions {
+            name: "project".to_string(),
+            remote_user: "vscode".to_string(),
+            container_id: "container-before".to_string(),
+            ..Default::default()
+        });
+        assert_eq!(
+            find_existing_workspace(
+                &[PathBuf::from(path!("/project"))],
+                &workspace::OpenOptions::default(),
+                &ProjectHost::Remote(&saved_before_labels),
+                &mut async_cx,
+            )
+            .map(|target| target.window),
+            Some(window),
+            "a Recent Projects entry saved before labels should focus the open workspace"
+        );
     }
 
     // Trust saved before Zed stored dev container labels names the container by ID.

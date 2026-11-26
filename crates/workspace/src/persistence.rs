@@ -1870,6 +1870,16 @@ impl WorkspaceDb {
             config_file,
         ))? {
             Ok(RemoteConnectionId(id))
+        } else if let Some(id) = Self::adopt_unlabeled_dev_container_connection(
+            this,
+            kind,
+            user,
+            name,
+            container_id,
+            local_folder,
+            config_file,
+        )? {
+            Ok(RemoteConnectionId(id))
         } else {
             let id = this.select_row_bound(sql!(
                 INSERT INTO remote_connections (
@@ -1900,6 +1910,41 @@ impl WorkspaceDb {
             .context("failed to insert remote project")?;
             Ok(RemoteConnectionId(id))
         }
+    }
+
+    /// A connection saved before Zed stored dev container labels names the same
+    /// running container by ID. Adopt it instead of adding a second row, so its
+    /// workspaces get the labeled identity.
+    fn adopt_unlabeled_dev_container_connection(
+        this: &Connection,
+        kind: RemoteConnectionKind,
+        user: Option<&str>,
+        name: Option<&str>,
+        container_id: Option<&str>,
+        local_folder: Option<&str>,
+        config_file: Option<&str>,
+    ) -> Result<Option<u64>> {
+        if config_file.is_none() {
+            return Ok(None);
+        }
+        this.select_row_bound(sql!(
+            UPDATE remote_connections
+            SET local_folder = ?, config_file = ?
+            WHERE
+                kind IS ? AND
+                user IS ? AND
+                name IS ? AND
+                container_id IS ? AND
+                config_file IS NULL
+            RETURNING id
+        ))?((
+            local_folder,
+            config_file,
+            kind.serialize(),
+            user,
+            name,
+            container_id,
+        ))
     }
 
     query! {
@@ -5303,6 +5348,39 @@ mod tests {
                 connection_id
             );
         }
+    }
+
+    #[gpui::test]
+    async fn test_dev_container_adopts_connection_saved_before_labels() {
+        let db =
+            WorkspaceDb::open_test_db("test_dev_container_adopts_connection_saved_before_labels")
+                .await;
+        let labeled = DockerConnectionOptions {
+            name: "project".to_string(),
+            container_id: "container-123".to_string(),
+            remote_user: "vscode".to_string(),
+            local_folder: Some("/home/user/project".to_string()),
+            config_file: Some("/home/user/project/.devcontainer/devcontainer.json".to_string()),
+            ..Default::default()
+        };
+        let saved_before_labels = RemoteConnectionOptions::Docker(DockerConnectionOptions {
+            local_folder: None,
+            config_file: None,
+            ..labeled.clone()
+        });
+        let labeled = RemoteConnectionOptions::Docker(labeled);
+
+        let legacy_id = db
+            .get_or_create_remote_connection(saved_before_labels)
+            .await
+            .unwrap();
+        let labeled_id = db
+            .get_or_create_remote_connection(labeled.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(labeled_id, legacy_id);
+        assert_eq!(db.remote_connection(labeled_id).unwrap(), labeled);
     }
 
     #[gpui::test]
