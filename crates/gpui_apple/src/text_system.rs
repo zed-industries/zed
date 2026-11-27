@@ -76,7 +76,7 @@ struct AppleTextSystemState {
     font_selections: HashMap<Font, FontId>,
     font_ids_by_postscript_name: HashMap<String, FontId>,
     font_ids_by_font_key: HashMap<FontKey, SmallVec<[FontId; 4]>>,
-    postscript_names_by_font_id: HashMap<FontId, String>,
+    has_color_glyphs: Vec<bool>,
 }
 
 impl AppleTextSystem {
@@ -89,7 +89,7 @@ impl AppleTextSystem {
             font_selections: HashMap::default(),
             font_ids_by_postscript_name: HashMap::default(),
             font_ids_by_font_key: HashMap::default(),
-            postscript_names_by_font_id: HashMap::default(),
+            has_color_glyphs: Vec::new(),
         }))
     }
 }
@@ -383,8 +383,7 @@ impl AppleTextSystemState {
             font_ids.push(font_id);
             self.font_ids_by_postscript_name
                 .insert(postscript_name.clone(), font_id);
-            self.postscript_names_by_font_id
-                .insert(font_id, postscript_name);
+            self.has_color_glyphs.push(has_color_glyphs(&font));
             self.fonts.push(font);
         }
         Ok(font_ids)
@@ -408,22 +407,19 @@ impl AppleTextSystemState {
             let font_id = FontId(self.fonts.len());
             self.font_ids_by_postscript_name
                 .insert(postscript_name.clone(), font_id);
-            self.postscript_names_by_font_id
-                .insert(font_id, postscript_name);
-            self.fonts
-                .push(font_kit::font::Font::from_core_graphics_font(
-                    requested_font.copy_to_CGFont(),
-                ));
+            let font =
+                font_kit::font::Font::from_core_graphics_font(requested_font.copy_to_CGFont());
+            self.has_color_glyphs.push(has_color_glyphs(&font));
+            self.fonts.push(font);
             font_id
         }
     }
 
     fn is_emoji(&self, font_id: FontId) -> bool {
-        self.postscript_names_by_font_id
-            .get(&font_id)
-            .is_some_and(|postscript_name| {
-                postscript_name == "AppleColorEmoji" || postscript_name == ".AppleColorEmojiUI"
-            })
+        self.has_color_glyphs
+            .get(font_id.0)
+            .copied()
+            .unwrap_or(false)
     }
 
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
@@ -673,6 +669,17 @@ impl<'a> StringIndexConverter<'a> {
     }
 }
 
+fn has_color_glyphs(font: &FontKitFont) -> bool {
+    const fn tag(bytes: &[u8; 4]) -> u32 {
+        u32::from_be_bytes(*bytes)
+    }
+
+    let font = font.native_font();
+    font.get_font_table(tag(b"COLR")).is_some()
+        || font.get_font_table(tag(b"CBDT")).is_some()
+        || font.get_font_table(tag(b"sbix")).is_some()
+}
+
 fn font_kit_metrics_to_metrics(metrics: Metrics) -> FontMetrics {
     FontMetrics {
         units_per_em: metrics.units_per_em,
@@ -786,6 +793,27 @@ mod tests {
         FontFallbacks, FontFeatures, FontId, FontRun, GlyphId, PlatformTextSystem, font, px,
     };
     use std::sync::Arc;
+
+    #[test]
+    fn color_glyph_support_is_detected_from_tables() {
+        let fonts = AppleTextSystem::new();
+        fonts
+            .add_fonts(vec![
+                std::borrow::Cow::Borrowed(include_bytes!(
+                    "../../../assets/fonts/lilex/Lilex-Regular.ttf"
+                )),
+                std::borrow::Cow::Borrowed(include_bytes!(
+                    "../../gpui/test_fonts/GpuiTestColor.ttf"
+                )),
+            ])
+            .unwrap();
+
+        let monochrome_id = fonts.font_id(&font("Lilex")).unwrap();
+        let color_id = fonts.font_id(&font("GpuiTestColor")).unwrap();
+        let state = fonts.0.read();
+        assert!(!state.is_emoji(monochrome_id));
+        assert!(state.is_emoji(color_id));
+    }
 
     #[test]
     fn test_reload_family_with_features_and_fallbacks() {

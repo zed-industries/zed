@@ -7802,6 +7802,7 @@ dependencies = [
  "raw-window-handle",
  "smallvec",
  "swash",
+ "ttf-parser",
  "unicode-bidi",
  "unicode-segmentation",
  "web-sys",
