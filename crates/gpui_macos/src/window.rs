@@ -25,7 +25,7 @@ use core_foundation_sys::number::{CFBooleanGetValue, CFBooleanRef};
 use core_graphics::display::CGDirectDisplayID;
 use ctor::ctor;
 use futures::channel::oneshot;
-use gpui_apple::display_link::{DisplayLink, DisplayLinkFrames};
+use gpui_apple::display_link::DisplayLinkFrames;
 use gpui_util::ResultExt;
 use objc2::{
     AnyThread, MainThreadMarker, Message, class, msg_send,
@@ -894,15 +894,25 @@ impl MacWindowState {
             FrameSource::View(frames) => {
                 let main_thread =
                     crate::main_thread_marker().expect("macOS windows require the main thread");
+                let native_view = self.native_view.cast::<NSView>();
                 let window_state = Rc::downgrade(window_state);
-                // SAFETY: `native_view` is a live `NSView` (`GPUIView`).
-                unsafe {
-                    frames.start_for_source(native_view.as_ref(), main_thread, move || {
+                frames.start(
+                    main_thread,
+                    |target, selector| {
+                        // SAFETY: `native_view` is a live `GPUIView` (`NSView` subclass), and
+                        // `DisplayLink` supplies a target implementing `selector`.
+                        unsafe {
+                            native_view
+                                .as_ref()
+                                .displayLinkWithTarget_selector(target, selector)
+                        }
+                    },
+                    move || {
                         if let Some(window_state) = window_state.upgrade() {
                             display_link_frame(&window_state);
                         }
-                    });
-                }
+                    },
+                );
             }
             FrameSource::DisplayLink(frame_source) => {
                 if let Some(existing) = frame_source.as_mut() {
@@ -1155,8 +1165,12 @@ impl MacWindow {
             let native_view: *mut AnyObject = msg_send![native_view, initWithFrame: content_bounds];
             assert!(!native_view.is_null());
 
-            let view_link =
-                DisplayLink::supports_source(class!(NSView)).then(Rc::<DisplayLinkFrames>::default);
+            let view_link = is_macos_version_at_least(NSOperatingSystemVersion {
+                majorVersion: 14,
+                minorVersion: 0,
+                patchVersion: 0,
+            })
+            .then(Rc::<DisplayLinkFrames>::default);
             let state = Rc::new(Mutex::new(MacWindowState {
                 handle,
                 foreground_executor,

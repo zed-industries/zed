@@ -1,11 +1,11 @@
 use objc2::{
     DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send,
     rc::Retained,
-    runtime::{AnyClass, AnyObject},
+    runtime::{AnyObject, Sel},
     sel,
 };
 use objc2_foundation::{NSObject, NSObjectProtocol, NSRunLoop, NSRunLoopCommonModes};
-use objc2_quartz_core::CADisplayLink;
+pub use objc2_quartz_core::CADisplayLink;
 use std::cell::{Cell, RefCell};
 
 struct DisplayLinkTargetIvars {
@@ -55,75 +55,36 @@ pub struct DisplayLink {
 }
 
 impl DisplayLink {
-    /// Whether instances of `class` (such as `NSView`, `NSWindow`, `NSScreen`
-    /// on macOS 14+, or `UIWindowScene` / `UIView` on iOS) vend a display-tracking
-    /// `CADisplayLink` via `-displayLinkWithTarget:selector:`.
-    pub fn supports_source(class: &AnyClass) -> bool {
-        // SAFETY: `instancesRespondToSelector:` takes only a `SEL`.
-        unsafe {
-            msg_send![
-                class,
-                instancesRespondToSelector: sel!(displayLinkWithTarget:selector:)
-            ]
-        }
-    }
-
-    /// Starts delivering vsync ticks for `source` (an `NSView`, `NSWindow`,
-    /// `NSScreen`, `UIWindowScene`, or `UIView`) on the main run loop in common
-    /// modes, or returns `None` if `source` does not support creating one.
-    ///
-    /// # Safety
-    ///
-    /// `source` must be a valid Objective-C object whose
-    /// `-displayLinkWithTarget:selector:` returns a `CADisplayLink *`.
-    pub unsafe fn for_source(
-        source: &AnyObject,
+    /// Starts delivering vsync ticks on the main run loop in common modes using
+    /// the `CADisplayLink` returned by `create(target, selector)`.
+    pub fn new(
         main_thread: MainThreadMarker,
+        create: impl FnOnce(&AnyObject, Sel) -> Retained<CADisplayLink>,
         callback: impl Fn() + 'static,
-    ) -> Option<Self> {
-        let responds: bool = unsafe {
-            msg_send![
-                source,
-                respondsToSelector: sel!(displayLinkWithTarget:selector:)
-            ]
-        };
-        if !responds {
-            return None;
-        }
+    ) -> Self {
         let target = DisplayLinkTarget::new(main_thread, callback);
-        let link: Option<Retained<CADisplayLink>> = unsafe {
-            msg_send![
-                source,
-                displayLinkWithTarget: &*target,
-                selector: sel!(displayLinkFired:)
-            ]
-        };
-        let link = link?;
+        let link = create(&target, sel!(displayLinkFired:));
         // SAFETY: `MainThreadMarker` confines `Self` to the main thread, and
-        // the main run loop outlives the source.
-        unsafe { link.addToRunLoop_forMode(&NSRunLoop::mainRunLoop(), NSRunLoopCommonModes) };
-        Some(Self {
-            link,
-            _target: target,
-            _main_thread: main_thread,
-        })
-    }
-
-    /// Starts delivering vsync ticks for the main display on iOS/iPadOS.
-    #[cfg(target_os = "ios")]
-    pub fn for_main_display(main_thread: MainThreadMarker, callback: impl Fn() + 'static) -> Self {
-        let target = DisplayLinkTarget::new(main_thread, callback);
-        // SAFETY: `DisplayLinkTarget` implements `displayLinkFired:`.
-        let link = unsafe {
-            CADisplayLink::displayLinkWithTarget_selector(&target, sel!(displayLinkFired:))
-        };
-        // SAFETY: `MainThreadMarker` confines `Self` to the main thread.
+        // the main run loop outlives the link.
         unsafe { link.addToRunLoop_forMode(&NSRunLoop::mainRunLoop(), NSRunLoopCommonModes) };
         Self {
             link,
             _target: target,
             _main_thread: main_thread,
         }
+    }
+
+    /// Starts delivering vsync ticks for the main display on iOS/iPadOS.
+    #[cfg(target_os = "ios")]
+    pub fn for_main_display(main_thread: MainThreadMarker, callback: impl Fn() + 'static) -> Self {
+        Self::new(
+            main_thread,
+            |target, selector| {
+                // SAFETY: `DisplayLink::new` supplies a target implementing `selector`.
+                unsafe { CADisplayLink::displayLinkWithTarget_selector(target, selector) }
+            },
+            callback,
+        )
     }
 
     pub fn set_paused(&self, paused: bool) {
@@ -167,16 +128,11 @@ pub struct DisplayLinkFrames {
 }
 
 impl DisplayLinkFrames {
-    /// Resumes the link, creating one bound to `source` on first start.
-    ///
-    /// # Safety
-    ///
-    /// `source` must be a valid Objective-C object whose
-    /// `-displayLinkWithTarget:selector:` returns a `CADisplayLink *`.
-    pub unsafe fn start_for_source(
+    /// Resumes the link, calling `create` to build it on first start.
+    pub fn start(
         &self,
-        source: &AnyObject,
         main_thread: MainThreadMarker,
+        create: impl FnOnce(&AnyObject, Sel) -> Retained<CADisplayLink>,
         callback: impl Fn() + 'static,
     ) {
         self.active.set(true);
@@ -185,8 +141,7 @@ impl DisplayLinkFrames {
             link.set_paused(false);
             return;
         }
-        // SAFETY: Caller guarantees `source` vends a `CADisplayLink *`.
-        *slot = unsafe { DisplayLink::for_source(source, main_thread, callback) };
+        *slot = Some(DisplayLink::new(main_thread, create, callback));
     }
 
     pub fn stop(&self) {
@@ -211,7 +166,7 @@ impl DisplayLinkFrames {
 
     pub fn wake(&self) {
         self.woken.set(true);
-        // The link is only borrowed mutably while being created in `start_for_source`,
+        // The link is only borrowed mutably while being created in `start`,
         // where a new link already begins unpaused.
         if self.active.get()
             && let Ok(link) = self.link.try_borrow()
