@@ -4725,7 +4725,8 @@ impl GitStore {
             .update(&mut cx, |repository, cx| {
                 repository.open_commit_buffer(None, this.read(cx).buffer_store.clone(), cx)
             })
-            .await?;
+            .await?
+            .context("opening the commit message buffer was canceled")?;
 
         let buffer_id = buffer.read_with(&cx, |buffer, _| buffer.remote_id());
         this.update(&mut cx, |this, cx| {
@@ -4907,7 +4908,7 @@ impl GitStore {
                 Some(repository.update(cx, |repo, _| repo.load_commit_template_text()))
             })
             .context("missing repository")?;
-        let template = rx.await??;
+        let template = rx.await.unwrap_or(Ok(None))?;
         Ok(proto::LoadCommitTemplateResponse {
             template: template.map(|t| t.template),
         })
@@ -7171,10 +7172,10 @@ impl Repository {
         languages: Option<Arc<LanguageRegistry>>,
         buffer_store: Entity<BufferStore>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<Buffer>>> {
+    ) -> Task<Result<Option<Entity<Buffer>>>> {
         let id = self.id;
         if let Some(buffer) = self.commit_message_buffer.clone() {
-            return Task::ready(Ok(buffer));
+            return Task::ready(Ok(Some(buffer)));
         }
         let this = cx.weak_entity();
 
@@ -7220,7 +7221,7 @@ impl Repository {
             },
         );
 
-        cx.spawn(|_, _: &mut AsyncApp| async move { rx.await? })
+        cx.background_spawn(async move { rx.await.map_or(Ok(None), |buffer| buffer.map(Some)) })
     }
 
     fn open_local_commit_buffer(
@@ -13920,6 +13921,32 @@ mod tests {
         cx.update(GitStore::rescan_after_global_config_write);
         cx.run_until_parked();
         assert_eq!(statuses(cx), [Vec::new(), Vec::new()]);
+    }
+
+    #[gpui::test]
+    async fn test_open_commit_buffer_when_repository_fails_to_open(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            util::path!("/project"),
+            json!({
+                ".git": "gitdir: ./missing\n",
+                "a.txt": "a",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [Path::new(util::path!("/project"))], cx).await;
+        cx.run_until_parked();
+        let repository =
+            project.read_with(cx, |project, cx| project.active_repository(cx).unwrap());
+        let buffer_store = project.read_with(cx, |project, _| project.buffer_store().clone());
+        let buffer = repository
+            .update(cx, |repository, cx| {
+                repository.open_commit_buffer(None, buffer_store, cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(buffer, None);
     }
 
     #[test]
