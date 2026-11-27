@@ -22526,6 +22526,7 @@ dependencies = [
  "itertools 0.14.0",
  "regex",
  "reqwest_client",
+ "semver",
  "serde",
  "serde_json",
  "serde_yaml",

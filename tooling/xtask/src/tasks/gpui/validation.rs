@@ -7,8 +7,10 @@ mod unique_publish_names;
 
 use std::fmt;
 
+use guppy::graph::{DependencyDirection, ExternalSource, PackageSet};
 use thiserror::Error;
 
+use super::crate_graph::is_zed_fork;
 use crate::tasks::gpui::publish_plan::PublishPlanEntry;
 
 const RULES: &[&dyn Rule] = &[
@@ -30,8 +32,29 @@ pub(crate) type Violation = Box<dyn std::error::Error + Send + Sync>;
 
 /// Runs every rule and reports all violations at once, so that a single run
 /// surfaces everything that needs fixing.
-pub fn validate(plan: &[PublishPlanEntry<'_>]) -> Result<(), ValidationError> {
-    validate_with(RULES, plan)
+pub fn validate(
+    plan: &[PublishPlanEntry<'_>],
+    dependencies: &PackageSet<'_>,
+) -> Result<(), ValidationError> {
+    let mut violations = validate_with(RULES, plan)
+        .err()
+        .map_or_else(Vec::new, |error| error.violations);
+    for package in dependencies.packages(DependencyDirection::Forward) {
+        let source = package.source();
+        if let Some(ExternalSource::Git { repository, .. }) = source.parse_external()
+            && !is_zed_fork(source)
+        {
+            violations.push((
+                "Zed-owned repositories",
+                format!("{} requires a fork of {repository}", package.name()).into(),
+            ));
+        }
+    }
+    if violations.is_empty() {
+        Ok(())
+    } else {
+        Err(ValidationError { violations })
+    }
 }
 
 fn validate_with(

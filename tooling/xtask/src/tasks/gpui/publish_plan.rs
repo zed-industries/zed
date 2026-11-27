@@ -32,7 +32,14 @@ impl GitRepository {
             .context("repository URL must contain an owner and repository name")?;
         let repo = repo.trim_suffix(".git");
         ensure!(
-            !owner.is_empty() && !repo.is_empty() && !repo.contains('/'),
+            !owner.is_empty()
+                && owner
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                && !matches!(repo, "" | "." | "..")
+                && repo
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')),
             "expected an owner/repo path, got {repository}"
         );
         let revision = revision
@@ -41,8 +48,8 @@ impl GitRepository {
             .with_context(|| format!("invalid resolved revision for {repository}"))?;
 
         Ok(Self {
-            owner: owner.to_owned(),
-            repo: repo.to_owned(),
+            owner: owner.to_ascii_lowercase(),
+            repo: repo.to_ascii_lowercase(),
             revision,
         })
     }
@@ -93,10 +100,7 @@ impl Repository {
     }
 
     pub fn display<'a>(&'a self, args: &'a GpuiArgs) -> impl fmt::Display + 'a {
-        let revision = match self {
-            Self::Workspace => &args.sha,
-            Self::Git(repository) => &repository.revision,
-        };
+        let revision = self.revision(&args.sha);
         fmt::from_fn(move |formatter| {
             write!(
                 formatter,
@@ -105,6 +109,13 @@ impl Repository {
                 revision = revision.as_ref()
             )
         })
+    }
+
+    pub fn revision<'a>(&'a self, workspace: &'a GitSha) -> &'a GitSha {
+        match self {
+            Self::Workspace => workspace,
+            Self::Git(repository) => &repository.revision,
+        }
     }
 }
 
@@ -221,7 +232,9 @@ mod tests {
         for revision in [REVISION, WORKSPACE_REVISION] {
             let args = GpuiArgs {
                 sha: revision.parse().map_err(anyhow::Error::msg)?,
-                dry_run: false,
+                update_registry: false,
+                bump: super::super::ReleaseBump::Patch,
+                workflow_output: None,
             };
             assert_eq!(
                 package.repository.display(&args).to_string(),
@@ -235,7 +248,9 @@ mod tests {
     fn git_repositories_have_checkout_coordinates() -> Result<()> {
         let args = GpuiArgs {
             sha: WORKSPACE_REVISION.parse().map_err(anyhow::Error::msg)?,
-            dry_run: false,
+            update_registry: false,
+            bump: super::super::ReleaseBump::Patch,
+            workflow_output: None,
         };
         for url in [
             "https://github.com/zed-industries/fork",

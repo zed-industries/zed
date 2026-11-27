@@ -3,13 +3,14 @@
 pub mod crate_graph;
 pub mod publish_plan;
 pub mod registry;
+mod release;
 pub mod validation;
 
 use std::io::{self, Write};
 use std::process::{Command, Output, Stdio};
 
 use anyhow::{Context as _, Result, bail};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use guppy::graph::DependencyDirection;
 
 use crate::tasks::workflows::GitSha;
@@ -30,9 +31,22 @@ pub struct GpuiArgs {
     /// Full commit SHA to use when checking out workspace crates
     #[arg(long)]
     sha: GitSha,
-    /// Whether this is a dry-run
-    #[arg(short, long, default_value_t = true)]
-    dry_run: std::primitive::bool,
+    /// Update crates.io ownership and trusted publishers before planning
+    #[arg(long)]
+    update_registry: bool,
+    /// Which component of the current crates.io GPUI version to bump
+    #[arg(long, value_enum, default_value = "patch")]
+    bump: ReleaseBump,
+    /// Append the release plan and matrices to the GitHub Actions output file
+    #[arg(long)]
+    workflow_output: Option<std::path::PathBuf>,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum ReleaseBump {
+    Major,
+    Minor,
+    Patch,
 }
 
 #[derive(Parser)]
@@ -50,6 +64,9 @@ struct PublishGpuiArgs {
 pub fn run_gpui(command: GpuiCommand) -> Result<()> {
     match command {
         GpuiCommand::Plan(args) => {
+            let graph = crate_graph::load_workspace_graph()?;
+            let plan = publish_plan::build_publish_plan(&graph)?;
+            validation::validate(&plan, &crate_graph::release_dependencies(&graph)?)?;
             let token = std::env::var("CARGO_REGISTRY_TOKEN").context(
                 "CARGO_REGISTRY_TOKEN is required to inspect crates.io trusted publishing",
             )?;
@@ -61,20 +78,19 @@ pub fn run_gpui(command: GpuiCommand) -> Result<()> {
             );
             let runtime =
                 tokio::runtime::Runtime::new().context("failed to create Tokio runtime")?;
-            let graph = crate_graph::load_workspace_graph()?;
-            let plan = publish_plan::build_publish_plan(&graph)?;
-            validation::validate(&plan)?;
-            let checked = runtime.block_on(async {
+            let (version, checked) = runtime.block_on(async {
+                let version = registry::next_version(&client, args.bump).await?;
                 let checked = registry::check_plan(&client, &plan).await?;
-                if !args.dry_run {
+                let checked = if args.update_registry {
                     registry::update_crates(&client, &checked).await?;
-                    registry::check_plan(&client, &plan).await
+                    registry::check_plan(&client, &plan).await?
                 } else {
-                    Ok(checked)
-                }
+                    checked
+                };
+                anyhow::Ok((version, checked))
             })?;
             println!(
-                "GPUI publish plan ({} crates, dependencies first):",
+                "GPUI {version} publish plan ({} crates, dependencies first):",
                 plan.len()
             );
             for (entry, checked) in plan.iter().zip(&checked) {
@@ -90,6 +106,10 @@ pub fn run_gpui(command: GpuiCommand) -> Result<()> {
                     package.repository.display(&args),
                     checked.state
                 );
+            }
+            if let Some(output) = &args.workflow_output {
+                let release = release::build(&graph, &plan, &checked, &args.sha, version)?;
+                release.write_workflow_output(output)?;
             }
         }
         GpuiCommand::Why { crate_name } => {
