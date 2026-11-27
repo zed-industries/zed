@@ -8480,7 +8480,7 @@ impl Editor {
                 && project.supports_range_formatting(&buffer, cx);
         }
 
-        let snapshot = multi_buffer.snapshot(cx);
+        let snapshot = multi_buffer.read(cx);
         self.selections
             .disjoint_anchor_ranges()
             .flat_map(|range| [range.start, range.end])
