@@ -207,18 +207,22 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
         },
     ];
 
-    for registration in built_in_languages {
-        register_language(
-            &languages,
-            registration.name,
-            registration.adapters,
-            registration.context,
-            registration.toolchain,
-            registration.manifest_name,
-            registration.semantic_token_rules,
-            cx,
-        );
-    }
+    let registrations = built_in_languages
+        .into_iter()
+        .map(|registration| {
+            language_registration(
+                &languages,
+                registration.name,
+                registration.adapters,
+                registration.context,
+                registration.toolchain,
+                registration.manifest_name,
+                registration.semantic_token_rules,
+                cx,
+            )
+        })
+        .collect();
+    languages.register_languages(registrations);
 
     // Register globally available language servers.
     //
@@ -324,7 +328,7 @@ struct LanguageInfo {
     semantic_token_rules: Option<SemanticTokenRules>,
 }
 
-fn register_language(
+fn language_registration(
     languages: &LanguageRegistry,
     name: &'static str,
     adapters: Vec<Arc<dyn LspAdapter>>,
@@ -333,7 +337,7 @@ fn register_language(
     manifest_name: Option<ManifestName>,
     semantic_token_rules: Option<SemanticTokenRules>,
     cx: &mut App,
-) {
+) -> language::LanguageRegistration {
     let config = load_config(name);
     if let Some(rules) = &semantic_token_rules {
         SettingsStore::update_global(cx, |store, _| {
@@ -343,13 +347,12 @@ fn register_language(
     for adapter in adapters {
         languages.register_lsp_adapter(config.name.clone(), adapter);
     }
-    languages.register_language(
-        config.name.clone(),
-        config.grammar.clone(),
-        config.matcher.clone(),
-        config.hidden,
-        manifest_name.clone(),
-        Arc::new(move || {
+    language::LanguageRegistration {
+        name: config.name.clone(),
+        grammar_name: config.grammar.clone(),
+        matcher: config.matcher.clone(),
+        hidden: config.hidden,
+        load: Arc::new(move || {
             let config = config.clone();
             let context = context.clone();
             let toolchain = toolchain.clone();
@@ -365,7 +368,7 @@ fn register_language(
             }
             .boxed()
         }),
-    );
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
