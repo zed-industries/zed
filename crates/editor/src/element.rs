@@ -1540,6 +1540,8 @@ impl EditorElement {
 
         let editor_settings = EditorSettings::get_global(cx);
         let scrollbar_settings = editor_settings.scrollbar;
+        // Collected lazily and shared by the visibility check and the markers, since finding
+        // remote cursors walks every excerpt.
         let mut scrollbar_cursors = None;
         let collect_cursors = || self.collect_scrollbar_cursors(snapshot, visible_row_range, cx);
         let show_scrollbars = match scrollbar_settings.show {
@@ -13180,6 +13182,26 @@ mod tests {
         let scrollbars = layout_scrollbars(150, cx);
         assert!(scrollbars.visible);
         assert!(scrollbars.cursor_markers.is_empty());
+
+        cx.update(|_, cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let scrollbar = settings.editor.scrollbar.get_or_insert_default();
+                    scrollbar.cursors = Some(true);
+                    scrollbar.show = Some(settings::ShowScrollbar::Always);
+                });
+            });
+        });
+        let scrollbars = layout_scrollbars(0, cx);
+        assert!(scrollbars.visible);
+        assert_eq!(
+            scrollbars
+                .cursor_markers
+                .iter()
+                .map(|(position, _)| position.row())
+                .collect::<Vec<_>>(),
+            [DisplayRow(0)]
+        );
     }
 
     #[gpui::test]
