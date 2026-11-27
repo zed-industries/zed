@@ -227,6 +227,10 @@ impl SubagentCardState {
     /// recorded an outcome for the call's run (as native subagents do) shows that outcome.
     /// Calls saved before outcomes were recorded, and subagents of agents that don't report
     /// state, show the tool call's status.
+    ///
+    /// Retrying the subagent from its own view continues the call's run past the end recorded
+    /// when the call finished, up to the next message sent to the subagent, so the card covers
+    /// the retry's entries and shows its state.
     pub(crate) fn for_subagent_tool_call(
         tool_call: &ToolCall,
         subagent: Option<&AcpThread>,
@@ -235,22 +239,46 @@ impl SubagentCardState {
         let card = Self::from_tool_call(tool_call, cx);
         let Some(SubagentEntries {
             start,
-            end: Some(_),
+            end: Some(end),
         }) = card.entries
         else {
             return card;
         };
-        let Some(outcome) = subagent
-            .filter(|subagent| subagent.subagent_association().is_some())
-            .and_then(|subagent| subagent.subagent_outcome_after(start))
+        let Some(subagent) = subagent.filter(|subagent| subagent.subagent_association().is_some())
+        else {
+            return card;
+        };
+        let next_run_start = subagent
+            .entries()
+            .iter()
+            .enumerate()
+            .skip(end + 1)
+            .find_map(|(ix, entry)| {
+                matches!(entry, AgentThreadEntry::UserMessage(_)).then_some(ix)
+            });
+        let end = next_run_start
+            .unwrap_or(subagent.entries().len())
+            .saturating_sub(1)
+            .max(end);
+        let retry_state = subagent
+            .foreground_state()
+            .filter(|_| next_run_start.is_none() && subagent.foreground_activity().is_active());
+        let Some(outcome) = retry_state.or_else(|| subagent.subagent_outcome_between(start, end))
         else {
             return card;
         };
         let (status, error) = SubagentStatus::from_reported_state(Some(outcome));
+        let can_cancel = subagent
+            .subagent_association()
+            .is_some_and(|association| association.can_cancel);
         Self {
             status,
             error,
-            can_stop: false,
+            can_stop: status == SubagentStatus::Running && can_cancel,
+            entries: Some(SubagentEntries {
+                start,
+                end: Some(end),
+            }),
             ..card
         }
     }

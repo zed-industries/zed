@@ -2,17 +2,97 @@
 
 use anyhow::{Context as _, Result};
 use collections::HashMap;
-use futures::{AsyncReadExt as _, AsyncWriteExt as _};
+use futures::{AsyncReadExt as _, AsyncWriteExt as _, future};
 use remote::command::{
     RemoteCommand, home_relative_path, home_stdio_launcher_command, stdio_launcher_command,
 };
+use smol::net::TcpListener;
 use smol::process::{Command, Stdio};
 use std::borrow::Cow;
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::PermissionsExt as _;
+use std::sync::Arc;
+use std::time::Duration;
 use util::shell::{Shell, ShellKind};
 use util::shell_builder::ShellBuilder;
+
+#[test]
+fn tcp_command_keeps_adapter_logs_out_of_dap() -> Result<()> {
+    let executor = gpui::BackgroundExecutor::new(Arc::new(gpui::ThreadedDispatcher::new()));
+    smol::block_on(smol::future::race(
+        async {
+            let listener = TcpListener::bind("127.0.0.1:0").await?;
+            let address = listener.local_addr()?;
+            let directory = tempfile::tempdir()?;
+            let marker = directory.path().join("adapter-logged");
+            let mut child = Command::new(env!("CARGO_BIN_EXE_remote-server"))
+                .args(["tcp", &address.to_string(), "5000", "--", "/bin/sh", "-c"])
+                .arg(r#"printf 'adapter log'; : > "$1"; exec sleep 30"#)
+                .arg("adapter")
+                .arg(&marker)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()?;
+            let mut stdin = child.stdin.take().context("Missing proxy stdin")?;
+            let request = b"Content-Length: 2\r\n\r\n{}";
+            let response = b"Content-Length: 16\r\n\r\n{\"success\":true}";
+            let server = async {
+                let (mut stream, _) = listener.accept().await?;
+                while !marker.exists() {
+                    executor.timer(Duration::from_millis(10)).await;
+                }
+                let mut received = vec![0; request.len()];
+                stream.read_exact(&mut received).await?;
+                assert_eq!(received, request);
+                stream.write_all(response).await?;
+                anyhow::Ok(())
+            };
+
+            stdin.write_all(request).await?;
+            let (_, output) = future::try_join(server, async { Ok(child.output().await?) }).await?;
+            assert!(output.status.success(), "{:?}", output.stderr);
+            assert_eq!(output.stdout, response);
+            let stderr = String::from_utf8(output.stderr)?;
+            assert!(stderr.lines().any(|line| line == "adapter log"));
+            assert!(stderr.lines().any(|line| {
+                line.strip_prefix(proto::DAP_TCP_PROXY_STARTUP_PREFIX) == Some("null")
+            }));
+            drop(stdin);
+            Ok(())
+        },
+        async {
+            executor.timer(Duration::from_secs(10)).await;
+            anyhow::bail!("TCP helper did not finish")
+        },
+    ))
+}
+
+#[test]
+fn tcp_command_reports_adapter_spawn_failure() -> Result<()> {
+    smol::block_on(async {
+        let directory = tempfile::tempdir()?;
+        let missing_adapter = directory.path().join("missing-adapter");
+        let output = Command::new(env!("CARGO_BIN_EXE_remote-server"))
+            .args(["tcp", "127.0.0.1:0", "5000", "--"])
+            .arg(missing_adapter)
+            .output()
+            .await?;
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr)?;
+        let status = stderr
+            .lines()
+            .find_map(|line| line.strip_prefix(proto::DAP_TCP_PROXY_STARTUP_PREFIX))
+            .context("Missing TCP proxy startup status")?;
+        let reason: String = serde_json::from_str(status)?;
+        assert!(reason.contains("failed to spawn command"), "{reason}");
+        assert!(reason.contains("missing-adapter"), "{reason}");
+        Ok(())
+    })
+}
 
 #[test]
 fn test_remote_command_preserves_agent_stdin() -> Result<()> {

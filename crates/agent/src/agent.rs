@@ -675,7 +675,7 @@ fn project_skill_files_from_worktree(worktree: &Worktree) -> Vec<ProjectSkillFil
         let Some(skill_file) = worktree.entry_for_path(&relative_path) else {
             continue;
         };
-        if !skill_file.is_file() {
+        if !skill_file.is_file() || skill_file.is_fifo {
             continue;
         }
 
@@ -1453,7 +1453,7 @@ impl NativeAgent {
             .filter_map(|name| {
                 worktree
                     .entry_for_path(name)
-                    .filter(|entry| entry.is_file())
+                    .filter(|entry| entry.is_file() && !entry.is_fifo)
                     .map(|entry| entry.path.clone())
             })
             .next();
@@ -2750,6 +2750,24 @@ impl NativeAgentConnection {
                     Err(error)
                 }
             };
+            // Save a subagent's outcome on its thread too, so reopening it shows the latest
+            // run, including a retry from the subagent's own view. When the parent's tool
+            // call drives the run, `NativeSubagentHandle::send` replaces this with its verdict.
+            if thread.read_with(cx, |thread, _| thread.is_subagent()) {
+                let outcome = acp_thread
+                    .read_with(cx, |acp_thread, _| match acp_thread.foreground_state() {
+                        Some(acp_v2::StateUpdate::Idle(idle)) => Some(SubagentOutcome {
+                            entry_count: acp_thread.entries().len(),
+                            stop_reason: idle.stop_reason.clone()?,
+                        }),
+                        _ => None,
+                    })
+                    .ok()
+                    .flatten();
+                if let Some(outcome) = outcome {
+                    thread.update(cx, |thread, cx| thread.record_subagent_outcome(outcome, cx));
+                }
+            }
             if completion.send(result).is_err() {
                 log::debug!("Native completion observer was dropped");
             }

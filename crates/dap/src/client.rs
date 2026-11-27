@@ -79,7 +79,19 @@ impl DebugAdapterClient {
         message_handler: DapMessageHandler,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let binary = if let Some(connection) = self.transport_delegate.tcp_arguments() {
+        let binary = if let Some(proxy) = self
+            .binary
+            .connection
+            .as_ref()
+            .and_then(|connection| connection.stdio_proxy.as_ref())
+        {
+            DebugAdapterBinary {
+                command: Some(proxy.command.clone()),
+                arguments: proxy.arguments.clone(),
+                request_args: binary.request_args,
+                ..self.binary.clone()
+            }
+        } else if let Some(connection) = self.transport_delegate.tcp_arguments() {
             DebugAdapterBinary {
                 command: None,
                 arguments: Default::default(),
@@ -280,6 +292,77 @@ mod tests {
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
         });
+    }
+
+    #[gpui::test]
+    async fn child_connection_reuses_tcp_server(cx: &mut TestAppContext) {
+        use crate::adapters::{StdioProxy, TcpArguments};
+        init_test(cx);
+        for stdio_proxy in [
+            None,
+            Some(StdioProxy {
+                command: "docker".to_owned(),
+                arguments: vec!["exec".to_owned(), "container".to_owned(), "tcp".to_owned()],
+            }),
+        ] {
+            let binary = DebugAdapterBinary {
+                command: Some("adapter launcher".to_owned()),
+                arguments: vec!["--start-adapter".to_owned()],
+                envs: Default::default(),
+                cwd: None,
+                connection: Some(TcpArguments {
+                    host: std::net::Ipv4Addr::LOCALHOST.into(),
+                    port: 1234,
+                    timeout: Some(2000),
+                    stdio_proxy: stdio_proxy.clone(),
+                }),
+                request_args: StartDebuggingRequestArguments {
+                    configuration: json!({"parent": true}),
+                    request: dap_types::StartDebuggingRequestArgumentsRequest::Launch,
+                },
+            };
+            let parent = DebugAdapterClient::start(
+                SessionId(1),
+                binary.clone(),
+                Box::new(|_| {}),
+                &mut cx.to_async(),
+            )
+            .await
+            .expect("Parent connection starts");
+            let mut child_binary = binary.clone();
+            child_binary.request_args.configuration = json!({"child": true});
+            let child = parent
+                .create_child_connection(
+                    SessionId(2),
+                    child_binary.clone(),
+                    Box::new(|_| {}),
+                    &mut cx.to_async(),
+                )
+                .await
+                .expect("Child connection starts");
+            assert_eq!(child.binary.connection, binary.connection);
+            assert_eq!(child.binary.request_args, child_binary.request_args);
+            if let Some(proxy) = &stdio_proxy {
+                assert_eq!(
+                    child.binary.command.as_deref(),
+                    Some(proxy.command.as_str())
+                );
+                assert_eq!(child.binary.arguments, proxy.arguments);
+            } else {
+                assert_eq!(child.binary.command, None);
+                assert!(child.binary.arguments.is_empty());
+            }
+            let grandchild = child
+                .create_child_connection(
+                    SessionId(3),
+                    child_binary,
+                    Box::new(|_| {}),
+                    &mut cx.to_async(),
+                )
+                .await
+                .expect("Grandchild connection starts");
+            assert_eq!(grandchild.binary, child.binary);
+        }
     }
 
     #[gpui::test]

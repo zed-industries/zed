@@ -884,7 +884,7 @@ reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "33bc76
     "socks",
     "stream",
 ], package = "zed-reqwest", version = "0.12.15-zed" }
-resvg = { version = "0.46.0", default-features = false, features = [
+resvg = { version = "0.49", default-features = false, features = [
     "text",
     "system-fonts",
     "memmap-fonts",
@@ -987,7 +987,7 @@ unicode-width = "0.2"
 unindent = "0.2.0"
 url = "2.2"
 urlencoding = "2.1.2"
-usvg = { version = "0.46.0", default-features = false }
+usvg = { version = "0.49", default-features = false, features = ["svgz"] }
 uuid = { version = "1.1", features = ["serde"] }
 vte = { version = "0.15.0", features = ["ansi"] }
 walkdir = "2.5"

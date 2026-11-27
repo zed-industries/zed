@@ -17,7 +17,7 @@ use smol::{
     net::{TcpListener, TcpStream},
 };
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     net::{IpAddr, SocketAddr},
     process::Stdio,
     sync::Arc,
@@ -80,16 +80,23 @@ async fn start(
     log_handlers: LogHandlers,
     cx: &mut AsyncApp,
 ) -> Result<Box<dyn Transport>> {
+    let tcp_connection = binary
+        .connection
+        .as_ref()
+        .filter(|connection| connection.stdio_proxy.is_none());
+
     #[cfg(any(test, feature = "test-support"))]
     if cfg!(any(test, feature = "test-support")) {
-        if let Some(connection) = binary.connection.clone() {
-            return Ok(Box::new(FakeTransport::start_tcp(connection, cx).await?));
+        if let Some(connection) = tcp_connection {
+            return Ok(Box::new(
+                FakeTransport::start_tcp(connection.clone(), cx).await?,
+            ));
         } else {
             return Ok(Box::new(FakeTransport::start_stdio(cx).await?));
         }
     }
 
-    if binary.connection.is_some() {
+    if tcp_connection.is_some() {
         Ok(Box::new(
             TcpTransport::start(binary, log_handlers, cx).await?,
         ))
@@ -261,12 +268,15 @@ impl TransportDelegate {
             // Clean up logs by trimming unnecessary whitespace/newlines before inserting into log.
             let line = line.trim();
 
-            log::debug!("stderr: {line}");
+            Self::log_adapter_line(&log_handlers, iokind, line);
+        }
+    }
 
-            for (kind, handler) in log_handlers.lock().iter_mut() {
-                if matches!(kind, LogKind::Adapter) {
-                    handler(iokind, None, line);
-                }
+    fn log_adapter_line(log_handlers: &LogHandlers, iokind: IoKind, line: &str) {
+        log::debug!("stderr: {line}");
+        for (kind, handler) in log_handlers.lock().iter_mut() {
+            if matches!(kind, LogKind::Adapter) {
+                handler(iokind, None, line);
             }
         }
     }
@@ -636,6 +646,7 @@ impl Transport for TcpTransport {
             host: self.host,
             port: self.port,
             timeout: Some(self.timeout),
+            stdio_proxy: None,
         })
     }
 
@@ -725,21 +736,89 @@ impl StdioTransport {
 
         let mut process = Child::spawn(command, Stdio::piped(), Stdio::piped(), Stdio::piped())?;
 
-        let _stderr_task = process.stderr.take().map(|stderr| {
-            cx.background_spawn(TransportDelegate::handle_adapter_log(
-                stderr,
-                IoKind::StdErr,
-                log_handlers,
-            ))
-        });
+        let stderr = process
+            .stderr
+            .take()
+            .context("Missing debug adapter stderr")?;
+        let mut transport = Self {
+            process: Mutex::new(process),
+            _stderr_task: None,
+        };
 
-        let process = Mutex::new(process);
-
-        Ok(Self {
-            process,
-            _stderr_task,
-        })
+        let mut stderr = BufReader::new(stderr);
+        if let Some(connection) = binary
+            .connection
+            .as_ref()
+            .filter(|args| args.stdio_proxy.is_some())
+        {
+            let timeout = connection
+                .timeout
+                .unwrap_or_else(|| cx.update(|cx| DebuggerSettings::get_global(cx).timeout));
+            let address = SocketAddr::new(connection.host, connection.port);
+            // Give Docker time to start the helper in addition to the in-container TCP deadline.
+            let deadline = Duration::from_millis(timeout).saturating_add(Duration::from_secs(5));
+            let timer = cx.background_executor().timer(deadline);
+            read_tcp_proxy_startup(&mut stderr, &log_handlers, async move {
+                timer.await;
+                anyhow!("Timed out waiting for the TCP debug adapter proxy for {address}")
+            })
+            .await?;
+        }
+        transport._stderr_task = Some(cx.background_spawn(TransportDelegate::handle_adapter_log(
+            stderr,
+            IoKind::StdErr,
+            log_handlers,
+        )));
+        Ok(transport)
     }
+}
+
+async fn read_tcp_proxy_startup(
+    stderr: &mut (impl smol::io::AsyncBufRead + Unpin),
+    log_handlers: &LogHandlers,
+    timeout: impl Future<Output = anyhow::Error>,
+) -> Result<()> {
+    const STDERR_TAIL_LINES: usize = 20;
+    // Adapter log handlers attach after startup, so failures need their own copy of recent stderr.
+    let mut stderr_tail = VecDeque::with_capacity(STDERR_TAIL_LINES);
+    let read = async {
+        let mut bytes = Vec::new();
+        loop {
+            bytes.clear();
+            if stderr.read_until(b'\n', &mut bytes).await? == 0 {
+                bail!("TCP debug adapter proxy exited before reporting startup");
+            }
+            let line = String::from_utf8_lossy(&bytes);
+            let line = line.trim_end_matches(['\r', '\n']);
+            if let Some(status) = line.strip_prefix(proto::DAP_TCP_PROXY_STARTUP_PREFIX) {
+                if let Some(error) = serde_json::from_str::<Option<String>>(status)
+                    .context("Invalid TCP debug adapter proxy startup response")?
+                {
+                    bail!(error);
+                }
+                return Ok(());
+            }
+            if !line.trim().is_empty() {
+                if stderr_tail.len() == STDERR_TAIL_LINES {
+                    stderr_tail.pop_front();
+                }
+                stderr_tail.push_back(line.to_owned());
+            }
+            TransportDelegate::log_adapter_line(log_handlers, IoKind::StdErr, line.trim());
+        }
+    };
+    let result = select! {
+        result = read.fuse() => result,
+        error = timeout.fuse() => Err(error),
+    };
+    result.map_err(|error| {
+        if stderr_tail.is_empty() {
+            error
+        } else {
+            let stderr = stderr_tail.make_contiguous().join("\n");
+            anyhow!("{error:#}\nStartup stderr:\n{stderr}")
+        }
+    })
 }
 
 impl Transport for StdioTransport {
@@ -1158,5 +1237,86 @@ mod tests {
 
         let error = TransportDelegate::process_response(response).unwrap_err();
         assert_eq!(error.to_string(), "plain error");
+    }
+}
+
+#[cfg(test)]
+mod tcp_proxy_tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    #[gpui::test]
+    async fn reads_tcp_proxy_startup_error(_cx: &mut TestAppContext) {
+        let reason = "Debug adapter exited before connecting to 127.0.0.1:7000: exit status: 7";
+        let status = serde_json::to_string(&Some(reason)).unwrap();
+        let adapter_error = "ModuleNotFoundError: No module named zr_missing";
+        let earlier_logs: String = (0..20)
+            .map(|index| format!("adapter log {index}\n"))
+            .collect();
+        let stderr = format!(
+            "{earlier_logs}{adapter_error}\n\n{}{}\n",
+            proto::DAP_TCP_PROXY_STARTUP_PREFIX,
+            status
+        );
+        let mut reader = BufReader::new(stderr.as_bytes());
+        let error =
+            read_tcp_proxy_startup(&mut reader, &Default::default(), futures::future::pending())
+                .await
+                .expect_err("The startup failed");
+        let expected_tail = earlier_logs.strip_prefix("adapter log 0\n").unwrap();
+        assert_eq!(
+            error.to_string(),
+            format!("{reason}\nStartup stderr:\n{expected_tail}{adapter_error}")
+        );
+    }
+
+    #[gpui::test]
+    async fn reads_docker_error_when_proxy_exits_without_status(_cx: &mut TestAppContext) {
+        let docker_error = "Error response from daemon: No such container: zr65778-missing";
+        let mut reader = BufReader::new(docker_error.as_bytes());
+        let error =
+            read_tcp_proxy_startup(&mut reader, &Default::default(), futures::future::pending())
+                .await
+                .expect_err("Docker never started the proxy");
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "TCP debug adapter proxy exited before reporting startup\nStartup stderr:\n{docker_error}"
+            )
+        );
+    }
+
+    #[gpui::test]
+    async fn preserves_startup_stderr_on_timeout(cx: &mut TestAppContext) {
+        use futures::{StreamExt as _, TryStreamExt as _, future, stream};
+        let stderr = stream::once(future::ready(Ok::<_, std::io::Error>(
+            &b"adapter is starting\n"[..],
+        )))
+        .chain(stream::pending())
+        .into_async_read();
+        let mut reader = BufReader::new(stderr);
+        let timeout = cx.executor().timer(Duration::from_secs(1));
+        let error = read_tcp_proxy_startup(&mut reader, &Default::default(), async {
+            timeout.await;
+            anyhow!("Timed out waiting for the TCP debug adapter proxy")
+        })
+        .await
+        .expect_err("The proxy never reported startup");
+        assert_eq!(
+            error.to_string(),
+            "Timed out waiting for the TCP debug adapter proxy\nStartup stderr:\nadapter is starting"
+        );
+    }
+
+    #[gpui::test]
+    async fn reads_tcp_proxy_ready_and_preserves_remaining_logs(_cx: &mut TestAppContext) {
+        let stderr = format!("\n{}null\nmore logs\n", proto::DAP_TCP_PROXY_STARTUP_PREFIX);
+        let mut reader = BufReader::new(stderr.as_bytes());
+        read_tcp_proxy_startup(&mut reader, &Default::default(), futures::future::pending())
+            .await
+            .unwrap();
+        let mut remaining = String::new();
+        reader.read_to_string(&mut remaining).await.unwrap();
+        assert_eq!(remaining, "more logs\n");
     }
 }
