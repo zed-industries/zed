@@ -2170,6 +2170,7 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary();
         let common_dir = self.common_dir.clone();
         let last_head_with_upstream = self.last_head_with_upstream.clone();
+        let executor = self.executor.clone();
         self.executor
             .spawn(async move {
                 // Replace refs aren't branches, but they change the commits between branches and
@@ -2184,18 +2185,19 @@ impl GitRepository for RealGitRepository {
                 ];
                 // `%(upstream:track)` walks history, so the listing leaves it out, and git reads it
                 // only for the checked-out branch. That read starts alongside the listing, for the
-                // last listing's head, and is used only if it read the branch as listed.
+                // last listing's head, and is used only if it read the branch as listed. It's a
+                // task of its own, so that the listing doesn't wait for it: a read of a branch
+                // that turns out not to be checked out anymore is dropped, which kills it.
                 let guessed_head = last_head_with_upstream.lock().clone();
-                let mut listing = git.build_command(&args);
-                let (output, guessed_head_read) = futures::join!(
-                    listing.output(),
-                    OptionFuture::from(
-                        guessed_head
-                            .as_deref()
-                            .map(|ref_name| read_upstream_tracking(&git, ref_name))
-                    ),
-                );
-                let output = output?;
+                let guessed_head_read = guessed_head.map(|ref_name| {
+                    let read = executor.spawn({
+                        let git = git.clone();
+                        let ref_name = ref_name.clone();
+                        async move { read_upstream_tracking(&git, &ref_name).await }
+                    });
+                    (ref_name, read)
+                });
+                let output = git.build_command(&args).output().await?;
 
                 let mut errors = Vec::new();
                 if !output.status.success() {
@@ -2217,7 +2219,7 @@ impl GitRepository for RealGitRepository {
                     &listed_refs,
                     output.status.success(),
                     head,
-                    guessed_head.zip(guessed_head_read),
+                    guessed_head_read,
                     &mut errors,
                 )
                 .await;
@@ -3729,6 +3731,7 @@ pub fn untrusted_git_command<S: AsRef<OsStr>>(
     .build_command(args)
 }
 
+#[derive(Clone)]
 pub(crate) struct GitBinary {
     git_binary_path: PathBuf,
     working_directory: PathBuf,
@@ -4332,9 +4335,14 @@ async fn track_upstreams(
     listed_refs: &[ListedRef<'_>],
     listing_succeeded: bool,
     head: Option<&ListedRef<'_>>,
-    guessed_head_read: Option<(Vec<u8>, Result<Vec<u8>>)>,
+    guessed_head_read: Option<(Vec<u8>, impl Future<Output = Result<Vec<u8>>>)>,
     errors: &mut Vec<String>,
 ) -> Vec<Option<UpstreamTracking>> {
+    // The read that started alongside the listing is awaited only if it's of the checked-out
+    // branch. One of another branch may be walking a long history, so it's dropped, which kills it.
+    let guessed_head_read = guessed_head_read
+        .filter(|(ref_name, _)| head.is_some_and(|head| ref_name == head.ref_name))
+        .map(|(_, read)| read);
     let mut objects = listed_refs
         .iter()
         .map(|listed_ref| (listed_ref.ref_name, listed_ref.object_id))
@@ -4398,10 +4406,11 @@ async fn track_upstreams(
 
 /// The checked-out branch's tracking, as git reports it, or `None` if the branch changed after it
 /// was listed. A read counts only if git read the branch at its listed commit and upstream.
+/// `guessed_read` is a read of the branch's name that started alongside the listing.
 async fn read_head_tracking(
     git: &GitBinary,
     head: &ListedRef<'_>,
-    guessed_read: Option<(Vec<u8>, Result<Vec<u8>>)>,
+    guessed_read: Option<impl Future<Output = Result<Vec<u8>>>>,
 ) -> Result<Option<UpstreamTracking>> {
     let tracking_in = |read: &[u8]| {
         listed_fields(read)
@@ -4411,8 +4420,8 @@ async fn read_head_tracking(
             })
             .map(|[.., track]| parse_upstream_track(&String::from_utf8_lossy(track)))
     };
-    if let Some((ref_name, Ok(read))) = guessed_read
-        && ref_name == head.ref_name
+    if let Some(guessed_read) = guessed_read
+        && let Ok(read) = guessed_read.await
         && let Some(tracking) = tracking_in(&read)
     {
         return tracking.map(Some);
@@ -6455,8 +6464,7 @@ mod tests {
         let head_tracking = async |listing: String, guessed_read: Option<Result<String>>| {
             let refs = parse_listed_refs(listing.as_bytes());
             let head = refs.iter().find(|listed_ref| listed_ref.is_head).unwrap();
-            let guessed_read =
-                guessed_read.map(|read| (b"refs/heads/main".to_vec(), read.map(Into::into)));
+            let guessed_read = guessed_read.map(|read| std::future::ready(read.map(Into::into)));
             read_head_tracking(&binary, head, guessed_read)
                 .await
                 .unwrap()
@@ -6492,6 +6500,61 @@ mod tests {
         let listing = list();
         git(path, "update-ref refs/heads/main main~1");
         assert_eq!(head_tracking(listing, None).await, None);
+    }
+
+    // A shell script stands in for git.
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_branches_does_not_wait_for_a_read_of_another_branch(cx: &mut TestAppContext) {
+        use std::os::unix::fs::PermissionsExt as _;
+        use std::time::{Duration, Instant};
+
+        let repo_dir = init_test_repo(cx);
+        let path = repo_dir.path();
+        git(path, "commit --allow-empty -m first");
+        git(path, "branch upstream");
+        git(path, "branch other");
+        git(path, "commit --allow-empty -m second");
+        git(path, "branch --set-upstream-to=upstream");
+        git(path, "branch --set-upstream-to=main other");
+        // While `slow` exists, reading the tracking of `main` takes 12 seconds, as counting many
+        // commits can. That's less than the test scheduler parks for.
+        let slow_git = path.join(".git/slow-git");
+        let slow = path.join(".git/slow-git.slow");
+        let script = concat!(
+            "#!/bin/sh\n",
+            "case \"$*\" in *upstream:track*refs/heads/main)\n",
+            "    test -e \"$0.slow\" && exec sleep 12;;\n",
+            "esac\n",
+            "exec git \"$@\"\n",
+        );
+        fs::write(&slow_git, script).unwrap();
+        fs::set_permissions(&slow_git, fs::Permissions::from_mode(0o755)).unwrap();
+        let repo = RealGitRepository::new(&path.join(".git"), None, Some(slow_git), cx.executor())
+            .unwrap();
+
+        for (leave_main, tracking) in [
+            ("checkout --quiet other", Some(tracked(0, 1))),
+            ("checkout --quiet --detach", None),
+        ] {
+            // This listing has `main` as the head, so the next one starts by reading it.
+            git(path, "checkout --quiet main");
+            assert_head_upstream(&repo, "refs/heads/upstream", tracked(1, 0)).await;
+            fs::write(&slow, "").unwrap();
+            git(path, leave_main);
+
+            let start = Instant::now();
+            let scan = repo.branches().await.unwrap();
+            assert!(
+                start.elapsed() < Duration::from_secs(10),
+                "waited for a read of `main` after `git {leave_main}`"
+            );
+            assert_eq!(scan.error, None);
+            let head = scan.branches.into_iter().find(|branch| branch.is_head);
+            let upstream = head.and_then(|head| head.upstream);
+            assert_eq!(upstream.map(|upstream| upstream.tracking), tracking);
+            fs::remove_file(&slow).unwrap();
+        }
     }
 
     #[gpui::test]
