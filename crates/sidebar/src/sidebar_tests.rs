@@ -18359,6 +18359,9 @@ async fn test_dev_container_adopts_records_saved_before_labels(
     cx.update(|cx| release_channel::init(semver::Version::new(0, 0, 0), cx));
     server_cx.update(|cx| release_channel::init(semver::Version::new(0, 0, 0), cx));
     let app_state = cx.update(|cx| workspace::AppState::test(cx));
+    let other_window_project = project::Project::test(app_state.fs.clone(), [], cx).await;
+    let other_window =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(other_window_project, window, cx));
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(local_project, window, cx));
     let sidebar = setup_sidebar(&multi_workspace, cx);
@@ -18376,16 +18379,22 @@ async fn test_dev_container_adopts_records_saved_before_labels(
         ..Default::default()
     });
     let paths = PathList::new(&[PathBuf::from("/project")]);
-
-    multi_workspace.update(cx, |mw, cx| {
-        mw.restore_project_groups(
-            vec![workspace::SerializedProjectGroupState {
+    let other_paths = PathList::new(&[PathBuf::from("/project"), PathBuf::from("/other")]);
+    let saved_groups = || {
+        [&paths, &other_paths]
+            .into_iter()
+            .map(|paths| workspace::SerializedProjectGroupState {
                 key: ProjectGroupKey::new(Some(unlabeled.clone()), paths.clone()),
                 expanded: true,
-            }],
-            cx,
-        );
-    });
+            })
+            .collect::<Vec<_>>()
+    };
+    multi_workspace.update(cx, |mw, cx| mw.restore_project_groups(saved_groups(), cx));
+    other_window
+        .update(cx, |mw, _window, cx| {
+            mw.restore_project_groups(saved_groups(), cx)
+        })
+        .unwrap();
 
     let thread_id = ThreadId::new();
     cx.update(|_window, cx| {
@@ -18403,6 +18412,20 @@ async fn test_dev_container_adopts_records_saved_before_labels(
             remote_connection: Some(unlabeled.clone()),
         };
         ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx));
+        let other_metadata = ThreadMetadata {
+            thread_id: ThreadId::new(),
+            session_id: Some(acp::SessionId::new(Arc::from("other-thread"))),
+            agent_id: agent::ZED_AGENT_ID.clone(),
+            title: Some("Other thread".into()),
+            title_override: None,
+            updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+            created_at: None,
+            interacted_at: None,
+            worktree_paths: WorktreePaths::from_folder_paths(&other_paths),
+            archived: false,
+            remote_connection: Some(unlabeled.clone()),
+        };
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(other_metadata, cx));
         let terminal = TerminalThreadMetadata {
             terminal_id: agent_ui::TerminalId::test_new(),
             title: "Old terminal".into(),
@@ -18435,14 +18458,36 @@ async fn test_dev_container_adopts_records_saved_before_labels(
     });
     cx.run_until_parked();
 
-    let dev_container_hosts = multi_workspace.read_with(cx, |mw, _| {
-        mw.project_group_keys()
+    let dev_container_groups = |multi_workspace: &MultiWorkspace| {
+        multi_workspace
+            .project_group_keys()
             .into_iter()
-            .filter(|key| key.path_list() == &paths)
-            .map(|key| key.host().cloned())
+            .filter(|key| key.host().is_some())
+            .map(|key| (key.path_list().clone(), key.host().cloned()))
             .collect::<Vec<_>>()
-    });
-    assert_eq!(dev_container_hosts, vec![Some(labeled.clone())]);
+    };
+    let expected_groups = vec![
+        (paths.clone(), Some(labeled.clone())),
+        (other_paths.clone(), Some(labeled.clone())),
+    ];
+    assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| dev_container_groups(mw)),
+        expected_groups
+    );
+    assert_eq!(
+        other_window
+            .read_with(cx, |mw, _| dev_container_groups(mw))
+            .unwrap(),
+        expected_groups,
+        "groups of that container in other windows should be adopted too"
+    );
+
+    // Restoring the groups saved before the update must not bring them back.
+    multi_workspace.update(cx, |mw, cx| mw.restore_project_groups(saved_groups(), cx));
+    assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| dev_container_groups(mw)),
+        expected_groups
+    );
 
     let thread_connection = cx.update(|_window, cx| {
         ThreadMetadataStore::global(cx)
@@ -18453,6 +18498,13 @@ async fn test_dev_container_adopts_records_saved_before_labels(
     assert_eq!(thread_connection, Some(labeled));
     assert_eq!(
         visible_entries_as_strings(&sidebar, cx),
-        vec!["v [project]", "  Old thread", "  Old terminal", "v [local]"]
+        vec![
+            "v [project]",
+            "  Old thread",
+            "  Old terminal",
+            "v [project, other]",
+            "  Other thread",
+            "v [local]",
+        ]
     );
 }

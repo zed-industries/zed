@@ -6989,19 +6989,6 @@ impl ProjectGroupKey {
         self.host.as_ref()
     }
 
-    /// Whether `other` is this dev container's group as saved before Zed
-    /// stored dev container labels.
-    pub fn adopts(&self, other: &Self) -> bool {
-        self.paths == other.paths
-            && self
-                .host
-                .as_ref()
-                .and_then(|host| host.legacy_identity())
-                .is_some_and(|legacy| {
-                    other.host.as_ref().map(|host| host.identity()) == Some(legacy)
-                })
-    }
-
     pub fn matches_identity(&self, other: &Self) -> bool {
         self.paths == other.paths
             && self.host.as_ref().map(|o| o.identity()) == other.host.as_ref().map(|o| o.identity())

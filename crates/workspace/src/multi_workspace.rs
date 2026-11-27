@@ -385,6 +385,31 @@ impl MultiWorkspace {
                 previous_multi_workspace_enabled = multi_workspace_enabled;
             }
         });
+        // Groups of a dev container saved before Zed stored its labels can live
+        // in any window, so each window adopts them when the labeled container
+        // opens anywhere.
+        let legacy_host_subscription = cx.observe_new::<Workspace>({
+            let weak_self = cx.weak_entity();
+            move |workspace, _window, cx| {
+                let Some(host) = workspace
+                    .project()
+                    .read(cx)
+                    .remote_connection_options(cx)
+                    .filter(|host| host.legacy_identity().is_some())
+                    .cloned()
+                else {
+                    return;
+                };
+                let weak_self = weak_self.clone();
+                cx.defer(move |cx| {
+                    weak_self
+                        .update(cx, |this, cx| {
+                            this.adopt_legacy_project_group_host(&host, cx)
+                        })
+                        .ok();
+                });
+            }
+        });
         Self::subscribe_to_workspace(&workspace, window, cx);
         let weak_self = cx.weak_entity();
         let active_workspace_id = Rc::new(Cell::new(workspace.entity_id()));
@@ -406,7 +431,11 @@ impl MultiWorkspace {
             pending_bindings_popup: None,
             pending_removal_tasks: Vec::new(),
             _serialize_task: None,
-            _subscriptions: vec![release_subscription, settings_subscription],
+            _subscriptions: vec![
+                release_subscription,
+                settings_subscription,
+                legacy_host_subscription,
+            ],
             previous_focus_handle: None,
         }
     }
@@ -888,6 +917,20 @@ impl MultiWorkspace {
         cx: &App,
     ) -> ProjectGroupKey {
         workspace.read(cx).project_group_key(cx)
+    }
+
+    /// Gives the groups saved for `host`'s container before Zed stored dev
+    /// container labels the labeled host, each keeping its own paths.
+    fn adopt_legacy_project_group_host(
+        &mut self,
+        host: &RemoteConnectionOptions,
+        cx: &mut Context<Self>,
+    ) {
+        if adopt_legacy_host(&mut self.project_groups, host) {
+            self.serialize(cx);
+            cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
+            cx.notify();
+        }
     }
 
     pub fn restore_project_groups(
@@ -2395,22 +2438,50 @@ impl Render for MultiWorkspace {
     }
 }
 
-/// Points the group of `key` at `key`, and folds in the group that saved the
-/// same dev container before Zed stored its labels. Equal keys can still
-/// differ in runtime details such as a rebuilt dev container's ID, so the live
-/// key wins. Returns whether such a group existed.
+/// Points the group of `key` at `key`. Equal keys can still differ in runtime
+/// details such as a rebuilt dev container's ID, so the live key wins. Returns
+/// whether such a group existed.
 fn merge_project_group(groups: &mut Vec<ProjectGroupState>, key: &ProjectGroupKey) -> bool {
-    let mut merged = false;
-    groups.retain_mut(|group| {
-        if group.key != *key && !key.adopts(&group.key) {
-            return true;
+    if let Some(host) = key.host() {
+        adopt_legacy_host(groups, host);
+    }
+    match groups.iter_mut().find(|group| group.key == *key) {
+        Some(group) => {
+            group.key = key.clone();
+            true
         }
-        if merged {
-            return false;
+        None => false,
+    }
+}
+
+/// Gives every group saved for `host`'s container before Zed stored dev
+/// container labels the labeled host, keeping each group's paths, and folds the
+/// groups that become equal. Returns whether any group changed.
+fn adopt_legacy_host(groups: &mut Vec<ProjectGroupState>, host: &RemoteConnectionOptions) -> bool {
+    let Some(legacy_identity) = host.legacy_identity() else {
+        return false;
+    };
+    let mut changed = false;
+    for group in groups.iter_mut() {
+        if group
+            .key
+            .host()
+            .is_some_and(|group_host| group_host.identity() == legacy_identity)
+        {
+            group.key = ProjectGroupKey::new(Some(host.clone()), group.key.path_list().clone());
+            changed = true;
         }
-        group.key = key.clone();
-        merged = true;
-        true
-    });
-    merged
+    }
+    if changed {
+        let mut seen = Vec::new();
+        groups.retain(|group| {
+            if seen.contains(&group.key) {
+                false
+            } else {
+                seen.push(group.key.clone());
+                true
+            }
+        });
+    }
+    changed
 }
