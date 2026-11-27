@@ -11,7 +11,7 @@ use db::{
     sqlez_macros::sql,
 };
 use futures::{FutureExt, future::Shared};
-use gpui::{AppContext as _, Entity, Global, Task};
+use gpui::{AppContext as _, Entity, Global, Task, TaskExt as _};
 use remote::RemoteConnectionOptions;
 use ui::{App, Context, SharedString};
 use util::ResultExt as _;
@@ -285,6 +285,44 @@ impl TerminalThreadMetadataStore {
         cx.notify();
     }
 
+    /// Moves terminals saved before Zed stored dev container labels to the
+    /// labeled connection of the same, still running container, so they stay
+    /// with the project after its next rebuild.
+    fn adopt_legacy_remote_connection(
+        &mut self,
+        connection: RemoteConnectionOptions,
+        cx: &mut Context<Self>,
+    ) {
+        let reload_task = self.reload_task();
+        cx.spawn(async move |this, cx| {
+            reload_task.await;
+            this.update(cx, |this, cx| {
+                let Some(legacy_identity) = connection.legacy_identity() else {
+                    return;
+                };
+                let adopted = this
+                    .terminals
+                    .values()
+                    .filter(|terminal| {
+                        terminal
+                            .remote_connection
+                            .as_ref()
+                            .is_some_and(|saved| saved.identity() == legacy_identity)
+                    })
+                    .map(|terminal| TerminalThreadMetadata {
+                        remote_connection: Some(connection.clone()),
+                        ..terminal.clone()
+                    })
+                    .collect::<Vec<_>>();
+                for terminal in adopted {
+                    this.save_internal(terminal);
+                }
+                cx.notify();
+            })
+        })
+        .detach_and_log_err(cx);
+    }
+
     pub fn rename_terminal(
         &mut self,
         terminal_id: TerminalId,
@@ -403,6 +441,25 @@ impl TerminalThreadMetadataStore {
     }
 
     fn new(db: TerminalThreadMetadataDb, cx: &mut Context<Self>) -> Self {
+        let weak_store = cx.weak_entity();
+        cx.observe_new::<workspace::Workspace>(move |workspace, _window, cx| {
+            let Some(connection) = workspace
+                .project()
+                .read(cx)
+                .remote_connection_options(cx)
+                .filter(|connection| connection.legacy_identity().is_some())
+                .cloned()
+            else {
+                return;
+            };
+            weak_store
+                .update(cx, |store, cx| {
+                    store.adopt_legacy_remote_connection(connection, cx)
+                })
+                .ok();
+        })
+        .detach();
+
         let (tx, rx) = async_channel::unbounded();
         let _db_operations_task = cx.background_spawn({
             let db = db.clone();

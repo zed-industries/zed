@@ -18403,6 +18403,16 @@ async fn test_dev_container_adopts_records_saved_before_labels(
             remote_connection: Some(unlabeled.clone()),
         };
         ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx));
+        let terminal = TerminalThreadMetadata {
+            terminal_id: agent_ui::TerminalId::test_new(),
+            title: "Old terminal".into(),
+            custom_title: None,
+            created_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
+            worktree_paths: WorktreePaths::from_folder_paths(&paths),
+            remote_connection: Some(unlabeled.clone()),
+            working_directory: None,
+        };
+        TerminalThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(terminal, cx));
     });
     cx.run_until_parked();
 
@@ -18443,6 +18453,6 @@ async fn test_dev_container_adopts_records_saved_before_labels(
     assert_eq!(thread_connection, Some(labeled));
     assert_eq!(
         visible_entries_as_strings(&sidebar, cx),
-        vec!["v [project]", "  Old thread", "v [local]"]
+        vec!["v [project]", "  Old thread", "  Old terminal", "v [local]"]
     );
 }
