@@ -6027,8 +6027,8 @@ impl Editor {
     fn enable_wrap_selections_in_tag(&self, cx: &App) -> bool {
         let snapshot = self.buffer.read(cx).snapshot(cx);
 
-        // The language at a position is the buffer's own or that of a syntax layer. Inside an
-        // expanded deleted hunk, it is one of the diff base text's instead.
+        // No selection can be in a language with wrap characters when neither the buffer nor the
+        // diff base text shown in its expanded deleted hunks has one.
         if let Some(buffer) = snapshot.as_singleton()
             && !buffer.has_language_with_wrap_characters()
             && snapshot
@@ -8473,23 +8473,26 @@ impl Editor {
 
         let project = project.read(cx);
         let multi_buffer = self.buffer.read(cx);
+
         if let Some(buffer) = multi_buffer.as_singleton() {
+            // A pending selection alone does not count, as in the general case below.
             return !self.selections.disjoint_anchors().is_empty()
                 && project.supports_range_formatting(&buffer, cx);
         }
 
         let snapshot = multi_buffer.snapshot(cx);
-        // Range formatting support is a property of the buffer, and selections are ordered, so
-        // dropping repeated neighbors asks each buffer once however many selections it holds.
         self.selections
             .disjoint_anchor_ranges()
             .flat_map(|range| [range.start, range.end])
             .filter_map(|anchor| {
                 anchor.buffer_id().or_else(|| {
-                    let (_, buffer_snapshot) = snapshot.anchor_to_buffer_anchor(anchor)?;
-                    Some(buffer_snapshot.remote_id())
+                    snapshot
+                        .anchor_to_buffer_anchor(anchor)
+                        .map(|(_, buffer_snapshot)| buffer_snapshot.remote_id())
                 })
             })
+            // Selections are ordered, so this collapses each run of selections in the same buffer
+            // into a single range formatting check.
             .dedup()
             .filter_map(|buffer_id| multi_buffer.buffer(buffer_id))
             .any(|buffer| project.supports_range_formatting(&buffer, cx))

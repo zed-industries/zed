@@ -1540,8 +1540,8 @@ impl EditorElement {
 
         let editor_settings = EditorSettings::get_global(cx);
         let scrollbar_settings = editor_settings.scrollbar;
-        // Collected at most once per frame and shared by both uses below, since finding remote
-        // cursors walks every excerpt.
+        // Collected lazily and shared by the visibility check and the markers, since finding
+        // remote cursors walks every excerpt.
         let mut scrollbar_cursors = None;
         let collect_cursors = || self.collect_scrollbar_cursors(snapshot, visible_row_range, cx);
         let show_scrollbars = match scrollbar_settings.show {

@@ -4282,13 +4282,12 @@ impl BufferSnapshot {
         self.syntax.languages(&self, true)
     }
 
-    /// Returns whether the language at any position in this buffer can have wrap characters,
-    /// without visiting the syntax layers.
+    /// Returns whether the buffer's language, or the language of any of its syntax layers, has
+    /// wrap characters. Read from the syntax map's summary, without visiting the layers.
     pub fn has_language_with_wrap_characters(&self) -> bool {
         self.syntax.contains_wrap_characters()
             || self
-                .language
-                .as_ref()
+                .language()
                 .is_some_and(|language| language.config.wrap_characters.is_some())
     }
 

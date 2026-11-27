@@ -8658,41 +8658,39 @@ async fn test_wrap_in_tag_availability_in_injected_language(cx: &mut TestAppCont
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(html_language), cx));
 
     cx.set_state("<body>ˇ</body>");
-    cx.executor().run_until_parked();
     assert!(!is_action_available(&WrapSelectionsInTag, &mut cx));
 
     cx.set_state("<body>ˇ<script>var x = 1;</script></body>");
-    cx.executor().run_until_parked();
     assert!(!is_action_available(&WrapSelectionsInTag, &mut cx));
 
     cx.set_state("<body><script>var ˇx = 1;</script></body>");
-    cx.executor().run_until_parked();
     assert!(is_action_available(&WrapSelectionsInTag, &mut cx));
 }
 
 #[gpui::test]
-async fn test_wrap_in_tag_availability_follows_selections_and_language(cx: &mut TestAppContext) {
+async fn test_wrap_in_tag_availability_in_multibuffer(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    let wrappable_language = wrap_in_tag_test_language("JavaScript", true);
-    let wrappable_buffer =
-        cx.new(|cx| Buffer::local("one\ntwo", cx).with_language(wrappable_language.clone(), cx));
     let plain_text_buffer = cx.new(|cx| {
-        Buffer::local("three\nfour", cx)
+        Buffer::local("one\ntwo", cx)
             .with_language(wrap_in_tag_test_language("Plain Text", false), cx)
+    });
+    let wrappable_buffer = cx.new(|cx| {
+        Buffer::local("three\nfour", cx)
+            .with_language(wrap_in_tag_test_language("JavaScript", true), cx)
     });
     let multibuffer = cx.new(|cx| {
         let mut multibuffer = MultiBuffer::new(ReadWrite);
         multibuffer.set_excerpts_for_path(
             PathKey::sorted(0),
-            wrappable_buffer,
+            plain_text_buffer,
             [Point::new(0, 0)..Point::new(1, 3)],
             0,
             cx,
         );
         multibuffer.set_excerpts_for_path(
             PathKey::sorted(1),
-            plain_text_buffer.clone(),
+            wrappable_buffer,
             [Point::new(0, 0)..Point::new(1, 4)],
             0,
             cx,
@@ -8704,18 +8702,10 @@ async fn test_wrap_in_tag_availability_follows_selections_and_language(cx: &mut 
         window.focus(&editor.focus_handle(cx), cx);
     });
 
-    select_lines(&editor, &["one"], cx);
-    assert!(is_action_available(&WrapSelectionsInTag, cx));
-
-    select_lines(&editor, &["three"], cx);
+    place_cursors_on_lines(&editor, &["one"], cx);
     assert!(!is_action_available(&WrapSelectionsInTag, cx));
 
-    plain_text_buffer.update(cx, |buffer, cx| {
-        buffer.set_language(Some(wrappable_language), cx)
-    });
-    assert!(is_action_available(&WrapSelectionsInTag, cx));
-
-    select_lines(&editor, &["one"], cx);
+    place_cursors_on_lines(&editor, &["three"], cx);
     assert!(is_action_available(&WrapSelectionsInTag, cx));
 }
 
@@ -8727,8 +8717,7 @@ async fn test_wrap_in_tag_availability_in_deleted_hunk(cx: &mut TestAppContext) 
         Buffer::local("one\n", cx).with_language(wrap_in_tag_test_language("Plain Text", false), cx)
     });
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
-    let (editor, cx) =
-        cx.add_window_view(|window, cx| build_editor(multibuffer.clone(), window, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(multibuffer, window, cx));
     editor.update_in(cx, |editor, window, cx| {
         window.focus(&editor.focus_handle(cx), cx);
     });
@@ -8760,11 +8749,11 @@ async fn test_wrap_in_tag_availability_in_deleted_hunk(cx: &mut TestAppContext) 
         assert_eq!(editor.text(cx), "deleted\none\n");
     });
 
-    select_lines(&editor, &["one"], cx);
+    place_cursors_on_lines(&editor, &["one"], cx);
     assert!(!is_action_available(&WrapSelectionsInTag, cx));
 
     // The deleted line is read from the diff base text, which has its own language.
-    select_lines(&editor, &["deleted"], cx);
+    place_cursors_on_lines(&editor, &["deleted"], cx);
     assert!(is_action_available(&WrapSelectionsInTag, cx));
 }
 
@@ -20451,15 +20440,15 @@ async fn test_format_selections_action_follows_selected_buffer_in_multibuffer(
         let mut multibuffer = MultiBuffer::new(ReadWrite);
         multibuffer.set_excerpts_for_path(
             PathKey::sorted(0),
-            rust_buffer,
-            [Point::new(0, 0)..Point::new(1, 3)],
+            text_buffer,
+            [Point::new(0, 0)..Point::new(1, 4)],
             0,
             cx,
         );
         multibuffer.set_excerpts_for_path(
             PathKey::sorted(1),
-            text_buffer,
-            [Point::new(0, 0)..Point::new(1, 4)],
+            rust_buffer,
+            [Point::new(0, 0)..Point::new(1, 3)],
             0,
             cx,
         );
@@ -20472,13 +20461,21 @@ async fn test_format_selections_action_follows_selected_buffer_in_multibuffer(
         window.focus(&editor.focus_handle(cx), cx);
     });
 
-    select_lines(&editor, &["three", "four"], cx);
+    place_cursors_on_lines(&editor, &["three", "four"], cx);
     assert!(!is_action_available(&FormatSelections, cx));
 
-    select_lines(&editor, &["one"], cx);
+    place_cursors_on_lines(&editor, &["one"], cx);
     assert!(is_action_available(&FormatSelections, cx));
 
-    select_lines(&editor, &["three", "four", "two"], cx);
+    place_cursors_on_lines(&editor, &["three", "four", "two"], cx);
+    assert!(is_action_available(&FormatSelections, cx));
+
+    // The end of the multibuffer is in the Rust buffer.
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::default(), window, cx, |s| {
+            s.select_anchor_ranges([Anchor::Max..Anchor::Max]);
+        });
+    });
     assert!(is_action_available(&FormatSelections, cx));
 }
 
@@ -50920,13 +50917,16 @@ fn is_action_available(action: &dyn Action, cx: &mut VisualTestContext) -> bool 
     cx.update(|window, cx| window.is_action_available(action, cx))
 }
 
-fn select_lines(editor: &Entity<Editor>, lines: &[&str], cx: &mut VisualTestContext) {
+fn place_cursors_on_lines(editor: &Entity<Editor>, lines: &[&str], cx: &mut VisualTestContext) {
     editor.update_in(cx, |editor, window, cx| {
         let text = editor.text(cx);
         let ranges = lines
             .iter()
             .map(|line| {
-                let row = text.lines().position(|text| text == *line).unwrap() as u32;
+                let row = text
+                    .lines()
+                    .position(|candidate| candidate == *line)
+                    .unwrap() as u32;
                 Point::new(row, 0)..Point::new(row, 0)
             })
             .collect::<Vec<_>>();
