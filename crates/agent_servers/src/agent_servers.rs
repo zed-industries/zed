@@ -46,6 +46,11 @@ impl AgentServerDelegate {
             loading_status: loading_status_tx,
         }
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn take_new_version_available_tx(&mut self) -> Option<watch::Sender<Option<String>>> {
+        self.new_version_available.take()
+    }
 }
 
 pub trait AgentServer: Send {

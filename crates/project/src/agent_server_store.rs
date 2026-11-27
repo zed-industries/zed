@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Context as _, Result, bail};
 use collections::HashMap;
-use fs::{FileLock, FileLockKind, Fs, RemoveOptions, RenameOptions};
+use fs::{FileLock, FileLockKind, Fs, MTime, RemoveOptions, RenameOptions};
 use futures::StreamExt;
 use github_releases::AssetKind;
 use gpui::{
@@ -122,6 +122,8 @@ pub struct ResolvedAgentServerCommand {
     pub command: AgentServerCommand,
     /// Must be held for as long as the agent launched with `command` is running.
     pub installation_lease: Option<AgentInstallationLease>,
+    /// The latest version, when `command` runs an older installed version instead.
+    pub newer_version_available: Option<String>,
 }
 
 impl ResolvedAgentServerCommand {
@@ -130,6 +132,7 @@ impl ResolvedAgentServerCommand {
         Self {
             command,
             installation_lease: None,
+            newer_version_available: None,
         }
     }
 }
@@ -189,6 +192,10 @@ pub trait ExternalAgentServer {
     }
 
     fn set_loading_status_tx(&mut self, _tx: watch::Sender<Option<String>>) {}
+
+    /// Makes the next [`Self::get_command`] install the latest version instead of
+    /// launching an older one that is already installed.
+    fn request_update(&mut self) {}
 
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
@@ -463,6 +470,7 @@ impl AgentServerStore {
                                         env: env.clone(),
                                         new_version_available_tx: None,
                                         loading_status_tx: None,
+                                        install_latest: false,
                                     })
                                         as Box<dyn ExternalAgentServer>,
                                     ExternalAgentSource::Registry,
@@ -649,6 +657,21 @@ impl AgentServerStore {
             .map(|entry| entry.server.as_mut())
     }
 
+    pub fn request_agent_update(&mut self, name: &AgentId) {
+        if let Some(entry) = self.external_agents.get_mut(name) {
+            entry.server.request_update();
+        }
+    }
+
+    pub fn notify_new_agent_version(&mut self, name: &AgentId, version: String) {
+        if let Some(entry) = self.external_agents.get_mut(name)
+            && let Some(mut tx) = entry.server.take_new_version_available_tx()
+        {
+            tx.send(Some(version)).ok();
+            entry.server.set_new_version_available_tx(tx);
+        }
+    }
+
     pub fn no_browser(&self) -> bool {
         match &self.state {
             AgentServerStoreState::Local {
@@ -676,6 +699,7 @@ impl AgentServerStore {
         let ResolvedAgentServerCommand {
             command,
             installation_lease,
+            ..
         } = this
             .update(&mut cx, |this, cx| {
                 let AgentServerStoreState::Local {
@@ -750,6 +774,8 @@ impl AgentServerStore {
                 if let Some(loading_status_tx) = loading_status_tx {
                     agent.set_loading_status_tx(loading_status_tx);
                 }
+                // The client can't ask a remote host to update, so it keeps the agent up to date.
+                agent.request_update();
                 anyhow::Ok(agent.get_command(vec![], extra_env, &mut cx.to_async()))
             })?
             .await?;
@@ -874,12 +900,10 @@ impl AgentServerStore {
         mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, _| {
-            if let Some(entry) = this.external_agents.get_mut(&*envelope.payload.name)
-                && let Some(mut tx) = entry.server.take_new_version_available_tx()
-            {
-                tx.send(Some(envelope.payload.version)).ok();
-                entry.server.set_new_version_available_tx(tx);
-            }
+            this.notify_new_agent_version(
+                &AgentId(envelope.payload.name.into()),
+                envelope.payload.version,
+            );
         });
         Ok(())
     }
@@ -1387,6 +1411,131 @@ async fn stale_archive_cache_entries(
     Ok(stale)
 }
 
+const ARCHIVE_LAUNCH_CONFIG_FILE_NAME: &str = ".zed-launch-config.json";
+
+/// How to launch an installed version, which the registry stops describing once a newer
+/// version is released.
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
+struct ArchiveLaunchConfig {
+    version: String,
+    cmd: String,
+    args: Vec<String>,
+    env: HashMap<String, String>,
+}
+
+impl ArchiveLaunchConfig {
+    fn from_target(version: &str, target_config: &RegistryTargetConfig) -> Self {
+        Self {
+            version: version.to_owned(),
+            cmd: target_config.cmd.clone(),
+            args: target_config.args.clone(),
+            env: target_config.env.clone(),
+        }
+    }
+}
+
+async fn read_archive_launch_config(
+    fs: &dyn Fs,
+    version_dir: &Path,
+) -> Result<Option<ArchiveLaunchConfig>> {
+    let path = version_dir.join(ARCHIVE_LAUNCH_CONFIG_FILE_NAME);
+    if !fs.is_file(&path).await {
+        return Ok(None);
+    }
+    let contents = fs.load(&path).await?;
+    let launch_config =
+        serde_json::from_str(&contents).with_context(|| format!("parsing {path:?}"))?;
+    Ok(Some(launch_config))
+}
+
+async fn write_archive_launch_config(
+    fs: &dyn Fs,
+    version_dir: &Path,
+    launch_config: &ArchiveLaunchConfig,
+) -> Result<()> {
+    if read_archive_launch_config(fs, version_dir)
+        .await
+        .log_err()
+        .flatten()
+        .as_ref()
+        == Some(launch_config)
+    {
+        return Ok(());
+    }
+    fs.atomic_write(
+        version_dir.join(ARCHIVE_LAUNCH_CONFIG_FILE_NAME),
+        serde_json::to_string(launch_config)?,
+    )
+    .await
+}
+
+struct InstalledArchiveFallback {
+    version_dir: PathBuf,
+    launch_config: ArchiveLaunchConfig,
+    installation_lease: Option<AgentInstallationLease>,
+}
+
+/// Finds the most recently installed version other than `latest_version_dir` that can
+/// still be launched.
+async fn installed_archive_fallback(
+    fs: &dyn Fs,
+    base_dir: &Path,
+    latest_version_dir: &Path,
+) -> Result<Option<InstalledArchiveFallback>> {
+    let mut newest: Option<(MTime, PathBuf, ArchiveLaunchConfig)> = None;
+    let mut entries = fs
+        .read_dir(base_dir)
+        .await
+        .with_context(|| format!("reading archive cache directory {base_dir:?}"))?;
+    while let Some(entry) = entries.next().await {
+        let Some(entry) = entry.log_err() else {
+            continue;
+        };
+        if entry == latest_version_dir
+            || !entry.file_name().is_some_and(|name| {
+                name.to_string_lossy()
+                    .starts_with(VERSIONED_ARCHIVE_CACHE_DIR_PREFIX)
+            })
+        {
+            continue;
+        }
+        let Some(metadata) = fs.metadata(&entry).await.log_err().flatten() else {
+            continue;
+        };
+        if !metadata.is_dir {
+            continue;
+        }
+        let Some(launch_config) = read_archive_launch_config(fs, &entry)
+            .await
+            .log_err()
+            .flatten()
+        else {
+            continue;
+        };
+        if newest
+            .as_ref()
+            .is_none_or(|(mtime, ..)| metadata.mtime.bad_is_greater_than(*mtime))
+        {
+            newest = Some((metadata.mtime, entry, launch_config));
+        }
+    }
+
+    let Some((_, version_dir, launch_config)) = newest else {
+        return Ok(None);
+    };
+    let installation_lease = AgentInstallationLease::acquire(fs, &version_dir)
+        .await
+        .log_err();
+    if !fs.is_dir(&version_dir).await {
+        return Ok(None);
+    }
+    Ok(Some(InstalledArchiveFallback {
+        version_dir,
+        launch_config,
+        installation_lease,
+    }))
+}
+
 struct LocalRegistryArchiveAgent {
     fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
@@ -1398,6 +1547,7 @@ struct LocalRegistryArchiveAgent {
     env: HashMap<String, String>,
     new_version_available_tx: Option<watch::Sender<Option<String>>>,
     loading_status_tx: Option<watch::Sender<Option<String>>>,
+    install_latest: bool,
 }
 
 impl ExternalAgentServer for LocalRegistryArchiveAgent {
@@ -1411,6 +1561,10 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
 
     fn set_new_version_available_tx(&mut self, tx: watch::Sender<Option<String>>) {
         self.new_version_available_tx = Some(tx);
+    }
+
+    fn request_update(&mut self) {
+        self.install_latest = true;
     }
 
     fn take_loading_status_tx(&mut self) -> Option<watch::Sender<Option<String>>> {
@@ -1436,6 +1590,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
         let settings_env = self.env.clone();
         let version = self.version.clone();
         let loading_status_tx = self.loading_status_tx.take();
+        let install_latest = std::mem::take(&mut self.install_latest);
 
         cx.spawn(async move |cx| {
             let mut env = project_environment
@@ -1461,12 +1616,8 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                     )
                 })?;
 
-            env.extend(target_config.env.clone());
-            env.extend(extra_env);
-            env.extend(settings_env);
-
             let archive_url = &target_config.archive;
-            let version_dir = versioned_archive_cache_dir(
+            let mut version_dir = versioned_archive_cache_dir(
                 &dir,
                 Some(version.as_ref()),
                 archive_url,
@@ -1475,13 +1626,34 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
 
             // Taken before looking for the installation, so that a cleanup in another
             // process can't remove it between this check and the agent starting.
-            let installation_lease = AgentInstallationLease::acquire(fs.as_ref(), &version_dir)
+            let mut installation_lease = AgentInstallationLease::acquire(fs.as_ref(), &version_dir)
                 .await
                 // Not every file system supports locking. The agent still works without
                 // a lease, and cleanup never removes a version it can't lock.
                 .log_err();
 
-            if !fs.is_dir(&version_dir).await {
+            let mut launch_config = ArchiveLaunchConfig::from_target(&version, target_config);
+            let fallback = if install_latest || fs.is_dir(&version_dir).await {
+                None
+            } else {
+                installed_archive_fallback(fs.as_ref(), &dir, &version_dir)
+                    .await
+                    .log_err()
+                    .flatten()
+            };
+
+            let launches_latest_version = fallback.is_none();
+            let newer_version_available = fallback.is_some().then(|| version.to_string());
+            if let Some(fallback) = fallback {
+                log::info!(
+                    "launching installed version {} instead of installing {}",
+                    fallback.launch_config.version,
+                    version
+                );
+                version_dir = fallback.version_dir;
+                installation_lease = fallback.installation_lease;
+                launch_config = fallback.launch_config;
+            } else if !fs.is_dir(&version_dir).await {
                 let mut loading_status_tx = loading_status_tx;
                 if let Some(tx) = loading_status_tx.as_mut() {
                     tx.send(Some(format!("Installing {}…", version.as_ref())))
@@ -1532,7 +1704,17 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                 }
             }
 
-            let cmd = &target_config.cmd;
+            if launches_latest_version {
+                write_archive_launch_config(fs.as_ref(), &version_dir, &launch_config)
+                    .await
+                    .log_err();
+            }
+
+            env.extend(launch_config.env);
+            env.extend(extra_env);
+            env.extend(settings_env);
+
+            let cmd = &launch_config.cmd;
 
             let cmd_path = if cmd == "node" {
                 node_runtime.binary_path().await?
@@ -1566,7 +1748,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
             })
             .detach();
 
-            let mut args = target_config.args.clone();
+            let mut args = launch_config.args;
             args.extend(extra_args);
 
             let command = AgentServerCommand {
@@ -1578,6 +1760,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
             Ok(ResolvedAgentServerCommand {
                 command,
                 installation_lease,
+                newer_version_available,
             })
         })
     }
@@ -2103,6 +2286,7 @@ mod tests {
                 env: HashMap::default(),
                 new_version_available_tx: None,
                 loading_status_tx: None,
+                install_latest: false,
             }
         })
     }
@@ -2478,6 +2662,156 @@ mod tests {
                 .join("agent")
         );
         assert_eq!(std::fs::read(command.path).unwrap(), contents);
+    }
+
+    #[cfg(feature = "test-support")]
+    fn install_old_archive_version(
+        installation_dir: &Path,
+        launch_config: Option<&ArchiveLaunchConfig>,
+    ) -> PathBuf {
+        let version_dir =
+            versioned_archive_cache_dir(installation_dir, Some("0.9.0"), TEST_ARCHIVE_URL, None);
+        std::fs::create_dir_all(&version_dir).unwrap();
+        std::fs::write(version_dir.join("old-agent"), b"old agent").unwrap();
+        if let Some(launch_config) = launch_config {
+            std::fs::write(
+                version_dir.join(ARCHIVE_LAUNCH_CONFIG_FILE_NAME),
+                serde_json::to_string(launch_config).unwrap(),
+            )
+            .unwrap();
+        }
+        version_dir
+    }
+
+    #[cfg(feature = "test-support")]
+    fn old_archive_launch_config() -> ArchiveLaunchConfig {
+        ArchiveLaunchConfig {
+            version: "0.9.0".to_owned(),
+            cmd: "./old-agent".to_owned(),
+            args: vec!["--acp".to_owned()],
+            env: HashMap::from_iter([("OLD_AGENT".to_owned(), "1".to_owned())]),
+        }
+    }
+
+    #[cfg(feature = "test-support")]
+    #[gpui::test]
+    async fn registry_archive_launches_installed_version_instead_of_installing(
+        cx: &mut TestAppContext,
+    ) {
+        init_test_settings(cx);
+        cx.executor().allow_parking();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let installation_dir = temp_dir.path().join("agent");
+        let old_version_dir =
+            install_old_archive_version(&installation_dir, Some(&old_archive_launch_config()));
+
+        let http_client = FakeHttpClient::create(|request| async move {
+            panic!("unexpected request to {}", request.uri())
+        });
+        let mut agent =
+            make_registry_archive_agent(cx, installation_dir.clone(), http_client, None);
+        let (loading_status_tx, mut loading_status_rx) = watch::channel(None);
+        agent.set_loading_status_tx(loading_status_tx);
+        let get_command =
+            cx.update(|cx| agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async()));
+
+        let ResolvedAgentServerCommand {
+            command,
+            installation_lease,
+            newer_version_available,
+        } = get_command.await.unwrap();
+        cx.run_until_parked();
+        assert_eq!(command.path, old_version_dir.join("old-agent"));
+        assert_eq!(command.args, vec!["--acp".to_owned()]);
+        assert_eq!(
+            command.env.unwrap().get("OLD_AGENT").map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(newer_version_available.as_deref(), Some("1.0.0"));
+        assert_eq!(*loading_status_rx.borrow(), None);
+        assert!(installation_lease.is_some());
+        assert!(
+            AgentInstallationLease::is_held_for(agent.fs.as_ref(), &old_version_dir)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !versioned_archive_cache_dir(&installation_dir, Some("1.0.0"), TEST_ARCHIVE_URL, None)
+                .exists()
+        );
+    }
+
+    #[cfg(feature = "test-support")]
+    #[gpui::test]
+    async fn registry_archive_installs_latest_version_when_update_requested(
+        cx: &mut TestAppContext,
+    ) {
+        init_test_settings(cx);
+        cx.executor().allow_parking();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let installation_dir = temp_dir.path().join("agent");
+        install_old_archive_version(&installation_dir, Some(&old_archive_launch_config()));
+
+        let contents = b"new agent";
+        let http_client = static_http_client(contents.to_vec());
+        let mut agent =
+            make_registry_archive_agent(cx, installation_dir.clone(), http_client, None);
+        agent.request_update();
+        let get_command =
+            cx.update(|cx| agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async()));
+
+        let ResolvedAgentServerCommand {
+            command,
+            newer_version_available,
+            ..
+        } = get_command.await.unwrap();
+        cx.run_until_parked();
+        let latest_version_dir =
+            versioned_archive_cache_dir(&installation_dir, Some("1.0.0"), TEST_ARCHIVE_URL, None);
+        assert_eq!(command.path, latest_version_dir.join("agent"));
+        assert_eq!(std::fs::read(&command.path).unwrap(), contents);
+        assert_eq!(newer_version_available, None);
+        assert!(!agent.install_latest);
+
+        let launch_config = read_archive_launch_config(agent.fs.as_ref(), &latest_version_dir)
+            .await
+            .unwrap();
+        assert_eq!(
+            launch_config,
+            Some(ArchiveLaunchConfig {
+                version: "1.0.0".to_owned(),
+                cmd: "./agent".to_owned(),
+                args: Vec::new(),
+                env: HashMap::default(),
+            })
+        );
+    }
+
+    #[cfg(feature = "test-support")]
+    #[gpui::test]
+    async fn registry_archive_installs_latest_version_without_launchable_installation(
+        cx: &mut TestAppContext,
+    ) {
+        init_test_settings(cx);
+        cx.executor().allow_parking();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let installation_dir = temp_dir.path().join("agent");
+        install_old_archive_version(&installation_dir, None);
+
+        let contents = b"new agent";
+        let http_client = static_http_client(contents.to_vec());
+        let mut agent =
+            make_registry_archive_agent(cx, installation_dir.clone(), http_client, None);
+        let get_command =
+            cx.update(|cx| agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async()));
+
+        let command = get_command.await.unwrap().command;
+        cx.run_until_parked();
+        assert_eq!(
+            command.path,
+            versioned_archive_cache_dir(&installation_dir, Some("1.0.0"), TEST_ARCHIVE_URL, None)
+                .join("agent")
+        );
     }
 
     #[gpui::test]

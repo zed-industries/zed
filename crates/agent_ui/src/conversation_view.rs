@@ -833,6 +833,7 @@ pub struct ConversationView {
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     auth_task: Option<Task<()>>,
     loading_status: Option<SharedString>,
+    new_server_version_available: Option<SharedString>,
     /// When settings change, use this to see if the theme has changed (which
     /// causes mermaid diagrams to re-render).
     last_theme_id: Option<String>,
@@ -1178,6 +1179,7 @@ impl ConversationView {
             notification_subscriptions: HashMap::default(),
             auth_task: None,
             loading_status: None,
+            new_server_version_available: None,
             last_theme_id: Some(cx.theme().id.clone()),
             draft_prompt_persist_task: None,
             code_span_resolver,
@@ -1276,7 +1278,38 @@ impl ConversationView {
         self.reset(window, cx);
     }
 
+    fn install_agent_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let agent_id = self.agent.agent_id();
+        self.agent_server_store.update(cx, |store, _| {
+            store.request_agent_update(&agent_id);
+        });
+        // The update is only offered before the first message, so there is no session for
+        // the new agent process to resume.
+        let initial_content = self.root_thread_view().and_then(|view| {
+            let blocks = view
+                .read(cx)
+                .message_editor
+                .read(cx)
+                .draft_content_blocks_snapshot(cx);
+            (!blocks.is_empty()).then_some(AgentInitialContent::ContentBlock {
+                blocks,
+                auto_submit: false,
+            })
+        });
+        self.reconnect(false, initial_content, window, cx);
+    }
+
     fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.reconnect(true, None, window, cx);
+    }
+
+    fn reconnect(
+        &mut self,
+        resume_session: bool,
+        initial_content: Option<AgentInitialContent>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let (resume_session_id, work_dirs, title) = self
             .root_thread_view()
             .map(|thread_view| {
@@ -1312,16 +1345,17 @@ impl ConversationView {
 
         self.clear_resolved_request_elicitations(cx);
         self.loading_status = None;
+        self.new_server_version_available = None;
 
         let state = Self::initial_state(
             self.agent.clone(),
             self.connection_store.clone(),
             self.connection_key.clone(),
-            resume_session_id,
+            resume_session_id.filter(|_| resume_session),
             work_dirs,
             title,
             self.project.clone(),
-            None,
+            initial_content,
             AgentThreadSource::AgentPanel,
             // Explicit retries, including after a successful login, must reach the agent
             // even if its last reported snapshot still says signed out.
@@ -1372,6 +1406,7 @@ impl ConversationView {
         let connection_entry_subscription =
             cx.subscribe(&connection_entry, |this, _entry, event, cx| match event {
                 AgentConnectionEntryEvent::NewVersionAvailable(version) => {
+                    this.new_server_version_available = Some(version.clone());
                     if let Some(thread) = this.root_thread_view() {
                         thread.update(cx, |thread, cx| {
                             thread.new_server_version_available = Some(version.clone());
@@ -1531,6 +1566,10 @@ impl ConversationView {
                             window,
                             cx,
                         );
+                        current.update(cx, |view, _| {
+                            view.new_server_version_available =
+                                this.new_server_version_available.clone();
+                        });
 
                         if let Some(recovery) = &this.recovery {
                             current.update(cx, |view, cx| {

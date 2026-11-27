@@ -271,6 +271,13 @@ impl AgentServer for CustomAgentServer {
                     anyhow::Ok(agent.get_command(vec![], extra_env, &mut cx.to_async()))
                 })??
                 .await?;
+            if let Some(version) = command.newer_version_available.clone() {
+                store
+                    .update(cx, |store, _| {
+                        store.notify_new_agent_version(&agent_id, version);
+                    })
+                    .ok();
+            }
             let connection = crate::acp::connect(
                 agent_id,
                 project,

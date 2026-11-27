@@ -13780,7 +13780,7 @@ impl ThreadView {
                         .style(ButtonStyle::Tinted(TintColor::Accent))
                         .on_click(move |_, window, cx| {
                             server_view
-                                .update(cx, |view, cx| view.reset(window, cx))
+                                .update(cx, |view, cx| view.install_agent_update(window, cx))
                                 .ok();
                         }),
                 ),
