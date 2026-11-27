@@ -981,7 +981,7 @@ fn render_remote_button(
         },
         // Without counts, only offer a fetch, as for a branch that is up to date.
         Some(Upstream {
-            tracking: UpstreamTracking::Unknown(_),
+            tracking: UpstreamTracking::Unknown,
             ..
         }) => show_fetch_button.then(|| {
             remote_button::render_fetch_button(

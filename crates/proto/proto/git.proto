@@ -104,9 +104,8 @@ message GitUpstream {
 message UpstreamTracking {
   uint64 ahead = 1;
   uint64 behind = 2;
-  // Set if the counts weren't computed, to a key that changes with what they depend on besides
-  // the branch's commit. Older peers read this as zero counts.
-  optional uint64 unknown = 3;
+  // Set if the counts weren't computed. Older peers read this as zero counts.
+  optional bool unknown = 3;
 }
 
 message CommitSummary {
