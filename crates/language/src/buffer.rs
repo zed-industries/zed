@@ -4282,6 +4282,16 @@ impl BufferSnapshot {
         self.syntax.languages(&self, true)
     }
 
+    /// Returns whether the language at any position in this buffer can have wrap characters,
+    /// without visiting the syntax layers.
+    pub fn has_language_with_wrap_characters(&self) -> bool {
+        self.syntax.contains_wrap_characters()
+            || self
+                .language
+                .as_ref()
+                .is_some_and(|language| language.config.wrap_characters.is_some())
+    }
+
     pub fn smallest_syntax_layer_containing<D: ToOffset>(
         &self,
         range: Range<D>,
