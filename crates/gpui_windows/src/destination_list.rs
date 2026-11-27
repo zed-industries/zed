@@ -1,5 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
+use anyhow::Context;
 use itertools::Itertools;
 use smallvec::SmallVec;
 use windows::{
@@ -65,10 +66,11 @@ pub(crate) fn update_jump_list(
     recent_workspaces: &[SmallVec<[PathBuf; 2]>],
     dock_menus: &[(SharedString, SharedString)],
 ) -> anyhow::Result<Vec<SmallVec<[PathBuf; 2]>>> {
-    let (list, removed) = create_destination_list()?;
-    add_recent_folders(&list, recent_workspaces, removed.as_ref())?;
-    add_dock_menu(&list, dock_menus)?;
-    unsafe { list.CommitList() }?;
+    let (list, removed) = create_destination_list().context("unable to create destination list")?;
+    add_recent_folders(&list, recent_workspaces, removed.as_ref())
+        .context("unable to add recent folders")?;
+    add_dock_menu(&list, dock_menus).context("unable to add dock menu")?;
+    unsafe { list.CommitList() }.context("unable to commit list")?;
     Ok(removed)
 }
 
