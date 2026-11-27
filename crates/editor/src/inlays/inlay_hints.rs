@@ -882,6 +882,12 @@ impl Editor {
         {
             if invalidate_hints_for_buffers.is_empty() {
                 inlay_hints.clear();
+                invalidate_hints_for_buffers.extend(
+                    multi_buffer
+                        .read(cx)
+                        .all_buffers_iter()
+                        .map(|buffer| buffer.read(cx).remote_id()),
+                );
             } else {
                 inlay_hints.clear_for_buffers(
                     &invalidate_hints_for_buffers,
@@ -1731,7 +1737,7 @@ pub mod tests {
     use crate::scroll::ScrollAmount;
     use crate::test::editor_lsp_test_context::EditorLspTestContext;
     use crate::test::editor_test_context::EditorTestContext;
-    use crate::{AcceptInlayHint, Editor, SelectionEffects};
+    use crate::{AcceptInlayHint, Editor, RestartLanguageServer, SelectionEffects};
     use crate::{DisplayPoint, DisplayRow};
     use collections::HashSet;
     use futures::channel::oneshot;
@@ -6987,6 +6993,74 @@ let c = 3;"#
             );
         })
         .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_no_hint_duplication_on_server_restart(cx: &mut gpui::TestAppContext) {
+        let edit_debounce = Duration::from_millis(700);
+        init_test(cx, &|settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                enabled: Some(true),
+                edit_debounce_ms: Some(edit_debounce.as_millis() as u64),
+                scroll_debounce_ms: Some(0),
+                ..InlayHintSettingsContent::default()
+            })
+        });
+        let server_runs = Arc::new(AtomicUsize::new(0));
+        let mut cx = EditorLspTestContext::new_with_adapter(
+            Arc::into_inner(rust_lang()).expect("test language"),
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                initializer: Some(Box::new({
+                    let server_runs = server_runs.clone();
+                    move |server| {
+                        let label = format!("run {}", server_runs.fetch_add(1, Ordering::AcqRel));
+                        server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                            move |_, _| {
+                                let label = label.clone();
+                                async move {
+                                    Ok(Some(vec![lsp::InlayHint {
+                                        position: lsp::Position::new(0, 7),
+                                        label: lsp::InlayHintLabel::String(label),
+                                        kind: None,
+                                        text_edits: None,
+                                        tooltip: None,
+                                        padding_left: None,
+                                        padding_right: None,
+                                        data: None,
+                                    }]))
+                                }
+                            },
+                        );
+                    }
+                })),
+                ..FakeLspAdapter::default()
+            },
+            cx,
+        )
+        .await;
+        cx.set_state("fn mainˇ() {}\n");
+        cx.background_executor.advance_clock(edit_debounce);
+        cx.run_until_parked();
+        cx.update_editor(|editor, _, cx| {
+            assert_eq!(visible_hint_labels(editor, cx), vec!["run 0"]);
+        });
+
+        cx.dispatch_action(RestartLanguageServer);
+        cx.run_until_parked();
+        assert_eq!(server_runs.load(Ordering::Acquire), 2);
+        cx.update_editor(|editor, _, cx| {
+            assert_eq!(visible_hint_labels(editor, cx), vec!["run 1"]);
+        });
+
+        cx.background_executor.advance_clock(edit_debounce);
+        cx.run_until_parked();
+        cx.update_editor(|editor, _, cx| {
+            assert_eq!(visible_hint_labels(editor, cx), vec!["run 1"]);
+        });
     }
 
     pub fn cached_hint_labels(editor: &Editor, cx: &mut App) -> Vec<String> {
