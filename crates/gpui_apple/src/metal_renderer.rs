@@ -127,6 +127,8 @@ pub struct MetalRenderer {
     is_unified_memory: bool,
     presents_with_transaction: bool,
     display_link_mode: DisplayLinkMode,
+    /// Real drawable size saved while the layer is shrunk for an idle window.
+    idle_drawable_size: Option<CGSize>,
     /// For headless rendering, tracks whether output should be opaque
     opaque: bool,
     /// Whether the last scene drawn to the layer let native views show through it.
@@ -396,6 +398,7 @@ impl MetalRenderer {
             layer,
             presents_with_transaction: false,
             display_link_mode: DisplayLinkMode::Detached,
+            idle_drawable_size: None,
             is_apple_gpu,
             is_unified_memory,
             opaque,
@@ -491,7 +494,27 @@ impl MetalRenderer {
         }
     }
 
+    /// Frees the layer's spare full-window drawable while the window is idle.
+    /// The last presented frame stays on screen; the next draw restores the size.
+    pub fn release_idle_drawables(&mut self) {
+        if self.idle_drawable_size.is_none()
+            && let Some(layer) = &self.layer
+        {
+            self.idle_drawable_size = Some(layer.drawableSize());
+            layer.setDrawableSize(CGSize::new(1.0, 1.0));
+        }
+    }
+
+    /// Restores the size saved by `release_idle_drawables`, if any.
+    pub fn restore_idle_drawables(&mut self) {
+        if let (Some(size), Some(layer)) = (self.idle_drawable_size.take(), &self.layer) {
+            layer.setDrawableSize(size);
+        }
+    }
+
     pub fn update_drawable_size(&mut self, size: Size<DevicePixels>) {
+        // A resize while idle wins over the size saved at park time.
+        self.idle_drawable_size = None;
         if let Some(layer) = &self.layer {
             layer.setDrawableSize(CGSize::new(size.width.0 as f64, size.height.0 as f64));
         }
@@ -509,6 +532,7 @@ impl MetalRenderer {
     }
 
     pub fn draw(&mut self, scene: &Scene) {
+        self.restore_idle_drawables();
         let layer = match &self.layer {
             Some(l) => l.clone(),
             None => {
@@ -628,6 +652,7 @@ impl MetalRenderer {
     /// use `render_scene_to_image()` instead.
     #[cfg(any(test, feature = "test-support"))]
     pub fn render_to_image(&mut self, scene: &Scene) -> Result<RgbaImage> {
+        self.restore_idle_drawables();
         let layer = self
             .layer
             .clone()
@@ -1794,6 +1819,34 @@ mod tests {
             renderer.display_link_mode,
             DisplayLinkMode::Detached
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn idle_drawables_are_released_and_restored_by_the_next_draw() -> Result<()> {
+        let mut renderer = MetalRenderer::new(Default::default(), false, false)?;
+        renderer.update_drawable_size(size(DevicePixels(220), DevicePixels(140)));
+        let layer_size = |renderer: &MetalRenderer| {
+            let size = renderer.layer().unwrap().drawableSize();
+            (size.width, size.height)
+        };
+
+        renderer.release_idle_drawables();
+        assert_eq!(layer_size(&renderer), (1.0, 1.0));
+        // A second park keeps the real size, not the shrunk one.
+        renderer.release_idle_drawables();
+        assert_eq!(renderer.idle_drawable_size.unwrap().width, 220.0);
+
+        let mut scene = Scene::default();
+        scene.finish();
+        renderer.draw(&scene);
+        assert_eq!(layer_size(&renderer), (220.0, 140.0));
+
+        // A resize while parked wins over the size saved at park time.
+        renderer.release_idle_drawables();
+        renderer.update_drawable_size(size(DevicePixels(300), DevicePixels(200)));
+        renderer.draw(&scene);
+        assert_eq!(layer_size(&renderer), (300.0, 200.0));
         Ok(())
     }
 
