@@ -347,13 +347,14 @@ pub(crate) fn construct_initial_buffer_versions_map<
 ) -> InitialBufferVersionsMap {
     let mut initial_buffer_versions = InitialBufferVersionsMap::default();
 
-    if !editor.jsx_tag_auto_close_enabled_in_any_buffer {
+    if !editor.jsx_tag_auto_close_enabled_in_any_buffer || edits.is_empty() {
         return initial_buffer_versions;
     }
 
+    let multibuffer = editor.buffer.read(cx);
+    let snapshot = multibuffer.snapshot(cx);
+
     for (edit_range, _) in edits {
-        let multibuffer = editor.buffer.read(cx);
-        let snapshot = multibuffer.snapshot(cx);
         let anchor = snapshot.anchor_before(edit_range.end);
         let edit_range_buffer = snapshot
             .anchor_to_buffer_anchor(anchor)
