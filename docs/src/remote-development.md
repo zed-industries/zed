@@ -215,7 +215,8 @@ Alternatively, you can configure the proxy in the remote machine's `~/.config/ze
 
 ```json
 {
-  "proxy": "http://proxy.example.com:8080"
+  "proxy": "http://proxy.example.com:8080",
+  "no_proxy": "localhost,127.0.0.1"
 }
 ```
 
