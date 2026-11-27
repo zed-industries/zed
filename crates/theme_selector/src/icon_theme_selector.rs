@@ -198,10 +198,6 @@ impl IconThemeSelectorDelegate {
         &mut self,
         cx: &mut Context<Picker<IconThemeSelectorDelegate>>,
     ) {
-        if self.selection_completed {
-            return;
-        }
-
         let theme = if self.showing_original_theme() {
             Some(self.original_theme.clone())
         } else {

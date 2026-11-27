@@ -332,10 +332,6 @@ impl ThemeSelectorDelegate {
     }
 
     fn update_showing_original_theme(&mut self, cx: &mut Context<Picker<ThemeSelectorDelegate>>) {
-        if self.selection_completed {
-            return;
-        }
-
         if self.showing_original_theme() {
             SettingsStore::update_global(cx, |store, _| {
                 store.override_global(self.original_theme_settings.clone());
