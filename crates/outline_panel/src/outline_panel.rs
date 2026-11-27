@@ -13106,11 +13106,13 @@ test/
         });
 
         let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(path!("/test"), json!({"src": {"one.rs": ""}}))
-            .await;
+        fs.insert_tree(
+            path!("/test"),
+            json!({"src": {"one.rs": "mod alpha {\n    fn a() {}\n}\n"}}),
+        )
+        .await;
 
         let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
-        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
         let (window, workspace) = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(window.into(), cx);
         let outline_panel = outline_panel(&workspace, cx);
@@ -13122,13 +13124,7 @@ test/
         add_multi_buffer_editor(&workspace, &project, &[(&buffer, Vec::new())], cx);
         wait_for_outline_tasks(&outline_panel, cx).await;
 
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit(
-                [(0..buffer.len(), "mod alpha {\n    fn a() {}\n}\n")],
-                None,
-                cx,
-            );
-        });
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
         wait_for_outline_tasks(&outline_panel, cx).await;
