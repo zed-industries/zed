@@ -76,6 +76,7 @@ struct AppleTextSystemState {
     font_selections: HashMap<Font, FontId>,
     font_ids_by_postscript_name: HashMap<String, FontId>,
     font_ids_by_font_key: HashMap<FontKey, SmallVec<[FontId; 4]>>,
+    has_color_glyphs: Vec<bool>,
 }
 
 impl AppleTextSystem {
@@ -88,6 +89,7 @@ impl AppleTextSystem {
             font_selections: HashMap::default(),
             font_ids_by_postscript_name: HashMap::default(),
             font_ids_by_font_key: HashMap::default(),
+            has_color_glyphs: Vec::new(),
         }))
     }
 }
@@ -381,6 +383,7 @@ impl AppleTextSystemState {
             font_ids.push(font_id);
             self.font_ids_by_postscript_name
                 .insert(postscript_name.clone(), font_id);
+            self.has_color_glyphs.push(has_color_glyphs(&font));
             self.fonts.push(font);
         }
         Ok(font_ids)
@@ -404,16 +407,19 @@ impl AppleTextSystemState {
             let font_id = FontId(self.fonts.len());
             self.font_ids_by_postscript_name
                 .insert(postscript_name.clone(), font_id);
-            self.fonts
-                .push(font_kit::font::Font::from_core_graphics_font(
-                    requested_font.copy_to_CGFont(),
-                ));
+            let font =
+                font_kit::font::Font::from_core_graphics_font(requested_font.copy_to_CGFont());
+            self.has_color_glyphs.push(has_color_glyphs(&font));
+            self.fonts.push(font);
             font_id
         }
     }
 
     fn is_emoji(&self, font_id: FontId) -> bool {
-        self.fonts.get(font_id.0).is_some_and(has_color_glyphs)
+        self.has_color_glyphs
+            .get(font_id.0)
+            .copied()
+            .unwrap_or(false)
     }
 
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
