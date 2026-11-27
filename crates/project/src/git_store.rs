@@ -59,7 +59,7 @@ use language::{
     proto::{deserialize_version, serialize_version},
 };
 use parking_lot::Mutex;
-use paths::{config_dir, home_dir};
+use paths::home_dir;
 use pending_op::{PendingOp, PendingOpId, PendingOps, PendingOpsSummary};
 use postage::stream::Stream as _;
 use rpc::{
@@ -74,7 +74,7 @@ use std::{
     cell::RefCell,
     cmp::Ordering,
     collections::{BTreeSet, HashSet, VecDeque, hash_map::Entry},
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     future::Future,
     mem,
     ops::Range,
@@ -1066,7 +1066,7 @@ impl GitStore {
             Box::new([])
         } else {
             [
-                config_dir().join("git/config"),
+                git_xdg_config_path(std::env::var_os("XDG_CONFIG_HOME")),
                 home_dir().join(".gitconfig"),
             ]
             .into_iter()
@@ -11852,6 +11852,15 @@ async fn append_pattern_to_ignore_file(
     .await
 }
 
+fn git_xdg_config_path(xdg_config_home: Option<OsString>) -> PathBuf {
+    xdg_config_home
+        .filter(|config_home| !config_home.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home_dir().join(".config"))
+        .join("git")
+        .join("config")
+}
+
 #[cfg(any(test, feature = "test-support"))]
 impl Repository {
     pub fn set_branch_list_for_test(&mut self, branches: Vec<Branch>, cx: &mut Context<Self>) {
@@ -13911,6 +13920,24 @@ mod tests {
         cx.update(GitStore::rescan_after_global_config_write);
         cx.run_until_parked();
         assert_eq!(statuses(cx), [Vec::new(), Vec::new()]);
+    }
+
+    #[test]
+    fn test_git_xdg_config_path() {
+        let default_path = home_dir().join(".config").join("git").join("config");
+        assert_eq!(
+            [
+                Some(OsString::from(util::path!("/xdg"))),
+                Some(OsString::new()),
+                None,
+            ]
+            .map(git_xdg_config_path),
+            [
+                Path::new(util::path!("/xdg")).join("git").join("config"),
+                default_path.clone(),
+                default_path,
+            ],
+        );
     }
 
     #[test]
