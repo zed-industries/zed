@@ -7553,7 +7553,8 @@ async fn test_native_subagent_restores_the_outcome_of_a_retry_from_its_own_view(
         ),
     );
     test.fake.end_last(&test.model);
-    send.await.unwrap_err();
+    let error = send.await.unwrap_err().to_string();
+    let failed_run_end = subagent.read_with(cx, |subagent, _| subagent.entries().len());
 
     // A retry from the subagent's own view doesn't go through the parent's tool call.
     let retry = subagent.update(cx, |subagent, cx| subagent.retry(cx));
@@ -7563,6 +7564,26 @@ async fn test_native_subagent_restores_the_outcome_of_a_retry_from_its_own_view(
     cx.run_until_parked();
     retry.await.unwrap();
     let run_end = subagent.read_with(cx, |subagent, _| subagent.entries().len() - 1);
+
+    let mut failure = acp_v2::Error::internal_error();
+    failure.message = error;
+    test.thread.read_with(cx, |thread, _| {
+        assert_eq!(
+            thread.subagent_outcomes(),
+            [
+                SubagentOutcome {
+                    entry_count: failed_run_end,
+                    stop_reason: acp_v2::StopReason::Error(
+                        acp_v2::ErrorStopReason::new().error(failure)
+                    ),
+                },
+                SubagentOutcome {
+                    entry_count: run_end + 1,
+                    stop_reason: acp_v2::StopReason::EndTurn,
+                },
+            ]
+        )
+    });
 
     let done = acp_v2::StateUpdate::Idle(
         acp_v2::IdleStateUpdate::new().stop_reason(acp_v2::StopReason::EndTurn),
