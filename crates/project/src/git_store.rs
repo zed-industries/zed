@@ -51,8 +51,8 @@ use git::{
     },
 };
 use gpui::{
-    App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, SharedString,
-    Subscription, Task, TaskExt, WeakEntity,
+    App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Global,
+    SharedString, Subscription, Task, TaskExt, WeakEntity,
 };
 use language::{
     Anchor, Buffer, BufferEvent, Capability, Language, LanguageRegistry,
@@ -613,6 +613,10 @@ impl language::File for IndexTextFile {
         self.is_private
     }
 }
+
+struct GlobalGitConfigWritten;
+
+impl Global for GlobalGitConfigWritten {}
 
 enum GitStoreState {
     Local {
@@ -1175,6 +1179,11 @@ impl GitStore {
             this.set_diff_base(setting, cx);
             this.activate_parked_repositories_where_parking_disabled(cx);
         }));
+        _subscriptions.push(
+            cx.observe_global::<GlobalGitConfigWritten>(|git_store, cx| {
+                git_store.rescan_repositories(cx)
+            }),
+        );
 
         let diff_base_setting = ProjectSettings::get_global(cx).git.diff_base;
         GitStore {
@@ -1264,6 +1273,25 @@ impl GitStore {
 
     pub fn is_local(&self) -> bool {
         matches!(self.state, GitStoreState::Local { .. })
+    }
+
+    pub fn rescan_after_global_config_write(cx: &mut App) {
+        cx.set_global(GlobalGitConfigWritten);
+    }
+
+    fn rescan_repositories(&mut self, cx: &mut Context<Self>) {
+        let GitStoreState::Local { downstream, .. } = &self.state else {
+            return;
+        };
+        let updates_tx = downstream
+            .as_ref()
+            .map(|downstream| downstream.updates_tx.clone());
+        for repository in self.repositories.values() {
+            repository.update(cx, |repository, cx| {
+                repository.schedule_scan(updates_tx.clone(), cx);
+            });
+        }
+        cx.emit(GitStoreEvent::GlobalConfigurationUpdated);
     }
 
     fn set_active_repo_id(&mut self, repo_id: RepositoryId, cx: &mut Context<Self>) {
@@ -13828,6 +13856,61 @@ mod tests {
         ]));
 
         assert_eq!(coalesced, repo_paths(&["src", "tests/test.rs"]));
+    }
+
+    #[gpui::test]
+    async fn test_rescan_after_global_config_write(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            util::path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": "a",
+            }),
+        )
+        .await;
+        let projects = [
+            Project::test(fs.clone(), [Path::new(util::path!("/project"))], cx).await,
+            Project::test(fs.clone(), [Path::new(util::path!("/project"))], cx).await,
+        ];
+        cx.run_until_parked();
+        let repositories = projects.each_ref().map(|project| {
+            project.read_with(cx, |project, cx| project.active_repository(cx).unwrap())
+        });
+        let statuses = |cx: &mut TestAppContext| {
+            repositories.each_ref().map(|repository| {
+                repository.read_with(cx, |repository, _| {
+                    repository
+                        .status()
+                        .map(|entry| entry.status)
+                        .collect::<Vec<_>>()
+                })
+            })
+        };
+        assert_eq!(
+            statuses(cx),
+            [[FileStatus::Untracked], [FileStatus::Untracked]]
+        );
+
+        fs.with_git_state(Path::new(util::path!("/project/.git")), false, |state| {
+            state
+                .head_contents
+                .insert(repo_path("a.txt"), b"a".to_vec());
+            state
+                .index_contents
+                .insert(repo_path("a.txt"), b"a".to_vec());
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            statuses(cx),
+            [[FileStatus::Untracked], [FileStatus::Untracked]]
+        );
+
+        cx.update(GitStore::rescan_after_global_config_write);
+        cx.run_until_parked();
+        assert_eq!(statuses(cx), [Vec::new(), Vec::new()]);
     }
 
     #[test]

@@ -70,7 +70,7 @@ use notifications::status_toast::StatusToast;
 use project::{
     Fs, Project, ProjectPath,
     git_store::{
-        CommitDataState, GitStoreEvent, Repository, RepositoryEvent, RepositoryId,
+        CommitDataState, GitStore, GitStoreEvent, Repository, RepositoryEvent, RepositoryId,
         diff_buffer_list::{BranchDiffEvent, DiffBase, DiffBufferList},
         pending_op,
     },
@@ -5362,8 +5362,9 @@ impl GitPanel {
             }
             None => Task::ready(Err(anyhow::anyhow!("{path:?} is not a valid UTF-8 path"))),
         };
-        cx.spawn(async move |git_panel, cx| {
-            if let Err(error) = git_config.await {
+        cx.spawn(async move |git_panel, cx| match git_config.await {
+            Ok(_) => cx.update(GitStore::rescan_after_global_config_write),
+            Err(error) => {
                 log::error!("Error while adding a safe directory: {error:?}");
                 git_panel
                     .update(cx, |git_panel, cx| {
@@ -18848,7 +18849,7 @@ mod tests {
     #[gpui::test]
     async fn test_dubious_ownership_and_failed_trust_directory(cx: &mut TestAppContext) {
         init_test(cx);
-        let (fs, project, _, panel, mut cx) = setup_git_panel_with_changes(
+        let (fs, _, _, panel, mut cx) = setup_git_panel_with_changes(
             cx,
             json!({
                 ".git": {},
@@ -18866,10 +18867,7 @@ mod tests {
             state.access = GitAccess::No;
         })
         .unwrap();
-        let git_store = project.read_with(&cx, |project, _| project.git_store().clone());
-        git_store.update(&mut cx, |_, cx| {
-            cx.emit(GitStoreEvent::GlobalConfigurationUpdated)
-        });
+        cx.update(|_, cx| GitStore::rescan_after_global_config_write(cx));
         await_git_panel_entries(&panel, &mut cx).await;
         cx.run_until_parked();
         panel.read_with(&cx, |panel, _| {
