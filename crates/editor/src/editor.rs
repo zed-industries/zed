@@ -1128,6 +1128,7 @@ pub struct Editor {
     use_selection_highlight: bool,
     auto_replace_emoji_shortcode: bool,
     jsx_tag_auto_close_enabled_in_any_buffer: bool,
+    wrap_selections_in_tag_availability: Option<WrapSelectionsInTagAvailability>,
     show_git_blame_gutter: bool,
     show_git_blame_inline: bool,
     show_git_blame_inline_delay_task: Option<Task<()>>,
@@ -1339,6 +1340,15 @@ pub struct RemoteSelection {
     pub line_mode: bool,
     pub user_name: Option<SharedString>,
     pub color: PlayerColor,
+}
+
+/// The answer of the last `Editor::enable_wrap_selections_in_tag` scan, with the state it was
+/// computed from.
+struct WrapSelectionsInTagAvailability {
+    selections: Arc<[Selection<Anchor>]>,
+    edit_count: usize,
+    non_text_state_update_count: usize,
+    enabled: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -2483,6 +2493,7 @@ impl Editor {
             use_selection_highlight: true,
             auto_replace_emoji_shortcode: false,
             jsx_tag_auto_close_enabled_in_any_buffer: false,
+            wrap_selections_in_tag_availability: None,
             leader_id: None,
             remote_id: None,
             hover_state: HoverState::default(),
@@ -6024,18 +6035,70 @@ impl Editor {
         })
     }
 
-    fn enable_wrap_selections_in_tag(&self, cx: &App) -> bool {
+    pub(crate) fn enable_wrap_selections_in_tag(&mut self, cx: &App) -> bool {
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        for selection in self.selections.disjoint_anchors_arc().iter() {
-            if snapshot
-                .language_at(selection.start)
-                .and_then(|lang| lang.config().wrap_characters.as_ref())
+
+        // Without syntax layers, every position has the buffer's own language, or the diff base
+        // text's when it is inside an expanded deleted hunk.
+        if let Some(buffer) = snapshot.as_singleton()
+            && iter::once(buffer)
+                .chain(
+                    snapshot
+                        .diff_for_buffer_id(buffer.remote_id())
+                        .map(|diff| diff.base_text()),
+                )
+                .all(|buffer| {
+                    buffer.syntax_layers_languages().next().is_none()
+                        && buffer
+                            .language()
+                            .is_none_or(|language| language.config().wrap_characters.is_none())
+                })
+        {
+            return false;
+        }
+
+        let selections = self.selections.disjoint_anchors_arc();
+        if let Some(availability) = &self.wrap_selections_in_tag_availability
+            && Arc::ptr_eq(&availability.selections, &selections)
+            && availability.edit_count == snapshot.edit_count()
+            && availability.non_text_state_update_count == snapshot.non_text_state_update_count()
+        {
+            return availability.enabled;
+        }
+
+        let mut enabled = false;
+        let mut depends_on_diff_base_text = false;
+        for selection in selections.iter() {
+            let Some((buffer, offset)) = snapshot.point_to_buffer_offset(selection.start) else {
+                depends_on_diff_base_text = true;
+                continue;
+            };
+            let main_buffer_id = selection.start.buffer_id().or_else(|| {
+                let (_, main_buffer) = snapshot.anchor_to_buffer_anchor(selection.start)?;
+                Some(main_buffer.remote_id())
+            });
+            depends_on_diff_base_text |= selection.start.diff_base_anchor().is_some()
+                || main_buffer_id != Some(buffer.remote_id());
+            if buffer
+                .language_at(offset)
+                .and_then(|language| language.config().wrap_characters.as_ref())
                 .is_some()
             {
-                return true;
+                enabled = true;
+                break;
             }
         }
-        false
+
+        // Diff base text can get a new language or syntax tree without either of the snapshot's
+        // counts changing, so an answer that may depend on it is not kept for the next paint.
+        self.wrap_selections_in_tag_availability =
+            (!depends_on_diff_base_text).then(|| WrapSelectionsInTagAvailability {
+                selections,
+                edit_count: snapshot.edit_count(),
+                non_text_state_update_count: snapshot.non_text_state_update_count(),
+                enabled,
+            });
+        enabled
     }
 
     fn wrap_selections_in_tag(
@@ -8461,13 +8524,27 @@ impl Editor {
 
         let project = project.read(cx);
         let multi_buffer = self.buffer.read(cx);
+        if let Some(buffer) = multi_buffer.as_singleton() {
+            return !self.selections.disjoint_anchors().is_empty()
+                && project.supports_range_formatting(&buffer, cx);
+        }
         let snapshot = multi_buffer.snapshot(cx);
 
+        // Range formatting support is a property of the buffer, so each buffer is asked once
+        // however many selections it holds.
+        let mut checked_buffer_ids = HashSet::default();
         self.selections
             .disjoint_anchor_ranges()
             .flat_map(|range| [range.start, range.end])
-            .filter_map(|anchor| snapshot.anchor_to_buffer_anchor(anchor))
-            .filter_map(|(_, buffer_snapshot)| multi_buffer.buffer(buffer_snapshot.remote_id()))
+            .filter_map(|anchor| {
+                anchor.buffer_id().or_else(|| {
+                    let (_, buffer_snapshot) = snapshot.anchor_to_buffer_anchor(anchor)?;
+                    Some(buffer_snapshot.remote_id())
+                })
+            })
+            .dedup()
+            .filter(|buffer_id| checked_buffer_ids.insert(*buffer_id))
+            .filter_map(|buffer_id| multi_buffer.buffer(buffer_id))
             .any(|buffer| project.supports_range_formatting(&buffer, cx))
     }
 

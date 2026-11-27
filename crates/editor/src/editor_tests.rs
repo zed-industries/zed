@@ -8590,6 +8590,130 @@ async fn test_wrap_in_tag_does_nothing_in_unsupported_languages(cx: &mut TestApp
 }
 
 #[gpui::test]
+async fn test_wrap_in_tag_availability_in_singleton_without_syntax(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = |name: &'static str, wrap_characters| {
+        Arc::new(Language::new(
+            LanguageConfig {
+                name: name.into(),
+                wrap_characters,
+                ..LanguageConfig::default()
+            },
+            None,
+        ))
+    };
+    let is_available = |cx: &mut EditorTestContext| {
+        refresh_editor_actions(cx);
+        cx.update(|window, cx| window.is_action_available(&WrapSelectionsInTag, cx))
+    };
+
+    cx.set_state("ˇtest");
+    assert!(!is_available(&mut cx));
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language("Plain Text", None)), cx));
+    assert!(!is_available(&mut cx));
+
+    let wrap_characters = language::WrapCharactersConfig {
+        start_prefix: "<".into(),
+        start_suffix: ">".into(),
+        end_prefix: "</".into(),
+        end_suffix: ">".into(),
+    };
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(Some(language("JavaScript", Some(wrap_characters))), cx)
+    });
+    assert!(is_available(&mut cx));
+}
+
+#[gpui::test]
+async fn test_wrap_in_tag_availability_follows_selections_and_language(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let wrappable_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "JavaScript".into(),
+            wrap_characters: Some(language::WrapCharactersConfig {
+                start_prefix: "<".into(),
+                start_suffix: ">".into(),
+                end_prefix: "</".into(),
+                end_suffix: ">".into(),
+            }),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+    let plain_text_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Plain Text".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let wrappable_buffer =
+        cx.new(|cx| Buffer::local("one\ntwo", cx).with_language(wrappable_language.clone(), cx));
+    let plain_text_buffer =
+        cx.new(|cx| Buffer::local("three\nfour", cx).with_language(plain_text_language, cx));
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            wrappable_buffer.clone(),
+            [Point::new(0, 0)..Point::new(1, 3)],
+            0,
+            cx,
+        );
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(1),
+            plain_text_buffer.clone(),
+            [Point::new(0, 0)..Point::new(1, 4)],
+            0,
+            cx,
+        );
+        multibuffer
+    });
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(multibuffer, window, cx));
+    editor.update_in(cx, |editor, window, cx| {
+        window.focus(&editor.focus_handle(cx), cx);
+    });
+
+    let select_line = |text: &str, cx: &mut VisualTestContext| {
+        editor.update_in(cx, |editor, window, cx| {
+            let row = editor
+                .text(cx)
+                .lines()
+                .position(|line| line == text)
+                .unwrap() as u32;
+            editor.change_selections(SelectionEffects::default(), window, cx, |s| {
+                s.select_ranges([Point::new(row, 0)..Point::new(row, 0)]);
+            });
+        });
+    };
+    let is_available = |cx: &mut VisualTestContext| {
+        refresh_editor_actions(cx);
+        cx.update(|window, cx| window.is_action_available(&WrapSelectionsInTag, cx))
+    };
+
+    select_line("one", cx);
+    assert!(is_available(cx));
+    assert!(is_available(cx));
+
+    select_line("three", cx);
+    assert!(!is_available(cx));
+    assert!(!is_available(cx));
+
+    plain_text_buffer.update(cx, |buffer, cx| {
+        buffer.set_language(Some(wrappable_language), cx)
+    });
+    assert!(is_available(cx));
+
+    select_line("one", cx);
+    assert!(is_available(cx));
+}
+
+#[gpui::test]
 async fn test_manipulate_immutable_lines_with_multi_selection(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -20224,6 +20348,103 @@ async fn test_format_selections_action_available_for_cursor_when_range_formattin
     refresh_editor_actions(cx);
 
     assert!(cx.update(|window, cx| { window.is_action_available(&FormatSelections, cx) }));
+}
+
+#[gpui::test]
+async fn test_format_selections_action_follows_selected_buffer_in_multibuffer(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.rs"), "one\ntwo".into()).await;
+    fs.insert_file(path!("/notes.txt"), "three\nfour".into())
+        .await;
+
+    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let rust_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let text_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/notes.txt"), cx)
+        })
+        .await
+        .unwrap();
+    let _language_server_handle = project.update(cx, |project, cx| {
+        project.register_buffer_with_language_servers(&rust_buffer, cx)
+    });
+    let _fake_server = fake_servers.next().await.unwrap();
+
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            rust_buffer.clone(),
+            [Point::new(0, 0)..Point::new(1, 3)],
+            0,
+            cx,
+        );
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(1),
+            text_buffer.clone(),
+            [Point::new(0, 0)..Point::new(1, 4)],
+            0,
+            cx,
+        );
+        multibuffer
+    });
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), multibuffer, window, cx)
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        window.focus(&editor.focus_handle(cx), cx);
+    });
+
+    let select_lines = |texts: &[&str], cx: &mut VisualTestContext| {
+        editor.update_in(cx, |editor, window, cx| {
+            let lines = editor.text(cx);
+            let ranges = texts
+                .iter()
+                .map(|text| {
+                    let row = lines.lines().position(|line| line == *text).unwrap() as u32;
+                    Point::new(row, 0)..Point::new(row, 0)
+                })
+                .collect::<Vec<_>>();
+            editor.change_selections(SelectionEffects::default(), window, cx, |s| {
+                s.select_ranges(ranges);
+            });
+        });
+    };
+    let is_available = |cx: &mut VisualTestContext| {
+        refresh_editor_actions(cx);
+        cx.update(|window, cx| window.is_action_available(&FormatSelections, cx))
+    };
+
+    select_lines(&["three", "four"], cx);
+    assert!(!is_available(cx));
+
+    select_lines(&["one"], cx);
+    assert!(is_available(cx));
+
+    select_lines(&["three", "four", "two"], cx);
+    assert!(is_available(cx));
 }
 
 #[gpui::test]
