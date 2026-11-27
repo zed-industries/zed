@@ -17635,6 +17635,560 @@ async fn test_staging_non_utf8_hunk_preserves_index_encoding(cx: &mut gpui::Test
     );
 }
 
+#[gpui::test]
+async fn test_blame_buffer_at_head(cx: &mut gpui::TestAppContext) {
+    disable_git_global_config();
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    struct Case {
+        file_name: &'static str,
+        renamed_from: Option<&'static str>,
+        first: Vec<u8>,
+        second: Vec<u8>,
+        working_copy: Option<Vec<u8>>,
+        edited_row: u32,
+        mapped_from_head: bool,
+        row_commits: &'static [u8],
+    }
+
+    let encode = |text: &str, encoding, has_bom| {
+        file_content::encode_text(text.to_owned(), encoding, has_bom)
+    };
+    let latin_first = "x = \"café\"\ny = \"crème brûlée\"\nz = \"déjà vu\"\n";
+    let latin_second = "x = \"café\"\ny = \"crème brûlée\"\nz = \"déjà vu!\"\n";
+    let utf_8 = |file_name, working_copy| Case {
+        file_name,
+        renamed_from: None,
+        first: latin_first.as_bytes().to_vec(),
+        second: latin_second.as_bytes().to_vec(),
+        working_copy,
+        edited_row: 1,
+        mapped_from_head: true,
+        row_commits: &[1, 0, 2],
+    };
+    let iso_2022_jp_first = b"head\n\\\n\x1b$BF|K\\8l\x1b(B\ntail\nanchor\n".to_vec();
+    let iso_2022_jp_second = [b"\x1b(J".as_slice(), &iso_2022_jp_first].concat();
+    let shared_rows = encode("plain\ncafé\n", encoding_rs::WINDOWS_1252, false);
+    let windows_1251_first = [
+        shared_rows.as_slice(),
+        &encode(
+            "Это первая строка на русском языке.\nА это вторая строка.\n",
+            encoding_rs::WINDOWS_1251,
+            false,
+        ),
+    ]
+    .concat();
+    let windows_1252_second = [
+        shared_rows.as_slice(),
+        &encode(
+            "Voilà une ligne en français.\nEt une deuxième ligne, déjà.\n",
+            encoding_rs::WINDOWS_1252,
+            false,
+        ),
+    ]
+    .concat();
+    for (contents, encoding, second_row) in [
+        (&iso_2022_jp_first, encoding_rs::ISO_2022_JP, "\\"),
+        (&iso_2022_jp_second, encoding_rs::ISO_2022_JP, "¥"),
+        (&windows_1251_first, encoding_rs::WINDOWS_1251, "cafй"),
+        (&windows_1252_second, encoding_rs::WINDOWS_1252, "café"),
+    ] {
+        let decoded = file_content::decode_text(contents.clone()).unwrap();
+        assert_eq!(decoded.encoding, encoding);
+        assert_eq!(decoded.text.lines().nth(1), Some(second_row));
+    }
+    let cases = [
+        Case {
+            first: encode(latin_first, encoding_rs::WINDOWS_1252, false),
+            second: encode(latin_second, encoding_rs::WINDOWS_1252, false),
+            ..utf_8("latin.py", None)
+        },
+        utf_8(
+            "reencoded.py",
+            Some(encode(latin_second, encoding_rs::WINDOWS_1252, false)),
+        ),
+        utf_8(
+            "bom_added.py",
+            Some(encode(latin_second, encoding_rs::UTF_8, true)),
+        ),
+        Case {
+            first: encode("a\nb\nc\nd\n", encoding_rs::UTF_8, true),
+            second: encode("a\nb\nC\nd\n", encoding_rs::UTF_8, true),
+            row_commits: &[1, 0, 2, 1],
+            ..utf_8("bom_committed.py", None)
+        },
+        Case {
+            first: b"a\r\nb\r\nc\nd\r\n".to_vec(),
+            second: b"a\r\nb\r\nc\nD\r\n".to_vec(),
+            row_commits: &[1, 0, 1, 2],
+            ..utf_8("mixed_line_endings.txt", None)
+        },
+        Case {
+            first: encode("keep\nP上Q\nnext\n", encoding_rs::UTF_16LE, true),
+            second: encode("keep\nQ\nnext\n", encoding_rs::UTF_16LE, true),
+            edited_row: 2,
+            row_commits: &[1, 2],
+            ..utf_8("working_tree_encoding.txt", None)
+        },
+        Case {
+            first: encode("keep\nP上Q\nnext\n", encoding_rs::UTF_16BE, true),
+            second: encode("keep\nQ\nnext\n", encoding_rs::UTF_16BE, true),
+            edited_row: 2,
+            mapped_from_head: false,
+            row_commits: &[],
+            ..utf_8("utf_16be.txt", None)
+        },
+        Case {
+            first: encode("keep\nP上Q\nnext", encoding_rs::UTF_16LE, true),
+            second: encode("keep\nP\nnext", encoding_rs::UTF_16LE, true),
+            edited_row: 2,
+            mapped_from_head: false,
+            row_commits: &[],
+            ..utf_8("utf_16le.txt", None)
+        },
+        Case {
+            first: iso_2022_jp_first,
+            second: iso_2022_jp_second,
+            edited_row: 3,
+            mapped_from_head: false,
+            row_commits: &[0, 0, 0, 0, 1],
+            ..utf_8("iso_2022_jp.txt", None)
+        },
+        Case {
+            first: [
+                b"\xfe\xff\x00\n".as_slice(),
+                &encode("café?\ndéjà\n", encoding_rs::WINDOWS_1252, false),
+            ]
+            .concat(),
+            second: encode("café?\ndéjà\n", encoding_rs::WINDOWS_1252, false),
+            row_commits: &[],
+            ..utf_8("utf_16be_history.txt", None)
+        },
+        Case {
+            first: windows_1251_first,
+            second: windows_1252_second,
+            edited_row: 2,
+            row_commits: &[1, 0, 0, 2],
+            ..utf_8("windows_1251_history.txt", None)
+        },
+        Case {
+            first: encode("a\n上の行\nb\nc\nd\n", encoding_rs::UTF_16LE, true),
+            second: encode("a\n上の行\nB\nc\nd\n", encoding_rs::UTF_16LE, true),
+            edited_row: 3,
+            row_commits: &[1, 1, 2, 0, 1],
+            ..utf_8("utf_16le_textconv.txt", None)
+        },
+        Case {
+            first: encode("keep\ncafé\nold\nlast\n", encoding_rs::UTF_16LE, true),
+            second: encode("keep\ncafé\nold\nlast!\n", encoding_rs::UTF_16LE, true),
+            edited_row: 2,
+            mapped_from_head: false,
+            row_commits: &[1, 0, 0, 2],
+            ..utf_8("windows_1252_textconv.txt", None)
+        },
+        Case {
+            first: b"a\nb\nc\nd\n".to_vec(),
+            second: b"a\nb\nc\nD\n".to_vec(),
+            row_commits: &[0, 0, 1, 2],
+            ..utf_8("drop_first_line.txt", None)
+        },
+        Case {
+            first: b"a\nb\nc\nd\ne\n".to_vec(),
+            second: b"a\nB\nc\nd\ne\n".to_vec(),
+            edited_row: 3,
+            row_commits: &[0, 2, 1, 0, 1],
+            ..utf_8("first_line_last.txt", None)
+        },
+        Case {
+            first: encode(latin_first, encoding_rs::WINDOWS_1252, false),
+            second: encode(latin_second, encoding_rs::WINDOWS_1252, false),
+            ..utf_8("identity_textconv.py", None)
+        },
+        Case {
+            renamed_from: Some("old.py"),
+            mapped_from_head: false,
+            ..utf_8("renamed.py", None)
+        },
+        Case {
+            first: b"%PDF-1.4\nkeep\nold\nlast\n".to_vec(),
+            second: b"%PDF-1.4\nkeep\nold\nlast!\n".to_vec(),
+            working_copy: Some(b"text\nkeep\nold\nlast!\n".to_vec()),
+            edited_row: 2,
+            mapped_from_head: false,
+            row_commits: &[0, 1, 0, 2],
+            ..utf_8("binary_header.txt", None)
+        },
+        Case {
+            first: Vec::new(),
+            second: Vec::new(),
+            edited_row: 0,
+            row_commits: &[],
+            ..utf_8("empty.txt", None)
+        },
+    ];
+
+    let root = TempTree::new(json!({
+        "project": {
+            ".gitattributes":
+                "drop_first_line.txt diff=drop_first_line\nfirst_line_last.txt diff=first_line_last\nidentity_textconv.py diff=identity\nutf_16le_textconv.txt diff=utf_16\nwindows_1252_textconv.txt diff=windows_1252\nworking_tree_encoding.txt working-tree-encoding=UTF-16LE-BOM\n"
+        }
+    }));
+    let work_dir = root.path().join("project");
+    git_init(&work_dir);
+    git_config("diff.drop_first_line.textconv", "sed 1d", &work_dir);
+    git_config(
+        "diff.first_line_last.textconv",
+        "sed -n '1{h;d;};p;${x;p;}'",
+        &work_dir,
+    );
+    git_config("diff.identity.textconv", "cat", &work_dir);
+    git_config(
+        "diff.utf_16.textconv",
+        "iconv -f UTF-16 -t UTF-8",
+        &work_dir,
+    );
+    git_config(
+        "diff.windows_1252.textconv",
+        "iconv -f UTF-16 -t CP1252",
+        &work_dir,
+    );
+    git_add(".gitattributes", &work_dir);
+    let mut commits = Vec::new();
+    for is_first in [true, false] {
+        for case in &cases {
+            let committed_name = case.renamed_from.unwrap_or(case.file_name);
+            let contents = if is_first { &case.first } else { &case.second };
+            std::fs::write(work_dir.join(committed_name), contents).unwrap();
+            git_add(committed_name, &work_dir);
+        }
+        git_commit("commit", &work_dir);
+        commits.push(git_rev_parse("HEAD", &work_dir));
+    }
+    for case in &cases {
+        if let Some(renamed_from) = case.renamed_from {
+            git_mv(renamed_from, case.file_name, &work_dir);
+        }
+        if let Some(working_copy) = &case.working_copy {
+            std::fs::write(work_dir.join(case.file_name), working_copy).unwrap();
+        }
+    }
+
+    let project = Project::test(RealFs::new(None, cx.executor()), [root.path()], cx).await;
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.executor().run_until_parked();
+
+    for case in cases {
+        let file_name = case.file_name;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(work_dir.join(file_name), cx)
+            })
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| {
+            let row = case.edited_row;
+            let edited_line = Point::new(row, 0)..Point::new(row, buffer.line_len(row));
+            buffer.edit([(edited_line, "changed")], None, cx);
+        });
+
+        let git_store = project.read_with(cx, |project, _| project.git_store().clone());
+        let head_blame = git_store
+            .update(cx, |git_store, cx| {
+                git_store.blame_buffer_at_head(&buffer, cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            head_blame.is_some(),
+            case.mapped_from_head,
+            "source of the blame of {file_name}"
+        );
+        let blame = project
+            .update(cx, |project, cx| project.blame_buffer(&buffer, None, cx))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            blame_row_commits(&blame, &commits),
+            case.row_commits,
+            "blame of {file_name}"
+        );
+    }
+}
+
+#[gpui::test]
+async fn test_blame_buffer_at_head_ignores_stale_diff_base(cx: &mut gpui::TestAppContext) {
+    disable_git_global_config();
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let old_text = "a\nb\nc\nd\ne\n";
+    let new_text = "a\nX\nb\nc\ne\n";
+    let root = TempTree::new(json!({ "project": { "file.txt": old_text } }));
+    let work_dir = root.path().join("project");
+    git_init(&work_dir);
+    git_add("file.txt", &work_dir);
+    git_commit("first", &work_dir);
+    let old_sha = git_rev_parse("HEAD", &work_dir);
+
+    let project = Project::test(RealFs::new(None, cx.executor()), [root.path()], cx).await;
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.executor().run_until_parked();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(work_dir.join("file.txt"), cx)
+        })
+        .await
+        .unwrap();
+    let diff = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+    let repository = project.read_with(cx, |project, cx| {
+        project.repositories(cx).values().next().unwrap().clone()
+    });
+    let head_sha = |repository: &Entity<Repository>, cx: &App| {
+        repository
+            .read(cx)
+            .head_commit
+            .as_ref()
+            .map(|commit| commit.sha.to_string())
+    };
+    cx.update(|cx| {
+        assert_eq!(head_sha(&repository, cx), Some(old_sha.clone()));
+        assert_eq!(
+            diff.read(cx).base_text_string(cx).as_deref(),
+            Some(old_text)
+        );
+    });
+
+    let (head_changed_tx, head_changed_rx) = oneshot::channel::<()>();
+    let mut head_changed_tx = Some(head_changed_tx);
+    let _subscription = cx.update(|cx| {
+        cx.subscribe(&repository, move |_, event, _| {
+            if matches!(event, RepositoryEvent::HeadChanged)
+                && let Some(tx) = head_changed_tx.take()
+            {
+                tx.send(()).ok();
+            }
+        })
+    });
+
+    std::fs::write(work_dir.join("file.txt"), new_text).unwrap();
+    git_add("file.txt", &work_dir);
+    git_commit("second", &work_dir);
+    let new_sha = git_rev_parse("HEAD", &work_dir);
+
+    head_changed_rx.await.unwrap();
+    let (snapshot_head, diff_base, head_blame) = cx.update(|cx| {
+        (
+            head_sha(&repository, cx),
+            diff.read(cx).base_text_string(cx),
+            project
+                .read(cx)
+                .git_store()
+                .clone()
+                .update(cx, |git_store, cx| {
+                    git_store.blame_buffer_at_head(&buffer, cx)
+                }),
+        )
+    });
+    assert_eq!(snapshot_head, Some(new_sha.clone()));
+    assert_eq!(diff_base.as_deref(), Some(old_text));
+
+    let head_blame = head_blame.await.unwrap().unwrap();
+    assert_eq!(
+        blame_row_commits(&head_blame, &[old_sha, new_sha]),
+        [1, 2, 1, 1, 1]
+    );
+}
+
+#[gpui::test]
+async fn test_blame_buffer_at_head_with_filter_or_ident(cx: &mut gpui::TestAppContext) {
+    disable_git_global_config();
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    struct Case {
+        file_name: &'static str,
+        first: &'static str,
+        second: &'static str,
+        edited_row: Option<u32>,
+        row_commits: &'static [u8],
+    }
+
+    let ident = |edited_row, row_commits| Case {
+        file_name: "ident.txt",
+        first: "$Id$\nkeep\nlast\n",
+        second: "$Id$\nkeep\nlast\n",
+        edited_row,
+        row_commits,
+    };
+    let rot13 = |file_name| Case {
+        file_name,
+        first: "nycun\nbyq\n123\n",
+        second: "nycun\nalpha\n123\n",
+        edited_row: Some(1),
+        row_commits: &[1, 0, 1],
+    };
+    let cases = [
+        rot13("rot13.txt"),
+        rot13("driver_named_unset.txt"),
+        rot13("driver_named_unspecified.txt"),
+        ident(None, &[1, 1, 1]),
+        ident(Some(1), &[1, 0, 1]),
+    ];
+
+    let root = TempTree::new(json!({
+        "project": {
+            ".gitattributes":
+                "rot13.txt filter=rot13\ndriver_named_unset.txt filter=unset\ndriver_named_unspecified.txt filter=unspecified\nident.txt ident\n"
+        }
+    }));
+    let work_dir = root.path().join("project");
+    git_init(&work_dir);
+    let rot13_command = "tr A-Za-z N-ZA-Mn-za-m";
+    for driver in ["rot13", "unset", "unspecified"] {
+        git_config(&format!("filter.{driver}.clean"), rot13_command, &work_dir);
+        git_config(&format!("filter.{driver}.smudge"), rot13_command, &work_dir);
+    }
+    git_add(".gitattributes", &work_dir);
+    let mut commits = Vec::new();
+    for is_first in [true, false] {
+        for case in &cases {
+            let contents = if is_first { case.first } else { case.second };
+            std::fs::write(work_dir.join(case.file_name), contents).unwrap();
+            git_add(case.file_name, &work_dir);
+        }
+        git_commit("commit", &work_dir);
+        commits.push(git_rev_parse("HEAD", &work_dir));
+    }
+    for case in &cases {
+        if work_dir.join(case.file_name).exists() {
+            std::fs::remove_file(work_dir.join(case.file_name)).unwrap();
+        }
+    }
+    git_output(&["checkout", "--", "."], &work_dir);
+    assert_eq!(git_output(&["status", "--porcelain"], &work_dir), "");
+    assert_eq!(
+        std::fs::read_to_string(work_dir.join("rot13.txt")).unwrap(),
+        "nycun\nalpha\n123\n"
+    );
+    assert_eq!(
+        git_output(&["cat-file", "blob", "HEAD:rot13.txt"], &work_dir),
+        "alpha\nnycun\n123\n"
+    );
+    assert!(
+        std::fs::read_to_string(work_dir.join("ident.txt"))
+            .unwrap()
+            .starts_with("$Id: ")
+    );
+
+    let project = Project::test(RealFs::new(None, cx.executor()), [root.path()], cx).await;
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.executor().run_until_parked();
+
+    for case in cases {
+        let file_name = case.file_name;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(work_dir.join(file_name), cx)
+            })
+            .await
+            .unwrap();
+        if let Some(row) = case.edited_row {
+            buffer.update(cx, |buffer, cx| {
+                let edited_line = Point::new(row, 0)..Point::new(row, buffer.line_len(row));
+                buffer.edit([(edited_line, "changed")], None, cx);
+            });
+        }
+
+        let git_store = project.read_with(cx, |project, _| project.git_store().clone());
+        let head_blame = git_store
+            .update(cx, |git_store, cx| {
+                git_store.blame_buffer_at_head(&buffer, cx)
+            })
+            .await
+            .unwrap();
+        assert!(head_blame.is_none(), "source of the blame of {file_name}");
+        let blame = project
+            .update(cx, |project, cx| project.blame_buffer(&buffer, None, cx))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            blame_row_commits(&blame, &commits),
+            case.row_commits,
+            "blame of {file_name} edited at {:?}",
+            case.edited_row
+        );
+    }
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(work_dir.join("rot13.txt"), cx)
+        })
+        .await
+        .unwrap();
+    let blame = project.update(cx, |project, cx| {
+        let blame = project.blame_buffer(&buffer, None, cx);
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(Point::zero()..Point::zero(), "later\n")], None, cx);
+        });
+        blame
+    });
+    assert_eq!(
+        blame_row_commits(&blame.await.unwrap().unwrap(), &commits),
+        [1, 2, 1]
+    );
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_text("alpha\nnycun\n123\n", cx);
+    });
+    let blame = project
+        .update(cx, |project, cx| project.blame_buffer(&buffer, None, cx))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(blame_row_commits(&blame, &commits), [1, 2, 1]);
+}
+
+fn blame_row_commits(blame: &git::blame::Blame, commits: &[String]) -> Vec<u8> {
+    let mut row_commits = Vec::new();
+    for entry in &blame.entries {
+        let commit = commits
+            .iter()
+            .position(|commit| *commit == entry.sha.to_string())
+            .unwrap();
+        row_commits.resize(entry.range.end as usize, 0);
+        row_commits[entry.range.start as usize..].fill(commit as u8 + 1);
+    }
+    row_commits
+}
+
+fn disable_git_global_config() {
+    unsafe {
+        env::set_var("GIT_CONFIG_GLOBAL", "");
+        env::set_var("GIT_CONFIG_SYSTEM", "");
+    }
+}
+
 #[gpui::test(iterations = 25)]
 async fn test_staging_random_hunks(
     mut rng: StdRng,
@@ -22188,6 +22742,34 @@ fn git_init(path: &Path) -> PathBuf {
 
 #[allow(clippy::disallowed_methods)]
 #[track_caller]
+fn git_config(key: &str, value: &str, work_dir: &Path) {
+    let output = git_cmd(work_dir)
+        .args(["config", key, value])
+        .output()
+        .expect("Failed to run git config");
+    assert!(
+        output.status.success(),
+        "git config failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[allow(clippy::disallowed_methods)]
+#[track_caller]
+fn git_mv(from: &str, to: &str, work_dir: &Path) {
+    let output = git_cmd(work_dir)
+        .args(["mv", from, to])
+        .output()
+        .expect("Failed to run git mv");
+    assert!(
+        output.status.success(),
+        "git mv failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[allow(clippy::disallowed_methods)]
+#[track_caller]
 fn git_add<P: AsRef<Path>>(path: P, work_dir: &Path) {
     let output = git_cmd(work_dir)
         .args(["add"])
@@ -22289,7 +22871,21 @@ fn git_checkout(name: &str, work_dir: &Path) {
     );
 }
 
-#[cfg(any())]
+#[allow(clippy::disallowed_methods)]
+#[track_caller]
+fn git_output(args: &[&str], work_dir: &Path) -> String {
+    let output = git_cmd(work_dir)
+        .args(args)
+        .output()
+        .expect("Failed to run git");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
+}
+
 #[allow(clippy::disallowed_methods)]
 #[track_caller]
 fn git_rev_parse(rev: &str, work_dir: &Path) -> String {

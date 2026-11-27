@@ -55,7 +55,7 @@ mod fake_git_repo;
 #[cfg(feature = "test-support")]
 use collections::{BTreeMap, btree_map};
 #[cfg(feature = "test-support")]
-pub use fake_git_repo::FakeBlobReadGate;
+pub use fake_git_repo::{FakeBlobReadGate, FakeCommitSnapshot};
 #[cfg(feature = "test-support")]
 use fake_git_repo::{FakeCommitDataEntry, FakeGitRepositoryState};
 #[cfg(feature = "test-support")]
