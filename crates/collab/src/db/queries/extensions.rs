@@ -137,6 +137,7 @@ impl Database {
 
                 let insert = extension::Entity::insert(extension::ActiveModel {
                     name: ActiveValue::Set(latest_version.name.clone()),
+                    description: ActiveValue::Set(Some(latest_version.description.clone())),
                     external_id: ActiveValue::Set((*external_id).to_owned()),
                     id: ActiveValue::NotSet,
                     latest_version: ActiveValue::Set(latest_version.version.to_string()),
@@ -225,6 +226,7 @@ impl Database {
                 let mut extension = extension.into_active_model();
                 extension.latest_version = ActiveValue::Set(latest_version.version.to_string());
                 extension.name = ActiveValue::set(latest_version.name.clone());
+                extension.description = ActiveValue::Set(Some(latest_version.description.clone()));
                 extension::Entity::update(extension).exec(&*tx).await?;
             }
 

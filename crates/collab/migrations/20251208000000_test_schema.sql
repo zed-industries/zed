@@ -189,7 +189,9 @@ CREATE TABLE public.extensions (
     name text NOT NULL,
     external_id text NOT NULL,
     latest_version text NOT NULL,
-    total_download_count bigint DEFAULT 0 NOT NULL
+    total_download_count bigint DEFAULT 0 NOT NULL,
+    description text,
+    search_text text GENERATED ALWAYS AS (((name || ' '::text) || COALESCE(description, ''::text))) STORED
 );
 
 CREATE SEQUENCE public.extensions_id_seq
@@ -698,6 +700,8 @@ CREATE INDEX index_worktree_entries_on_project_id_and_worktree_id ON public.work
 CREATE INDEX index_worktrees_on_project_id ON public.worktrees USING btree (project_id);
 
 CREATE INDEX trigram_index_extensions_name ON public.extensions USING gin (name public.gin_trgm_ops);
+
+CREATE INDEX trigram_index_extensions_search_text ON public.extensions USING gin (search_text public.gin_trgm_ops);
 
 CREATE INDEX trigram_index_users_on_name ON public.users USING gin (name public.gin_trgm_ops);
 
