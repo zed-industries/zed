@@ -4350,9 +4350,8 @@ async fn track_upstreams(
         .iter()
         .map(|listed_ref| (listed_ref.ref_name, listed_ref.object_id))
         .collect::<HashMap<_, _>>();
-    // An upstream under `refs/heads/` or `refs/remotes/` that a complete listing lacks is gone, or
-    // listed under another case on file systems that ignore case, so its changes show in the
-    // listing anyway. The others are listed by name, and git lists only refs under `refs/`.
+    // A complete listing has every ref under `refs/heads/` and `refs/remotes/` by its exact name.
+    // Other upstreams are listed by name, and git lists only refs under `refs/`.
     let mut unlisted_upstreams = listed_refs
         .iter()
         .map(|listed_ref| listed_ref.upstream)
@@ -4384,6 +4383,21 @@ async fn track_upstreams(
     let unlisted_refs = unlisted_refs.map_err(&mut report).unwrap_or_default();
     let unlisted_refs = listed_fields(&unlisted_refs).into_iter();
     objects.extend(unlisted_refs.map(|[ref_name, object_id]| (ref_name, object_id)));
+    let unresolved_upstreams = listed_refs
+        .iter()
+        .map(|listed_ref| listed_ref.upstream)
+        .filter(|upstream| !upstream.is_empty() && !objects.contains_key(upstream))
+        .collect::<HashSet<_>>();
+    let resolved_upstreams = futures::future::join_all(
+        unresolved_upstreams
+            .into_iter()
+            .map(async |upstream| (upstream, resolve_upstream(git, common_dir, upstream).await)),
+    )
+    .await;
+    let resolved_upstreams = resolved_upstreams
+        .iter()
+        .filter_map(|(upstream, object_id)| Some((*upstream, object_id.as_deref()?)));
+    objects.extend(resolved_upstreams);
 
     let mut history = DefaultHasher::new();
     let replace_refs = replace_refs.map_err(&mut report).unwrap_or_default();
@@ -4446,6 +4460,27 @@ fn ref_name_argument(ref_name: &[u8]) -> Result<&OsStr> {
     #[cfg(not(unix))]
     let ref_name = OsStr::new(std::str::from_utf8(ref_name).context("the ref's name isn't UTF-8")?);
     Ok(ref_name)
+}
+
+/// The object of an upstream that git didn't list but still resolves: a root ref, such as
+/// `ORIG_HEAD`, or a loose ref that a file system that ignores case finds under another case.
+/// `git show-ref --verify` reads a ref as git does when it counts.
+async fn resolve_upstream(git: &GitBinary, common_dir: &Path, upstream: &[u8]) -> Option<Vec<u8>> {
+    let name = ref_name_argument(upstream).ok()?;
+    let is_root_ref = upstream.first().is_some_and(u8::is_ascii_uppercase)
+        && upstream
+            .iter()
+            .all(|&byte| matches!(byte, b'A'..=b'Z' | b'_' | b'-'));
+    let is_loose_ref = async || {
+        upstream.starts_with(b"refs/") && smol::fs::metadata(common_dir.join(name)).await.is_ok()
+    };
+    if !is_root_ref && !is_loose_ref().await {
+        return None;
+    }
+    let args = [OsStr::new("show-ref"), OsStr::new("--verify"), name];
+    let output = git.build_command(&args).output().await.ok()?;
+    let object_id = output.stdout.split(|&byte| byte == b' ').next()?;
+    output.status.success().then(|| object_id.to_vec())
 }
 
 /// Lists the replace refs, which change the history that counts walk, followed by the config,
@@ -6646,6 +6681,7 @@ mod tests {
         git(path, "commit --allow-empty -m first");
         git(path, "branch tracks_tag");
         git(path, "branch tracks_remote_tag");
+        git(path, "branch tracks_original");
         git(path, "commit --allow-empty -m second");
         let middle = git(path, "rev-parse HEAD");
         git(path, "commit --allow-empty -m third");
@@ -6658,6 +6694,9 @@ mod tests {
         git(path, "remote add origin .");
         git(path, "update-ref refs/remotes/origin/v1 v1");
         git(path, "branch --set-upstream-to=origin/v1 tracks_remote_tag");
+        git(path, "update-ref ORIG_HEAD tracks_original");
+        git(path, "config branch.tracks_original.remote .");
+        git(path, "config branch.tracks_original.merge ORIG_HEAD");
 
         let repo = open_repo(path, cx);
         let mut previous = repo.branches().await.unwrap();
@@ -6683,6 +6722,8 @@ mod tests {
         git(path, "tag -a --force v1 -m v1 main");
         git(path, "update-ref refs/remotes/origin/v1 v1");
         assert_branches_changed(true, "moved a remote ref to a tag").await;
+        git(path, "update-ref ORIG_HEAD main");
+        assert_branches_changed(true, "moved ORIG_HEAD").await;
 
         // No branch points to this commit, so cutting it off from its parent only changes the
         // commits between the branches and their upstreams.
@@ -6705,6 +6746,42 @@ mod tests {
         assert_branches_changed(true, "turned replace refs on").await;
         git(path, &format!("replace -d {middle}"));
         assert_branches_changed(true, "deleted a packed replace ref").await;
+    }
+
+    #[gpui::test]
+    async fn test_branches_differ_after_an_upstream_under_another_case_changes(
+        cx: &mut TestAppContext,
+    ) {
+        let repo_dir = init_test_repo(cx);
+        let path = repo_dir.path();
+        // Only file systems that ignore case find a loose ref under another case.
+        if git(path, "config --get --default false core.ignoreCase") != "true" {
+            return;
+        }
+        git(path, "commit --allow-empty -m first");
+        git(path, "branch tracks_tag");
+        git(path, "branch tracks_remote");
+        git(path, "commit --allow-empty -m second");
+        git(path, "tag base tracks_tag");
+        git(path, "config branch.tracks_tag.remote .");
+        git(path, "config branch.tracks_tag.merge refs/tags/BASE");
+        git(path, "remote add origin .");
+        git(path, "update-ref refs/remotes/origin/base tracks_remote");
+        git(path, "config branch.tracks_remote.remote origin");
+        git(path, "config branch.tracks_remote.merge refs/heads/BASE");
+
+        let repo = open_repo(path, cx);
+        let branches = repo.branches().await.unwrap().branches;
+        git(path, "tag --force base main");
+        let moved = repo.branches().await.unwrap().branches;
+        assert_ne!(moved, branches, "moved the tag");
+        // Git doesn't find a packed ref under another case.
+        git(path, "pack-refs --all");
+        assert_ne!(
+            repo.branches().await.unwrap().branches,
+            moved,
+            "packed the refs"
+        );
     }
 
     #[gpui::test]
