@@ -3,7 +3,6 @@ use anyhow::Result;
 use anyhow::anyhow;
 use async_trait::async_trait;
 use collections::HashMap;
-use parking_lot::Mutex;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use semver::Version as SemanticVersion;
 use std::collections::BTreeMap;
@@ -56,7 +55,6 @@ pub struct DockerConnectionOptions {
 }
 
 pub(crate) struct DockerExecConnection {
-    proxy_process: Mutex<Option<u32>>,
     remote_dir_for_server: String,
     remote_binary_relpath: Option<Arc<RelPath>>,
     connection_options: DockerConnectionOptions,
@@ -73,7 +71,6 @@ impl DockerExecConnection {
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         let mut this = Self {
-            proxy_process: Mutex::new(None),
             remote_dir_for_server: "/".to_string(),
             remote_binary_relpath: None,
             connection_options,
@@ -645,21 +642,6 @@ impl DockerExecConnection {
         }
         Ok(())
     }
-
-    fn kill_inner(&self) -> Result<()> {
-        if let Some(pid) = self.proxy_process.lock().take() {
-            if let Ok(_) = util::command::new_command("kill")
-                .arg(pid.to_string())
-                .spawn()
-            {
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!("Failed to kill process"))
-            }
-        } else {
-            Ok(())
-        }
-    }
 }
 
 #[async_trait(?Send)]
@@ -677,13 +659,6 @@ impl RemoteConnection for DockerExecConnection {
         delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Task<Result<i32>> {
-        // We'll try connecting anew every time we open a devcontainer, so proactively try to kill any old connections.
-        if !self.has_been_killed() {
-            if let Err(e) = self.kill_inner() {
-                return Task::ready(Err(e));
-            };
-        }
-
         delegate.set_status(Some("Starting proxy"), cx);
 
         let Some(remote_binary_relpath) = self.remote_binary_relpath.clone() else {
@@ -733,9 +708,6 @@ impl RemoteConnection for DockerExecConnection {
             )));
         };
 
-        let mut proxy_process = self.proxy_process.lock();
-        *proxy_process = Some(child.id());
-
         cx.spawn(async move |cx| {
             super::handle_rpc_messages_over_child_process_stdio(
                 child,
@@ -774,11 +746,11 @@ impl RemoteConnection for DockerExecConnection {
     }
 
     async fn kill(&self) -> Result<()> {
-        self.kill_inner()
+        Ok(())
     }
 
     fn has_been_killed(&self) -> bool {
-        self.proxy_process.lock().is_none()
+        false
     }
 
     fn build_command(
@@ -1184,7 +1156,6 @@ mod tests {
 
     fn connection(remote_env: &[(&str, &str)]) -> DockerExecConnection {
         DockerExecConnection {
-            proxy_process: Mutex::new(None),
             remote_dir_for_server: "/tmp/zed".to_string(),
             remote_binary_relpath: None,
             connection_options: DockerConnectionOptions {
