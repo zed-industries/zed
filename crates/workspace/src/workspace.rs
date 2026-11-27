@@ -1823,6 +1823,21 @@ impl Workspace {
             .detach();
         }
 
+        let legacy_trust_identities =
+            project
+                .read(cx)
+                .remote_connection_options(cx)
+                .and_then(|options| {
+                    Some((
+                        options.legacy_identity()?.into_owned(),
+                        options.identity().into_owned(),
+                    ))
+                });
+        if let Some((legacy_identity, connection_identity)) = legacy_trust_identities {
+            WorkspaceDb::global(cx)
+                .adopt_legacy_worktree_trust(legacy_identity, connection_identity);
+        }
+
         cx.subscribe_in(&project, window, move |this, _, event, window, cx| {
             match event {
                 project::Event::RemoteIdChanged(_) => {

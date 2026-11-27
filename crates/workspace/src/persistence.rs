@@ -2882,6 +2882,43 @@ VALUES {placeholders};"#
         }));
     }
 
+    /// Moves trust and "Stay in Restricted Mode" decisions saved before Zed
+    /// stored dev container labels, which name the container by ID, to the
+    /// labeled identity of the same running container. Queued right away, so it
+    /// runs before the trust prompt looks the decisions up.
+    pub(crate) fn adopt_legacy_worktree_trust(
+        &self,
+        legacy_identity: RemoteConnectionIdentity<'static>,
+        connection_identity: RemoteConnectionIdentity<'static>,
+    ) {
+        // The write is queued by this call and runs even if the returned future is dropped.
+        drop(self.write(move |connection| {
+            let legacy = remote_identity_columns(Some(&legacy_identity));
+            let labeled = remote_identity_columns(Some(&connection_identity));
+            connection
+                .with_savepoint("adopt_legacy_worktree_trust", || {
+                    for table_update in [
+                        sql!(
+                            UPDATE trusted_worktrees
+                            SET connection_kind = ?, host = ?, user = ?, port = ?
+                            WHERE connection_kind IS ? AND host IS ? AND user IS ? AND port IS ?
+                        ),
+                        sql!(
+                            UPDATE restricted_worktrees
+                            SET connection_kind = ?, host = ?, user = ?, port = ?
+                            WHERE connection_kind IS ? AND host IS ? AND user IS ? AND port IS ?
+                        ),
+                    ] {
+                        connection.exec_bound::<(RemoteIdentityColumns, RemoteIdentityColumns)>(
+                            table_update,
+                        )?((labeled.clone(), legacy.clone()))?;
+                    }
+                    Ok(())
+                })
+                .log_err();
+        }));
+    }
+
     query! {
         pub(crate) async fn clear_restricted_worktrees() -> Result<()> {
             DELETE FROM restricted_worktrees
@@ -3818,6 +3855,40 @@ mod tests {
             .unwrap();
 
         assert_eq!(db.fetch_trusted_worktrees().unwrap(), trusted_paths);
+    }
+
+    #[gpui::test]
+    async fn test_dev_container_adopts_trust_decisions_saved_before_labels() {
+        let db = WorkspaceDb::open_test_db("test_dev_container_adopts_trust_decisions").await;
+        let legacy = RemoteConnectionIdentity::Docker {
+            container_id: Cow::Borrowed("container-1"),
+            remote_user: Cow::Borrowed("vscode"),
+        };
+        let labeled = RemoteConnectionIdentity::DevContainer {
+            config_file: Cow::Borrowed("/host/project/.devcontainer/devcontainer.json"),
+            remote_user: Cow::Borrowed("vscode"),
+        };
+        let trusted_path = PathBuf::from("/workspaces/project");
+        let restricted_path: Arc<Path> = Arc::from(Path::new("/workspaces/other"));
+        db.save_trusted_worktrees(DbTrustedPaths::from_iter([(
+            Some(legacy.clone()),
+            HashSet::from_iter([trusted_path.clone()]),
+        )]))
+        .await
+        .unwrap();
+        db.keep_worktrees_restricted(vec![restricted_path.clone()], Some(legacy.clone()));
+
+        db.adopt_legacy_worktree_trust(legacy, labeled.clone());
+
+        assert!(
+            !db.has_undecided_restricted_worktrees(vec![restricted_path], Some(labeled.clone()))
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            db.fetch_trusted_worktrees().unwrap(),
+            DbTrustedPaths::from_iter([(Some(labeled), HashSet::from_iter([trusted_path]))])
+        );
     }
 
     #[test]
