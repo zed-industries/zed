@@ -1624,6 +1624,7 @@ struct FakeFsState {
     metadata_call_count: usize,
     read_dir_call_count: usize,
     read_dir_hooks: BTreeMap<PathBuf, BoxFuture<'static, ()>>,
+    save_hooks: BTreeMap<PathBuf, BoxFuture<'static, ()>>,
     path_write_counts: std::collections::HashMap<PathBuf, usize>,
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
     trash: Mutex<SlotMap<TrashId, (TrashedEntry, FakeFsEntry)>>,
@@ -2128,6 +2129,7 @@ impl FakeFs {
             read_dir_call_count: 0,
             metadata_call_count: 0,
             read_dir_hooks: Default::default(),
+            save_hooks: Default::default(),
             path_write_counts: Default::default(),
             job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
             trash: Mutex::new(SlotMap::with_key()),
@@ -2347,6 +2349,14 @@ impl FakeFs {
         self.state
             .lock()
             .read_dir_hooks
+            .insert(normalize_path(path.as_ref()), hook);
+    }
+
+    /// Runs once, immediately before the next `save` writes `path`.
+    pub fn before_save(&self, path: impl AsRef<Path>, hook: BoxFuture<'static, ()>) {
+        self.state
+            .lock()
+            .save_hooks
             .insert(normalize_path(path.as_ref()), hook);
     }
 
@@ -3602,6 +3612,10 @@ impl Fs for FakeFs {
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
         self.simulate_random_delay().await;
         let path = normalize_path(path);
+        let hook = self.state.lock().save_hooks.remove(&path);
+        if let Some(hook) = hook {
+            hook.await;
+        }
         let content = text::chunks_with_line_ending(text, line_ending).collect::<String>();
         if let Some(path) = path.parent() {
             self.create_dir(path).await?;

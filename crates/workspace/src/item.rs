@@ -9,7 +9,7 @@ use crate::{
 };
 use anyhow::Result;
 use client::{Client, proto};
-use futures::channel::mpsc;
+use futures::{FutureExt as _, channel::mpsc, future};
 use gpui::{
     Action, AnyElement, AnyEntity, AnyView, App, AppContext, Context, Entity, EntityId,
     EventEmitter, FocusHandle, Focusable, Font, Pixels, Point, Render, SharedString, Task, TaskExt,
@@ -794,7 +794,6 @@ impl<T: Item> ItemHandle for Entity<T> {
         }
 
         if old_item_pane.is_none() {
-            let mut pending_autosave = DelayedDebouncedEditAction::new();
             let (pending_update_tx, mut pending_update_rx) = mpsc::unbounded();
             let pending_update = Rc::new(RefCell::new(None));
 
@@ -952,20 +951,20 @@ impl<T: Item> ItemHandle for Entity<T> {
 
                             if let AutosaveSetting::AfterDelay { milliseconds } = autosave {
                                 let delay = Duration::from_millis(milliseconds.0);
-                                let item = item.clone();
-                                pending_autosave.fire_new(
-                                    delay,
-                                    window,
-                                    cx,
-                                    move |workspace, window, cx| {
-                                        Pane::autosave_item(
-                                            &item,
-                                            workspace.project().clone(),
-                                            window,
-                                            cx,
-                                        )
-                                    },
-                                );
+                                // A strong handle would keep a closed item alive until the
+                                // timer fires, delaying its release (e.g. for `zed --wait`).
+                                let item_id = item.item_id();
+                                let item = item.downgrade();
+                                workspace
+                                    .pending_autosaves
+                                    .entry(item_id)
+                                    .or_insert_with(DelayedDebouncedEditAction::new)
+                                    .fire_new(delay, window, cx, move |workspace, window, cx| {
+                                        let Some(item) = item.upgrade() else {
+                                            return future::ready(()).boxed().shared();
+                                        };
+                                        workspace.autosave(&item, window, cx)
+                                    });
                             }
                             pane.update(cx, |pane, cx| pane.handle_item_edit(item.item_id(), cx));
                         }
@@ -1014,6 +1013,7 @@ impl<T: Item> ItemHandle for Entity<T> {
             workspace.update_item_dirty_state(self, window, cx);
             cx.observe_release_in(self, window, move |workspace, _, _, _| {
                 workspace.panes_by_item.remove(&item_id);
+                workspace.pending_autosaves.remove(&item_id);
                 event_subscription.take();
                 send_follower_updates.take();
             })

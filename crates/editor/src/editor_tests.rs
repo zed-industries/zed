@@ -20358,6 +20358,175 @@ async fn test_autosave_with_dirty_buffers(cx: &mut TestAppContext) {
     );
 }
 
+/// Blocks the next save of `/dir/file.txt` until the returned sender is used.
+fn block_next_save(fs: &FakeFs) -> oneshot::Sender<()> {
+    let (finish_save, save_blocked) = oneshot::channel::<()>();
+    let hook = Box::pin(async move { save_blocked.await.unwrap() });
+    fs.before_save(path!("/dir/file.txt"), hook);
+    finish_save
+}
+
+/// Opens `/dir/file.txt` with a 500 ms autosave delay and types `b`. Returns once the autosave
+/// is blocked on its write, which sending on the returned channel lets through.
+async fn editor_with_blocked_autosave(
+    cx: &mut TestAppContext,
+) -> (
+    Arc<FakeFs>,
+    Entity<Workspace>,
+    Entity<Editor>,
+    oneshot::Sender<()>,
+    VisualTestContext,
+) {
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.autosave = Some(settings::AutosaveSetting::AfterDelay {
+                    milliseconds: 500.into(),
+                });
+            });
+        });
+    });
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "file.txt": "a\n", "other.txt": "" }))
+        .await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let mut cx = VisualTestContext::from_window(*window, cx);
+    let editor = workspace
+        .update_in(&mut cx, |workspace, window, cx| {
+            let path = PathBuf::from(path!("/dir/file.txt"));
+            workspace.open_abs_path(path, OpenOptions::default(), window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+
+    let finish_save = block_next_save(&fs);
+    editor.update_in(&mut cx, |editor, window, cx| {
+        editor.handle_input("b", window, cx)
+    });
+    cx.executor().advance_clock(Duration::from_millis(500));
+    (fs, workspace, editor, finish_save, cx)
+}
+
+#[gpui::test]
+async fn test_closing_split_does_not_cancel_running_autosave(cx: &mut TestAppContext) {
+    let (fs, workspace, editor, finish_save, mut cx) = editor_with_blocked_autosave(cx).await;
+    let cx = &mut cx;
+    // This edit queues another autosave behind the blocked one.
+    editor.update_in(cx, |editor, window, cx| {
+        editor.handle_input("c", window, cx)
+    });
+    let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.split_and_clone(pane.clone(), SplitDirection::Right, window, cx)
+        })
+        .await;
+    let (editor_id, weak_editor) = (editor.entity_id(), editor.downgrade());
+    drop(editor);
+    pane.update_in(cx, |pane, window, cx| {
+        pane.close_item_by_id(editor_id, workspace::SaveIntent::Close, window, cx)
+    })
+    .await
+    .unwrap();
+
+    // Closing the split, the last view of the buffer, waits for the autosave and saves after it.
+    let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+    let close = pane.update_in(cx, |pane, window, cx| {
+        pane.close_all_items(&CloseAllItems::default(), window, cx)
+    });
+    cx.run_until_parked();
+    assert_eq!(pane.read_with(cx, |pane, _| pane.items_len()), 1);
+    finish_save.send(()).expect("the autosave was cancelled");
+    close.await.unwrap();
+    assert_eq!(
+        fs.load(path!("/dir/file.txt").as_ref()).await.unwrap(),
+        "bca\n"
+    );
+    cx.run_until_parked();
+    assert!(weak_editor.upgrade().is_none());
+}
+
+#[gpui::test]
+async fn test_closing_last_tab_waits_for_running_autosave(cx: &mut TestAppContext) {
+    let (fs, workspace, editor, finish_autosave, mut cx) = editor_with_blocked_autosave(cx).await;
+    let cx = &mut cx;
+    let file: &Path = path!("/dir/file.txt").as_ref();
+    // Queue another autosave, which is due while the first one is still blocked.
+    editor.update_in(cx, |editor, window, cx| {
+        editor.handle_input(" \n", window, cx)
+    });
+    cx.executor().advance_clock(Duration::from_millis(500));
+    let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+    let (editor_id, weak_editor) = (editor.entity_id(), editor.downgrade());
+    drop(editor);
+    let close = pane.update_in(cx, |pane, window, cx| {
+        pane.close_item_by_id(editor_id, workspace::SaveIntent::Close, window, cx)
+    });
+    cx.run_until_parked();
+    assert_eq!(pane.read_with(cx, |pane, _| pane.items_len()), 1);
+
+    // After the autosave, only the close saves: it cancelled the queued autosave.
+    let finish_close_save = block_next_save(&fs);
+    finish_autosave.send(()).unwrap();
+    cx.run_until_parked();
+    assert_eq!(pane.read_with(cx, |pane, _| pane.items_len()), 1);
+    assert_eq!(fs.load(file).await.unwrap(), "ba\n");
+    finish_close_save.send(()).unwrap();
+    close.await.unwrap();
+    assert_eq!(fs.load(file).await.unwrap(), "b\na\n");
+
+    cx.executor()
+        .advance_clock(workspace::SERIALIZATION_THROTTLE_TIME);
+    assert!(weak_editor.upgrade().is_none());
+    // Nothing writes the file after the release, which is when `zed --wait` returns.
+    fs.write(file, b"external\n").await.unwrap();
+    cx.executor().advance_clock(Duration::from_secs(1));
+    assert_eq!(fs.load(file).await.unwrap(), "external\n");
+}
+
+#[gpui::test]
+async fn test_evicting_last_tab_waits_for_running_autosave(cx: &mut TestAppContext) {
+    let (fs, workspace, editor, finish_save, mut cx) = editor_with_blocked_autosave(cx).await;
+    let cx = &mut cx;
+    let file: &Path = path!("/dir/file.txt").as_ref();
+    // Undo makes the tab clean, so `max_tabs` evicts it while its autosave is still blocked.
+    editor.update_in(cx, |editor, window, cx| editor.undo(&Undo, window, cx));
+    cx.update(|_, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.max_tabs = std::num::NonZeroUsize::new(1);
+            });
+        });
+    });
+    let weak_editor = editor.downgrade();
+    drop(editor);
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            let path = PathBuf::from(path!("/dir/other.txt"));
+            workspace.open_abs_path(path, OpenOptions::default(), window, cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    // The autosave holds the evicted editor, so the release comes after its write.
+    assert!(weak_editor.upgrade().is_some());
+
+    finish_save.send(()).unwrap();
+    cx.executor()
+        .advance_clock(workspace::SERIALIZATION_THROTTLE_TIME);
+    assert!(weak_editor.upgrade().is_none());
+    fs.write(file, b"external\n").await.unwrap();
+    cx.executor().advance_clock(Duration::from_secs(1));
+    assert_eq!(fs.load(file).await.unwrap(), "external\n");
+}
+
 #[gpui::test]
 async fn test_format_selections_action_available_when_range_formatting_is_supported(
     cx: &mut TestAppContext,
