@@ -18258,6 +18258,9 @@ async fn test_dev_container_group_keeps_live_options_after_rebuild(
     cx.update(|cx| release_channel::init(semver::Version::new(0, 0, 0), cx));
     server_cx.update(|cx| release_channel::init(semver::Version::new(0, 0, 0), cx));
     let app_state = cx.update(|cx| workspace::AppState::test(cx));
+    let other_window_project = project::Project::test(app_state.fs.clone(), [], cx).await;
+    let other_window =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(other_window_project, window, cx));
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(local_project, window, cx));
     let sidebar = setup_sidebar(&multi_workspace, cx);
@@ -18299,6 +18302,17 @@ async fn test_dev_container_group_keeps_live_options_after_rebuild(
             cx,
         );
     });
+    other_window
+        .update(cx, |mw, _window, cx| {
+            mw.restore_project_groups(
+                vec![workspace::SerializedProjectGroupState {
+                    key: key_before_rebuild.clone(),
+                    expanded: true,
+                }],
+                cx,
+            );
+        })
+        .unwrap();
 
     let server_fs = FakeFs::new(server_cx.executor());
     server_fs
@@ -18321,6 +18335,19 @@ async fn test_dev_container_group_keeps_live_options_after_rebuild(
     });
     cx.run_until_parked();
     assert_group_uses_rebuilt_container(cx);
+    let other_window_hosts = other_window
+        .read_with(cx, |mw, _| {
+            mw.project_group_keys()
+                .into_iter()
+                .filter_map(|key| key.host().cloned())
+                .collect::<Vec<_>>()
+        })
+        .unwrap();
+    assert_eq!(
+        other_window_hosts,
+        vec![dev_container("container-after")],
+        "the same project's group in another window should point at the rebuilt container"
+    );
 
     // Restoring the persisted groups again must not bring back the removed container.
     multi_workspace.update(cx, |mw, cx| {
@@ -18335,17 +18362,23 @@ async fn test_dev_container_group_keeps_live_options_after_rebuild(
     assert_group_uses_rebuilt_container(cx);
 
     // An archived thread from before the rebuild opens with the group's live connection.
-    let thread_paths = WorktreePaths::from_path_lists(
-        PathList::new(&[PathBuf::from("/project")]),
-        PathList::new(&[PathBuf::from("/project")]),
-    )
-    .unwrap();
-    let thread_key = sidebar.read_with(cx, |sidebar, cx| {
-        sidebar.project_group_key_for_thread(
-            &thread_paths,
-            Some(dev_container("container-before")),
-            cx,
-        )
+    let archived_thread = ThreadMetadata {
+        thread_id: ThreadId::new(),
+        session_id: None,
+        agent_id: agent::ZED_AGENT_ID.clone(),
+        title: Some("Archived thread".into()),
+        title_override: None,
+        updated_at: Utc::now(),
+        created_at: None,
+        interacted_at: None,
+        worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
+            "/project",
+        )])),
+        archived: true,
+        remote_connection: Some(dev_container("container-before")),
+    };
+    let thread_key = multi_workspace.read_with(cx, |mw, _| {
+        archived_thread_project_group_key(mw, &archived_thread)
     });
     assert_eq!(thread_key.host(), Some(&dev_container("container-after")));
 }

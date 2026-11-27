@@ -552,6 +552,24 @@ fn workspace_path_list(workspace: &Entity<Workspace>, cx: &App) -> PathList {
     PathList::new(&workspace.read(cx).root_paths(cx))
 }
 
+/// The group key to open an archived thread with. A thread saved before a dev
+/// container rebuild still names the removed container, while its sidebar group
+/// holds the newest one.
+fn archived_thread_project_group_key(
+    multi_workspace: &MultiWorkspace,
+    thread: &ThreadMetadata,
+) -> ProjectGroupKey {
+    let key = ProjectGroupKey::from_worktree_paths(
+        &thread.worktree_paths,
+        thread.remote_connection.clone(),
+    );
+    multi_workspace
+        .project_group_keys()
+        .into_iter()
+        .find(|group_key| *group_key == key)
+        .unwrap_or(key)
+}
+
 fn find_workspace_for_thread(
     multi_workspace: &MultiWorkspace,
     thread: &ThreadMetadata,
@@ -4357,26 +4375,21 @@ impl Sidebar {
             })
     }
 
-    /// Returns the sidebar's group key for the thread. A thread saved before a
-    /// dev container rebuild still names the removed container, while its group
-    /// already holds the live connection.
-    fn project_group_key_for_thread(
-        &self,
-        worktree_paths: &WorktreePaths,
-        remote_connection: Option<RemoteConnectionOptions>,
-        cx: &App,
-    ) -> ProjectGroupKey {
-        let key = ProjectGroupKey::from_worktree_paths(worktree_paths, remote_connection);
-        self.multi_workspace
-            .upgrade()
-            .and_then(|multi_workspace| {
-                multi_workspace
-                    .read(cx)
-                    .project_group_keys()
-                    .into_iter()
-                    .find(|group_key| *group_key == key)
-            })
-            .unwrap_or(key)
+    /// Opens an archived thread in a new workspace. A thread saved before a dev
+    /// container rebuild still names the removed container, while its sidebar
+    /// group holds the newest one, so the group's connection is used.
+    fn open_archived_thread_in_new_workspace(
+        &mut self,
+        metadata: ThreadMetadata,
+        folder_paths: PathList,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            return;
+        };
+        let key = archived_thread_project_group_key(multi_workspace.read(cx), &metadata);
+        self.open_workspace_and_activate_thread(metadata, folder_paths, &key, window, cx);
     }
 
     fn open_thread_from_archive(
@@ -4408,10 +4421,9 @@ impl Sidebar {
                 {
                     self.activate_thread_in_other_window(metadata, workspace, target_window, cx);
                 } else {
-                    let key = self.project_group_key_for_thread(
+                    let key = ProjectGroupKey::from_worktree_paths(
                         &metadata.worktree_paths,
                         metadata.remote_connection.clone(),
-                        cx,
                     );
                     self.open_workspace_and_activate_thread(metadata, path_list, &key, window, cx);
                 }
@@ -4459,13 +4471,8 @@ impl Sidebar {
                                 cx,
                             );
                         } else {
-                            let key = this.project_group_key_for_thread(
-                                &metadata.worktree_paths,
-                                metadata.remote_connection.clone(),
-                                cx,
-                            );
-                            this.open_workspace_and_activate_thread(
-                                metadata, path_list, &key, window, cx,
+                            this.open_archived_thread_in_new_workspace(
+                                metadata, path_list, window, cx,
                             );
                         }
                         this.show_thread_list(window, cx);
@@ -4546,15 +4553,9 @@ impl Sidebar {
 
                         this.update_in(cx, |this, window, cx| {
                             this.restoring_tasks.remove(&thread_id);
-                            let key = this.project_group_key_for_thread(
-                                &updated_metadata.worktree_paths,
-                                updated_metadata.remote_connection.clone(),
-                                cx,
-                            );
-                            this.open_workspace_and_activate_thread(
+                            this.open_archived_thread_in_new_workspace(
                                 updated_metadata,
                                 new_paths,
-                                &key,
                                 window,
                                 cx,
                             );

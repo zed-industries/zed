@@ -385,9 +385,9 @@ impl MultiWorkspace {
                 previous_multi_workspace_enabled = multi_workspace_enabled;
             }
         });
-        // Groups of a dev container saved before Zed stored its labels can live
-        // in any window, so each window adopts them when the labeled container
-        // opens anywhere.
+        // A dev container's groups can live in any window. When its container
+        // opens anywhere, each window points them at it: after a rebuild, and for
+        // groups saved before Zed stored its labels.
         let legacy_host_subscription = cx.observe_new::<Workspace>({
             let weak_self = cx.weak_entity();
             move |workspace, _window, cx| {
@@ -403,9 +403,7 @@ impl MultiWorkspace {
                 let weak_self = weak_self.clone();
                 cx.defer(move |cx| {
                     weak_self
-                        .update(cx, |this, cx| {
-                            this.adopt_legacy_project_group_host(&host, cx)
-                        })
+                        .update(cx, |this, cx| this.adopt_dev_container_host(&host, cx))
                         .ok();
                 });
             }
@@ -919,14 +917,10 @@ impl MultiWorkspace {
         workspace.read(cx).project_group_key(cx)
     }
 
-    /// Gives the groups saved for `host`'s container before Zed stored dev
-    /// container labels the labeled host, each keeping its own paths.
-    fn adopt_legacy_project_group_host(
-        &mut self,
-        host: &RemoteConnectionOptions,
-        cx: &mut Context<Self>,
-    ) {
-        if adopt_legacy_host(&mut self.project_groups, host) {
+    /// Points this window's groups of `host`'s dev container at `host`, each
+    /// keeping its own paths.
+    fn adopt_dev_container_host(&mut self, host: &RemoteConnectionOptions, cx: &mut Context<Self>) {
+        if adopt_dev_container_host(&mut self.project_groups, host) {
             self.serialize(cx);
             cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
             cx.notify();
@@ -2443,7 +2437,7 @@ impl Render for MultiWorkspace {
 /// whether such a group existed.
 fn merge_project_group(groups: &mut Vec<ProjectGroupState>, key: &ProjectGroupKey) -> bool {
     if let Some(host) = key.host() {
-        adopt_legacy_host(groups, host);
+        adopt_dev_container_host(groups, host);
     }
     match groups.iter_mut().find(|group| group.key == *key) {
         Some(group) => {
@@ -2454,20 +2448,24 @@ fn merge_project_group(groups: &mut Vec<ProjectGroupState>, key: &ProjectGroupKe
     }
 }
 
-/// Gives every group saved for `host`'s container before Zed stored dev
-/// container labels the labeled host, keeping each group's paths, and folds the
-/// groups that become equal. Returns whether any group changed.
-fn adopt_legacy_host(groups: &mut Vec<ProjectGroupState>, host: &RemoteConnectionOptions) -> bool {
+/// Gives every group of `host`'s dev container the live `host`, keeping each
+/// group's paths, and folds the groups that become equal. That covers groups
+/// holding a removed container after a rebuild, and groups saved before Zed
+/// stored dev container labels. Returns whether any group changed.
+fn adopt_dev_container_host(
+    groups: &mut Vec<ProjectGroupState>,
+    host: &RemoteConnectionOptions,
+) -> bool {
     let Some(legacy_identity) = host.legacy_identity() else {
         return false;
     };
+    let identity = host.identity();
     let mut changed = false;
     for group in groups.iter_mut() {
-        if group
-            .key
-            .host()
-            .is_some_and(|group_host| group_host.identity() == legacy_identity)
-        {
+        if group.key.host().is_some_and(|group_host| {
+            group_host != host
+                && (group_host.identity() == identity || group_host.identity() == legacy_identity)
+        }) {
             group.key = ProjectGroupKey::new(Some(host.clone()), group.key.path_list().clone());
             changed = true;
         }
