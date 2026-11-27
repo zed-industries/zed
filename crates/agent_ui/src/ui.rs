@@ -1,4 +1,3 @@
-mod agent_notification;
 mod end_trial_upsell;
 mod mention_crease;
 mod sandbox_status_tooltip;
@@ -6,7 +5,6 @@ mod session_notice;
 mod terminal_tool_header;
 mod undo_reject_toast;
 
-pub use agent_notification::*;
 pub use end_trial_upsell::*;
 pub use language_model_selector::{
     ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem, ModelSelectorTooltip,
