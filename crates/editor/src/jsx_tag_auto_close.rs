@@ -347,7 +347,7 @@ pub(crate) fn construct_initial_buffer_versions_map<
 ) -> InitialBufferVersionsMap {
     let mut initial_buffer_versions = InitialBufferVersionsMap::default();
 
-    if !editor.jsx_tag_auto_close_enabled_in_any_buffer {
+    if !editor.jsx_tag_auto_close_enabled_in_any_buffer || edits.is_empty() {
         return initial_buffer_versions;
     }
 
