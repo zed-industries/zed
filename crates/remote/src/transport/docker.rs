@@ -105,6 +105,9 @@ impl DockerExecConnection {
                 AppCommitSha::try_global(cx),
             )
         });
+        if this.connection_options.config_file.is_none() {
+            this.read_dev_container_labels().await;
+        }
         let remote_platform = this.check_remote_platform().await?;
 
         this.path_style = match remote_platform.os {
@@ -522,6 +525,28 @@ impl DockerExecConnection {
             full_server_path,
         )
         .await
+    }
+
+    /// Connections saved before Zed stored dev container labels lack them, so
+    /// read them from the container. A restored workspace then gets the dev
+    /// container identity, and the records saved before can be adopted.
+    async fn read_dev_container_labels(&mut self) {
+        let container_id = self.connection_options.container_id.clone();
+        match self
+            .run_docker_command(
+                "inspect",
+                &["--format", "{{json .Config.Labels}}", container_id.as_str()],
+            )
+            .await
+        {
+            Ok(output) => {
+                if let Some((local_folder, config_file)) = parse_dev_container_labels(&output) {
+                    self.connection_options.local_folder = Some(local_folder);
+                    self.connection_options.config_file = Some(config_file);
+                }
+            }
+            Err(error) => log::warn!("Failed to read dev container labels: {error:#}"),
+        }
     }
 
     async fn run_docker_command(
@@ -1013,9 +1038,40 @@ fn redact_environment(assignment: &str) -> String {
     }
 }
 
+/// Parses the output of `docker inspect --format '{{json .Config.Labels}}'`.
+fn parse_dev_container_labels(output: &str) -> Option<(String, String)> {
+    let labels: HashMap<String, String> = serde_json::from_str(output.trim()).ok()?;
+    let label = |name: &str| labels.get(name).filter(|value| !value.is_empty()).cloned();
+    Some((
+        label("devcontainer.local_folder")?,
+        label("devcontainer.config_file")?,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_dev_container_labels() {
+        assert_eq!(
+            parse_dev_container_labels(
+                r#"{"devcontainer.local_folder":"/host/project","devcontainer.config_file":"/host/project/.devcontainer/devcontainer.json","other":"x"}"#
+            ),
+            Some((
+                "/host/project".to_string(),
+                "/host/project/.devcontainer/devcontainer.json".to_string()
+            ))
+        );
+        for output in [
+            "null\n",
+            r#"{"devcontainer.local_folder":"/host/project"}"#,
+            r#"{"devcontainer.local_folder":"","devcontainer.config_file":"/host/project/.devcontainer/devcontainer.json"}"#,
+            "not json",
+        ] {
+            assert_eq!(parse_dev_container_labels(output), None, "{output}");
+        }
+    }
 
     #[test]
     fn redacts_forwarded_env() {

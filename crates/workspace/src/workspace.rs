@@ -11390,11 +11390,10 @@ fn matches_remote_location(
             connection.distro_name == requested.distro_name
         }
         (RemoteConnectionOptions::Docker(_), RemoteConnectionOptions::Docker(_)) => {
-            // Records saved before Zed stored dev container labels name the same
-            // running container by ID.
+            // Recent Projects entries saved before Zed stored dev container
+            // labels name the same running container by ID.
             connection.identity() == requested.identity()
                 || connection.legacy_identity() == Some(requested.identity())
-                || requested.legacy_identity() == Some(connection.identity())
         }
         #[cfg(any(test, feature = "test-support"))]
         (RemoteConnectionOptions::Mock(connection), RemoteConnectionOptions::Mock(requested)) => {
