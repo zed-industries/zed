@@ -1861,18 +1861,27 @@ impl RunningState {
             } = context;
             let active_buffer = active_buffer.and_then(|buffer| buffer.upgrade());
 
-            self.workspace
-                .update(cx, |workspace, cx| {
-                    workspace.start_debug_session(
-                        scenario,
-                        task_context,
-                        active_buffer,
-                        worktree_id,
-                        window,
-                        cx,
-                    )
-                })
-                .ok();
+            let workspace = self.workspace.clone();
+            let shutdown_session = self.session.update(cx, |session, cx| session.shutdown(cx));
+            cx.spawn_in(window, async move |_this, cx| {
+                shutdown_session.await;
+
+                workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.start_debug_session(
+                            scenario,
+                            task_context,
+                            active_buffer,
+                            worktree_id,
+                            window,
+                            cx,
+                        )
+                    })
+                    .ok();
+
+                anyhow::Ok(())
+            })
+            .detach();
         } else {
             self.restart_session(cx);
         }
