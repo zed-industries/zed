@@ -889,7 +889,6 @@ impl MacWindowState {
             self.stop_display_link();
             return;
         }
-        let native_view = self.native_view;
         match &mut self.frame_source {
             FrameSource::View(frames) => {
                 let main_thread =
