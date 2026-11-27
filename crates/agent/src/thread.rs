@@ -438,6 +438,24 @@ impl UserMessage {
                             )
                             .ok();
                         }
+                        MentionUri::RevisionSelection {
+                            revision,
+                            path,
+                            line_range,
+                        } => {
+                            write!(
+                                &mut selection_context,
+                                "\n{}",
+                                MarkdownCodeBlock {
+                                    tag: &codeblock_tag(
+                                        format!("{revision}:{path}").as_ref(),
+                                        Some(line_range)
+                                    ),
+                                    text: content
+                                }
+                            )
+                            .ok();
+                        }
                         MentionUri::Thread { .. } => {
                             write!(&mut thread_context, "\n{}\n", content).ok();
                         }

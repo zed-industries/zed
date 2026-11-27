@@ -58,6 +58,13 @@ pub enum MentionUri {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         column: Option<u32>,
     },
+    /// A selection from a file at a revision, such as a git commit.
+    /// `path` is relative to the repository root.
+    RevisionSelection {
+        revision: String,
+        path: String,
+        line_range: RangeInclusive<u32>,
+    },
     Fetch {
         url: Url,
     },
@@ -191,6 +198,18 @@ impl MentionUri {
                         abs_path: None,
                         line_range,
                         column: parse_column(query_param(&url, "column")),
+                    })
+                } else if path.starts_with("/agent/revision-selection") {
+                    validate_query_params(&url, &["revision", "path"])?;
+                    let fragment = url
+                        .fragment()
+                        .context("Missing fragment for revision selection")?;
+                    Ok(Self::RevisionSelection {
+                        revision: query_param(&url, "revision")
+                            .context("Missing revision for revision selection")?,
+                        path: query_param(&url, "path")
+                            .context("Missing path for revision selection")?,
+                        line_range: parse_line_range(fragment)?,
                     })
                 } else if let Some(name) = path.strip_prefix("/agent/symbol/") {
                     let fragment = url
@@ -326,6 +345,7 @@ impl MentionUri {
             | MentionUri::Thread { .. }
             | MentionUri::Rule { .. }
             | MentionUri::Diagnostics { .. }
+            | MentionUri::RevisionSelection { .. }
             | MentionUri::Fetch { .. }
             | MentionUri::TerminalSelection { .. }
             | MentionUri::GitDiff { .. }
@@ -365,6 +385,15 @@ impl MentionUri {
                 line_range,
                 ..
             } => selection_name(path.as_deref(), line_range),
+            MentionUri::RevisionSelection {
+                revision,
+                path,
+                line_range,
+            } => format!(
+                "{}:{}",
+                revision.get(..git::SHORT_SHA_LENGTH).unwrap_or(revision),
+                selection_name(Some(Path::new(path)), line_range)
+            ),
             MentionUri::Fetch { url } => url.to_string(),
             MentionUri::Skill { name, .. } => name.clone(),
         }
@@ -427,6 +456,11 @@ impl MentionUri {
                 )
                 .into(),
             ),
+            MentionUri::RevisionSelection {
+                revision,
+                path,
+                line_range,
+            } => Some(revision_location(revision, path, line_range).into()),
             MentionUri::Skill {
                 skill_file_path, ..
             } => Some(skill_file_path.to_string_lossy().into_owned().into()),
@@ -447,7 +481,9 @@ impl MentionUri {
             MentionUri::Rule { .. } => IconName::Reader.path().into(),
             MentionUri::Diagnostics { .. } => IconName::Warning.path().into(),
             MentionUri::TerminalSelection { .. } => IconName::Terminal.path().into(),
-            MentionUri::Selection { .. } => IconName::Reader.path().into(),
+            MentionUri::Selection { .. } | MentionUri::RevisionSelection { .. } => {
+                IconName::Reader.path().into()
+            }
             MentionUri::Fetch { .. } => IconName::ToolWeb.path().into(),
             MentionUri::GitDiff { .. } => IconName::GitBranch.path().into(),
             MentionUri::MergeConflict { .. } => IconName::GitMergeConflict.path().into(),
@@ -514,6 +550,22 @@ impl MentionUri {
                     url.query_pairs_mut()
                         .append_pair("column", &(column + 1).to_string());
                 }
+                url.set_fragment(Some(&format!(
+                    "L{}:{}",
+                    line_range.start() + 1,
+                    line_range.end() + 1
+                )));
+                url
+            }
+            MentionUri::RevisionSelection {
+                revision,
+                path,
+                line_range,
+            } => {
+                let mut url = Url::parse("zed:///agent/revision-selection").unwrap();
+                url.query_pairs_mut()
+                    .append_pair("revision", revision)
+                    .append_pair("path", path);
                 url.set_fragment(Some(&format!(
                     "L{}:{}",
                     line_range.start() + 1,
@@ -860,6 +912,13 @@ pub fn line_range_suffix(line_range: &RangeInclusive<u32>) -> String {
     } else {
         format!(":{start}-{end}")
     }
+}
+
+/// Formats a selection at a revision as `<revision>:<path>:<lines>`, matching
+/// `git grep -n <revision>` output. The `<revision>:<path>` prefix is git's
+/// object syntax, so it can be passed to `git show` as is.
+pub fn revision_location(revision: &str, path: &str, line_range: &RangeInclusive<u32>) -> String {
+    format!("{revision}:{path}{}", line_range_suffix(line_range))
 }
 
 #[cfg(test)]
@@ -1339,6 +1398,27 @@ mod tests {
             _ => panic!("Expected Selection variant without path"),
         }
         assert_eq!(parsed.to_uri().to_string(), selection_uri);
+    }
+
+    #[test]
+    fn test_parse_revision_selection_uri() {
+        let selection_uri =
+            "zed:///agent/revision-selection?revision=0123456789abcdef&path=src%2Fmain.rs#L3:5";
+        let parsed = MentionUri::parse(selection_uri, PathStyle::local()).unwrap();
+        assert_eq!(
+            parsed,
+            MentionUri::RevisionSelection {
+                revision: "0123456789abcdef".into(),
+                path: "src/main.rs".into(),
+                line_range: 2..=4,
+            }
+        );
+        assert_eq!(parsed.to_uri().to_string(), selection_uri);
+        assert_eq!(parsed.name(), "0123456:main.rs (3:5)");
+        assert_eq!(
+            parsed.tooltip_text().as_deref(),
+            Some("0123456789abcdef:src/main.rs:3-5")
+        );
     }
 
     #[test]

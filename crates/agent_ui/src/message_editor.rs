@@ -4403,6 +4403,42 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_insert_selections_creates_revision_mention(cx: &mut TestAppContext) {
+        use crate::test_support::historic_buffer;
+        use project::ProjectItem as _;
+
+        init_test(cx);
+        let (message_editor, _, mut cx) = setup_paste_test_message_editor(json!({}), cx).await;
+        let buffer = cx.new(|cx| historic_buffer::build("line one\nline two\nline three\n", cx));
+        message_editor.update_in(&mut cx, |message_editor, window, cx| {
+            assert!(buffer.read(cx).project_path(cx).is_none());
+            let snapshot = buffer.read(cx).snapshot();
+            let range = snapshot.anchor_before(9)..snapshot.anchor_after(28);
+            message_editor.insert_selections(
+                AgentContextSelection::Editor(vec![(buffer, range)]),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let contents = mention_contents(&message_editor, &mut cx).await;
+        assert_eq!(contents.len(), 1);
+        let (uri, mention) = &contents[0];
+        assert_eq!(
+            uri,
+            &MentionUri::RevisionSelection {
+                revision: historic_buffer::REVISION.into(),
+                path: historic_buffer::PATH.into(),
+                line_range: 1..=2,
+            },
+        );
+        assert!(
+            matches!(mention, Mention::Text { content, .. } if content == "line two\nline three")
+        );
+    }
+
+    #[gpui::test]
     async fn test_autoscroll_after_insert_selections(cx: &mut TestAppContext) {
         init_test(cx);
 

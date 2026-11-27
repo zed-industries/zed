@@ -18,6 +18,79 @@ use workspace::{MultiWorkspace, Sidebar as WorkspaceSidebar, SidebarEvent, Sideb
 use crate::AgentPanel;
 use crate::agent_panel;
 
+#[cfg(test)]
+pub(crate) mod historic_buffer {
+    use gpui::{App, Context};
+    use language::{Buffer, Capability, DiskState, File, LocalFile};
+    use std::{path::PathBuf, sync::Arc};
+    use util::{paths::PathStyle, rel_path::RelPath};
+
+    pub const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
+    pub const PATH: &str = "src/main.rs";
+
+    struct HistoricFile {
+        path: Arc<RelPath>,
+    }
+
+    impl File for HistoricFile {
+        fn as_local(&self) -> Option<&dyn LocalFile> {
+            None
+        }
+
+        fn disk_state(&self) -> DiskState {
+            DiskState::Historic { was_deleted: false }
+        }
+
+        fn path(&self) -> &Arc<RelPath> {
+            &self.path
+        }
+
+        fn full_path(&self, _: &App) -> PathBuf {
+            self.path.as_std_path().to_path_buf()
+        }
+
+        fn path_style(&self, _: &App) -> PathStyle {
+            PathStyle::local()
+        }
+
+        fn file_name<'a>(&'a self, _: &'a App) -> &'a str {
+            self.path.file_name().unwrap()
+        }
+
+        fn worktree_id(&self, _: &App) -> settings::WorktreeId {
+            settings::WorktreeId::from_usize(0)
+        }
+
+        fn to_proto(&self, _: &App) -> language::proto::File {
+            language::proto::File::default()
+        }
+
+        fn is_private(&self) -> bool {
+            false
+        }
+
+        fn revision(&self) -> Option<&str> {
+            Some(REVISION)
+        }
+    }
+
+    pub fn build(text: &str, cx: &mut Context<Buffer>) -> Buffer {
+        let file = HistoricFile {
+            path: util::rel_path::rel_path(PATH).into(),
+        };
+        Buffer::build(
+            text::Buffer::new(
+                text::ReplicaId::LOCAL,
+                cx.entity_id().as_non_zero_u64().into(),
+                text,
+            ),
+            Some(Arc::new(file)),
+            Capability::ReadWrite,
+            cx,
+        )
+    }
+}
+
 thread_local! {
     static STUB_AGENT_CONNECTION: RefCell<Option<StubAgentConnection>> = const { RefCell::new(None) };
 }

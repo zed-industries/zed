@@ -95,6 +95,7 @@ pub struct CommitView {
 
 pub(crate) struct GitBlob {
     pub(crate) path: RepoPath,
+    pub(crate) revision: String,
     pub(crate) worktree_id: WorktreeId,
     pub(crate) is_deleted: bool,
     pub(crate) is_binary: bool,
@@ -507,6 +508,7 @@ impl CommitView {
         let display_name = format!("{short_sha} - {file_name}");
         let file = Arc::new(GitBlob {
             path: file.path.clone(),
+            revision: commit_sha.to_string(),
             is_deleted,
             is_binary,
             worktree_id,
@@ -1255,6 +1257,10 @@ impl language::File for GitBlob {
     fn can_open(&self) -> bool {
         !self.is_binary
     }
+
+    fn revision(&self) -> Option<&str> {
+        Some(&self.revision)
+    }
 }
 
 pub(crate) async fn build_buffer(
@@ -1866,6 +1872,7 @@ mod tests {
         .to_string();
         let blob = Arc::new(GitBlob {
             path: RepoPath::new("notes.md").unwrap(),
+            revision: "abc1234".into(),
             worktree_id: WorktreeId::from_usize(0),
             is_deleted: false,
             is_binary: false,
@@ -1931,6 +1938,7 @@ mod tests {
             .map(|(path, display_name)| {
                 let blob = Arc::new(GitBlob {
                     path: RepoPath::new(path).expect("valid repository path"),
+                    revision: "abc1234".into(),
                     worktree_id: WorktreeId::from_usize(0),
                     is_deleted: false,
                     is_binary: false,

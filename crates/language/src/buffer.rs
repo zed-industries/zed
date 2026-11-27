@@ -369,7 +369,8 @@ pub trait File: Send + Sync + Any {
     /// only available in some states, such as modification time.
     fn disk_state(&self) -> DiskState;
 
-    /// Returns the path of this file relative to the worktree's root directory.
+    /// Returns the path relative to the worktree's root directory, or to the repository root
+    /// when [`File::revision`] is set.
     fn path(&self) -> &Arc<RelPath>;
 
     /// Returns the path of this file relative to the worktree's parent directory (this means it
@@ -402,6 +403,12 @@ pub trait File: Send + Sync + Any {
 
     fn can_open(&self) -> bool {
         !self.is_local()
+    }
+
+    /// Returns the revision, such as a git commit SHA, that a historic file was read from.
+    /// When present, [`File::path`] is relative to the repository root.
+    fn revision(&self) -> Option<&str> {
+        None
     }
 }
 

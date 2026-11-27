@@ -30,6 +30,7 @@ feature_flags.workspace = true
 multi_buffer.workspace = true
 file_icons.workspace = true
 futures.workspace = true
+git.workspace = true
 gpui.workspace = true
 http_proxy.workspace = true
 itertools.workspace = true

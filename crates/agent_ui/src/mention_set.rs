@@ -1,5 +1,5 @@
 use crate::diagnostics::{DiagnosticsOptions, codeblock_fence_for_path, collect_diagnostics};
-use acp_thread::{MentionUri, selection_name};
+use acp_thread::MentionUri;
 use agent::{ThreadStore, outline};
 use agent_client_protocol::v2::schema as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
@@ -166,6 +166,9 @@ impl MentionSet {
             } => self.confirm_mention_for_symbol(abs_path, line_range, cx),
             MentionUri::Selection { abs_path: None, .. } => Task::ready(Err(anyhow!(
                 "Untitled buffer selection mentions are not supported for paste"
+            ))),
+            MentionUri::RevisionSelection { .. } => Task::ready(Err(anyhow!(
+                "Revision selection mentions are not supported for paste"
             ))),
             MentionUri::PastedImage { .. }
             | MentionUri::TerminalSelection { .. }
@@ -338,7 +341,7 @@ impl MentionSet {
                     "pasted imaged URI should not be included in completions"
                 )))
             }
-            MentionUri::Selection { .. } => {
+            MentionUri::Selection { .. } | MentionUri::RevisionSelection { .. } => {
                 debug_panic!("unexpected selection URI");
                 Task::ready(Err(anyhow!("unexpected selection URI")))
             }
@@ -574,6 +577,8 @@ impl MentionSet {
             let range = snapshot.anchor_after(offset + range_to_fold.start)
                 ..snapshot.anchor_after(offset + range_to_fold.end);
 
+            let file = buffer.read(cx).file();
+            let revision = file.and_then(|file| Some((file.revision()?, file.path())));
             let abs_path = buffer
                 .read(cx)
                 .project_path(cx)
@@ -586,13 +591,20 @@ impl MentionSet {
             let point_range = selection_range.to_point(&snapshot);
             let line_range = point_range.start.row..=point_range.end.row;
 
-            let uri = MentionUri::Selection {
-                abs_path: abs_path.clone(),
-                line_range: line_range.clone(),
-                column: None,
+            let uri = match revision {
+                Some((revision, path)) => MentionUri::RevisionSelection {
+                    revision: revision.to_string(),
+                    path: path.as_unix_str().to_string(),
+                    line_range,
+                },
+                None => MentionUri::Selection {
+                    abs_path,
+                    line_range,
+                    column: None,
+                },
             };
             let crease = crease_for_mention(
-                selection_name(abs_path.as_deref(), &line_range).into(),
+                uri.name().into(),
                 uri.icon_path(cx),
                 uri.tooltip_text(),
                 Some(uri.clone()),
