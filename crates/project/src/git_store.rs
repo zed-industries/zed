@@ -40,9 +40,9 @@ use git::{
     repository::{
         Branch, BranchesScanResult, CommitData, CommitDetails, CommitFileStatus, CommitOptions,
         CreateWorktreeTarget, DiffStatType, DiffType, FetchOptions, FileHistoryChangedFileSets,
-        GitCommitTemplate, GitRepository, InitialGraphCommitData, LogOrder, LogSource, PushOptions,
-        Remote, RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs, UpstreamTrackingStatus,
-        Worktree as GitWorktree, delete_branch_flag, is_binary_content,
+        GitAccess, GitCommitTemplate, GitRepository, InitialGraphCommitData, LogOrder, LogSource,
+        PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs,
+        UpstreamTrackingStatus, Worktree as GitWorktree, delete_branch_flag, is_binary_content,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -612,21 +612,6 @@ impl language::File for IndexTextFile {
     fn is_private(&self) -> bool {
         self.is_private
     }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum GitAccess {
-    /// Either:
-    /// - the user owns `.git`
-    /// - the user doesn't own `.git`, but has both of:
-    ///   - OS-level read permissions
-    ///   - the directory is marked as safe (git config safe.directory)
-    Yes,
-
-    /// The user is not the owner of `.git`, and one of the following is true:
-    /// - the directory is not marked as safe (git config safe.directory)
-    /// - the user does not have OS-level read permissions to `.git`
-    No,
 }
 
 enum GitStoreState {
@@ -6649,7 +6634,7 @@ impl Repository {
                     cx,
                 )
                 .await
-                .map_err(|err| err.to_string())
+                .map_err(|err| format!("{err:#}"))
             })
             .shared();
         self.job_sender.close_channel();
@@ -10847,18 +10832,16 @@ impl Repository {
         ids
     }
 
-    pub fn access(&mut self, _cx: &App) -> oneshot::Receiver<GitAccess> {
-        self.send_job("access", None, move |git_repo, _cx| async move {
-            match git_repo {
+    pub fn access(&self, cx: &App) -> Task<Result<GitAccess>> {
+        let repository_state = self.repository_state.clone();
+        cx.background_spawn(async move {
+            match repository_state.await.map_err(|error| anyhow!(error))? {
                 // TODO: Correctly handle remote repositories, where the user
                 // that's running the Zed remote may not own the `.git/`
                 // directory. For now we just return `GitAccess::Yes` so that
                 // remoting continues working as expected.
-                RepositoryState::Remote(..) => GitAccess::Yes,
-                RepositoryState::Local(state) => match state.backend.check_access().await {
-                    Ok(_) => GitAccess::Yes,
-                    Err(_) => GitAccess::No,
-                },
+                RepositoryState::Remote(..) => Ok(GitAccess::Yes),
+                RepositoryState::Local(state) => state.backend.check_access().await,
             }
         })
     }

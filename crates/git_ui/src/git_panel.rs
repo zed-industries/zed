@@ -32,14 +32,13 @@ use editor::{Editor, EditorElement, EditorMode, MultiBuffer, MultiBufferOffset, 
 use editor::{EditorStyle, RewrapOptions};
 use file_icons::FileIcons;
 use futures::StreamExt as _;
-use futures::channel::oneshot::Canceled;
 use git::Oid;
 use git::commit::ParsedCommitMessage;
 use git::repository::{
     Branch, CommitData, CommitDetails, CommitOptions, CommitSummary, DiffType, FetchOptions,
-    GitCommitTemplate, GitCommitter, InitialGraphCommitData, LogOrder, LogSource, PushOptions,
-    Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking, UpstreamTrackingStatus,
-    get_git_committer,
+    GitAccess, GitCommitTemplate, GitCommitter, InitialGraphCommitData, LogOrder, LogSource,
+    PushOptions, Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking,
+    UpstreamTrackingStatus, get_git_committer,
 };
 use git::stash::GitStash;
 use git::status::{DiffStat, StageStatus};
@@ -68,7 +67,6 @@ use language_model::{
 use menu;
 use multi_buffer::ExcerptBoundaryInfo;
 use notifications::status_toast::StatusToast;
-use project::git_store::GitAccess;
 use project::{
     Fs, Project, ProjectPath,
     git_store::{
@@ -1366,7 +1364,8 @@ pub struct GitPanel {
     _commit_message_buffer_subscription: Option<Subscription>,
     _repo_subscriptions: Vec<Subscription>,
     _settings_subscription: Subscription,
-    git_access: Option<GitAccess>,
+    git_access: Option<Result<GitAccess, SharedString>>,
+    git_access_task: Option<Task<()>>,
     commit_menu_handle: PopoverMenuHandle<ContextMenu>,
     changes_actions_menu_handle: PopoverMenuHandle<ContextMenu>,
     commit_message_model_selector: Entity<LanguageModelSelector>,
@@ -1654,7 +1653,7 @@ impl GitPanel {
                         this.schedule_update(window, cx);
                     }
                     GitStoreEvent::GlobalConfigurationUpdated => {
-                        this.git_access = None;
+                        this.reset_git_access();
                         this.schedule_update(window, cx);
                     }
                     GitStoreEvent::IndexWriteError(error) => {
@@ -1776,6 +1775,7 @@ impl GitPanel {
                 _repo_subscriptions: Vec::new(),
                 _settings_subscription,
                 git_access: None,
+                git_access_task: None,
                 commit_menu_handle: PopoverMenuHandle::default(),
                 changes_actions_menu_handle: PopoverMenuHandle::default(),
                 commit_message_model_selector: model_selector,
@@ -5349,20 +5349,30 @@ impl GitPanel {
             repository.snapshot().work_directory_abs_path
         });
 
-        if let Some(path_str) = path.to_str() {
-            let path_arg = String::from(path_str);
-            let args = vec![
-                String::from("--global"),
-                String::from("--add"),
-                String::from("safe.directory"),
-                path_arg,
-            ];
-
-            self.project
-                .read(cx)
-                .git_config(path, args, cx)
-                .detach_and_log_err(cx);
-        }
+        let git_config = match path.to_str() {
+            Some(path_str) => {
+                let path_arg = String::from(path_str);
+                let args = vec![
+                    String::from("--global"),
+                    String::from("--add"),
+                    String::from("safe.directory"),
+                    path_arg,
+                ];
+                self.project.read(cx).git_config(path, args, cx)
+            }
+            None => Task::ready(Err(anyhow::anyhow!("{path:?} is not a valid UTF-8 path"))),
+        };
+        cx.spawn(async move |git_panel, cx| {
+            if let Err(error) = git_config.await {
+                log::error!("Error while adding a safe directory: {error:?}");
+                git_panel
+                    .update(cx, |git_panel, cx| {
+                        git_panel.show_error_toast("config", error, cx)
+                    })
+                    .ok();
+            }
+        })
+        .detach();
     }
 
     pub fn create_pull_request(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -5856,7 +5866,7 @@ impl GitPanel {
                 // restores the pre-amend draft into that repository's buffer.
                 self.set_amend_pending(false, cx);
             }
-            self.git_access = None;
+            self.reset_git_access();
             self._repo_subscriptions.clear();
             if self.active_tab == GitPanelTab::History {
                 self.set_commit_history(CommitHistory::Loading, cx);
@@ -5998,6 +6008,11 @@ impl GitPanel {
         });
     }
 
+    fn reset_git_access(&mut self) {
+        self.git_access = None;
+        self.git_access_task = None;
+    }
+
     fn update_visible_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let path_style = self.project.read(cx).path_style(cx);
         let selected_change = self.selected_entry.and_then(|index| {
@@ -6012,7 +6027,7 @@ impl GitPanel {
         let active_repository = self.project.read(cx).active_repository(cx);
         if active_repository != self.active_repository {
             self.active_repository = active_repository;
-            self.git_access = None;
+            self.reset_git_access();
             self.clear_marks();
             self.reset_branch_state(window, cx);
         }
@@ -6043,29 +6058,20 @@ impl GitPanel {
         let is_tree_view = matches!(self.view_mode, GitPanelViewMode::Tree(_));
 
         if let Some(active_repo) = self.active_repository.as_ref() {
-            if self.git_access.is_none() {
-                let access = active_repo.update(cx, |active_repo, cx| active_repo.access(cx));
+            if self.git_access_task.is_none() {
+                let access = active_repo.read(cx).access(cx);
 
-                cx.spawn_in(window, async move |git_panel, cx| {
-                    // When the user does not own the `.git` folder, the
-                    // `GitStore.spawn_local_git_worker` will fail to create the
-                    // receiver for Git jobs, so this access check will be
-                    // cancelled.
-                    //
-                    // We assume `GitAccess::No` on cancellation. I believe this is
-                    // imprecise, other failures could also cause cancellation, but
-                    // the consequence is just showing the "unsafe repo" UI, which
-                    // seems acceptable for this edge case.
-                    let access = match access.await {
-                        Ok(access) => access,
-                        Err(Canceled) => GitAccess::No,
-                    };
-
-                    git_panel.update(cx, |this, _cx| {
-                        this.git_access = Some(access);
-                    })
-                })
-                .detach_and_log_err(cx);
+                self.git_access_task = Some(cx.spawn_in(window, async move |git_panel, cx| {
+                    let access = access.await.map_err(|error| {
+                        SharedString::from(format!("{error:#}").trim().to_owned())
+                    });
+                    git_panel
+                        .update(cx, |git_panel, cx| {
+                            git_panel.git_access = Some(access);
+                            cx.notify();
+                        })
+                        .ok();
+                }));
             }
         }
 
@@ -7272,7 +7278,7 @@ impl GitPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
-        if matches!(self.git_access, Some(GitAccess::No)) {
+        if matches!(self.git_access, Some(Ok(GitAccess::No) | Err(_))) {
             return None;
         }
 
@@ -8507,8 +8513,11 @@ impl GitPanel {
     }
 
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let content = match (self.git_access, &self.active_repository) {
-            (Some(GitAccess::No), Some(repository)) => self.render_unsafe_repo_ui(repository, cx),
+        let content = match (&self.git_access, &self.active_repository) {
+            (Some(Ok(GitAccess::No)), Some(repository)) => {
+                self.render_unsafe_repo_ui(repository, cx)
+            }
+            (Some(Err(error)), Some(_)) => Self::render_repository_error_ui(error),
             (_, None) => self.render_uninitialized_ui(cx),
             (_, Some(_)) if self.is_branch_mode() => self.render_no_branch_changes_ui(cx),
             (_, Some(_)) => self.render_no_changes_ui(cx),
@@ -8539,6 +8548,19 @@ impl GitPanel {
                         })),
                 )
             })
+            .into_any_element()
+    }
+
+    fn render_repository_error_ui(error: &SharedString) -> AnyElement {
+        v_flex()
+            .px_4()
+            .gap_1()
+            .child(Label::new("Failed to open the repository").color(Color::Muted))
+            .child(
+                Label::new(error.clone())
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
             .into_any_element()
     }
 
@@ -18793,5 +18815,78 @@ mod tests {
         });
         settle_branch_mode(cx);
         assert!(base_picker_open(&test.workspace, cx));
+    }
+
+    #[gpui::test]
+    async fn test_repository_open_error_is_not_reported_as_unsafe_repository(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (_, _, _, panel, cx) = setup_git_panel_with_changes(
+            cx,
+            json!({
+                ".git": "gitdir: ./missing\n",
+                "file.txt": "content",
+            }),
+            &[],
+        )
+        .await;
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, _| {
+            assert_eq!(
+                panel.git_access,
+                Some(Err(SharedString::from(format!(
+                    "opening repository at {:?}: pointed-to git dir {:?} not found",
+                    Path::new(path!("/project/.git")),
+                    Path::new(path!("/project/missing")),
+                )))),
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_dubious_ownership_and_failed_trust_directory(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (fs, project, _, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+            &[],
+        )
+        .await;
+        cx.run_until_parked();
+        panel.read_with(&cx, |panel, _| {
+            assert_eq!(panel.git_access, Some(Ok(GitAccess::Yes)));
+        });
+
+        fs.with_git_state(Path::new(path!("/project/.git")), false, |state| {
+            state.access = GitAccess::No;
+        })
+        .unwrap();
+        let git_store = project.read_with(&cx, |project, _| project.git_store().clone());
+        git_store.update(&mut cx, |_, cx| {
+            cx.emit(GitStoreEvent::GlobalConfigurationUpdated)
+        });
+        await_git_panel_entries(&panel, &mut cx).await;
+        cx.run_until_parked();
+        panel.read_with(&cx, |panel, _| {
+            assert_eq!(panel.git_access, Some(Ok(GitAccess::No)));
+        });
+
+        let created_toasts = Rc::new(Cell::new(0));
+        let _toast_subscription = cx.update(|_, cx| {
+            let created_toasts = created_toasts.clone();
+            cx.observe_new::<StatusToast>(move |_, _, _| {
+                created_toasts.set(created_toasts.get() + 1);
+            })
+        });
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.add_safe_directory(window, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(created_toasts.get(), 1);
     }
 }
