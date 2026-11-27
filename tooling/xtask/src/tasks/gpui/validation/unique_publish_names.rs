@@ -12,7 +12,11 @@ impl Rule for UniquePublishNames {
         "published crate names are unique"
     }
 
-    fn check(&self, plan: &[PublishPlanEntry<'_>]) -> Vec<Violation> {
+    fn check(
+        &self,
+        plan: &[PublishPlanEntry<'_>],
+        _: &[guppy::graph::PackageMetadata<'_>],
+    ) -> Vec<Violation> {
         duplicate_publish_names(plan.iter().map(|entry| {
             (
                 entry.repository.target_name(entry.package.name()),
