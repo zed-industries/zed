@@ -299,32 +299,6 @@ impl AppleTextSystemState {
             let mut font = font.load()?;
 
             apply_features_and_fallbacks(&mut font, features, fallbacks)?;
-            // This block contains a precautionary fix to guard against loading fonts
-            // that might cause panics due to `.unwrap()`s up the chain.
-            {
-                // We use the 'm' character for text measurements in various spots
-                // (e.g., the editor). However, at time of writing some of those usages
-                // will panic if the font has no 'm' glyph.
-                //
-                // Therefore, we check up front that the font has the necessary glyph.
-                let has_m_glyph = font.glyph_for_char('m').is_some();
-
-                // HACK: The 'Segoe Fluent Icons' font does not have an 'm' glyph,
-                // but we need to be able to load it for rendering Windows icons in
-                // the Storybook (on macOS).
-                let is_segoe_fluent_icons = font.full_name() == "Segoe Fluent Icons";
-
-                if !has_m_glyph && !is_segoe_fluent_icons {
-                    // I spent far too long trying to track down why a font missing the 'm'
-                    // character wasn't loading. This log statement will hopefully save
-                    // someone else from suffering the same fate.
-                    log::warn!(
-                        "font '{}' has no 'm' character and was not loaded",
-                        font.full_name()
-                    );
-                    continue;
-                }
-            }
 
             // We've seen a number of panics in production caused by calling font.properties()
             // which unwraps a downcast to CFNumber. This is an attempt to avoid the panic,
@@ -786,6 +760,33 @@ mod tests {
         FontFallbacks, FontFeatures, FontId, FontRun, GlyphId, PlatformTextSystem, font, px,
     };
     use std::sync::Arc;
+
+    #[test]
+    fn font_without_latin_m_loads_and_measures_with_font_size() {
+        let platform_text_system = Arc::new(AppleTextSystem::new());
+        let text_system = Arc::new(gpui::TextSystem::new(platform_text_system.clone()));
+        text_system
+            .add_fonts(vec![std::borrow::Cow::Borrowed(include_bytes!(
+                "../../gpui/test_fonts/GpuiTestNoM.ttf"
+            ))])
+            .unwrap();
+
+        let font_id = platform_text_system.font_id(&font("GpuiTestNoM")).unwrap();
+        assert!(platform_text_system.glyph_for_char(font_id, 'm').is_none());
+
+        let font_size = px(16.0);
+        assert_eq!(text_system.em_width(font_id, font_size).unwrap(), font_size);
+        assert_eq!(
+            text_system.em_advance(font_id, font_size).unwrap(),
+            font_size
+        );
+
+        let window_text_system = gpui::WindowTextSystem::new(text_system.clone());
+        assert_eq!(
+            window_text_system.em_layout_width(font_id, font_size),
+            font_size
+        );
+    }
 
     #[test]
     fn test_reload_family_with_features_and_fallbacks() {

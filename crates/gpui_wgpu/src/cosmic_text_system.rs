@@ -411,26 +411,6 @@ impl CosmicTextSystemState {
                 .get_font(database_id, cosmic_text::Weight::NORMAL)
                 .context("Could not load font")?;
 
-            // HACK: To let the storybook run and render Windows caption icons. We should actually do better font fallback.
-            let allowed_bad_font_names = [
-                "SegoeFluentIcons", // NOTE: Segoe fluent icons postscript name is inconsistent
-                "Segoe Fluent Icons",
-            ];
-
-            // This only decides whether a face can be a primary font. The
-            // editor measures layout with the width of 'm' and would panic
-            // without it.
-            //
-            // Don't remove the face from the font database. Arabic, Devanagari
-            // and emoji fonts often have no Latin glyphs, and they are exactly
-            // what cosmic-text falls back to when the primary font lacks a
-            // glyph.
-            if font.as_swash().charmap().map('m') == 0
-                && !allowed_bad_font_names.contains(&postscript_name.as_str())
-            {
-                continue;
-            };
-
             let font_id = FontId(self.loaded_fonts.len());
             loaded_font_ids.push(font_id);
             self.loaded_fonts.push(LoadedFont {
@@ -1235,6 +1215,45 @@ mod tests {
             Cow::Borrowed(include_bytes!("../../../assets/fonts/lilex/Lilex-Bold.ttf")),
         ])?;
         assert_eq!(text_system.all_font_names(), ["IBM Plex Sans", "Lilex"]);
+        Ok(())
+    }
+
+    #[test]
+    fn font_without_latin_m_loads_and_measures_with_font_size() -> Result<()> {
+        let platform_text_system =
+            Arc::new(CosmicTextSystem::new_without_system_fonts("GpuiTestNoM"));
+        let text_system = Arc::new(gpui::TextSystem::new(platform_text_system.clone()));
+        text_system.add_fonts(vec![Cow::Borrowed(include_bytes!(
+            "../../gpui/test_fonts/GpuiTestNoM.ttf"
+        ))])?;
+
+        let font = gpui::font("GpuiTestNoM");
+        let font_id = platform_text_system.font_id(&font)?;
+        assert!(platform_text_system.glyph_for_char(font_id, 'm').is_none());
+
+        let font_size = gpui::px(16.0);
+        assert_eq!(text_system.em_width(font_id, font_size)?, font_size);
+        assert_eq!(text_system.em_advance(font_id, font_size)?, font_size);
+
+        let window_text_system = gpui::WindowTextSystem::new(text_system.clone());
+        assert_eq!(
+            window_text_system.em_layout_width(font_id, font_size),
+            font_size
+        );
+
+        let layout = platform_text_system.layout_line(
+            "\u{E000}",
+            font_size,
+            &[gpui::FontRun { font_id, len: 3 }],
+        );
+        assert!(
+            layout
+                .runs
+                .iter()
+                .any(|run| run.font_id == font_id && !run.glyphs.is_empty()),
+            "expected the PUA glyph to shape with the no-'m' font"
+        );
+
         Ok(())
     }
 

@@ -431,16 +431,37 @@ impl TextSystem {
 
     /// Returns the width of an `em`.
     ///
-    /// Uses the width of the `m` character in the given font and size.
+    /// Uses the `m` glyph as a proxy for a typical character's width, not the
+    /// CSS `em` unit (`font_size`). Fonts without a usable `m` glyph, such as
+    /// icon, emoji and some non-Latin fonts, fall back to `font_size`, so
+    /// loading does not require a measurement glyph.
     pub fn em_width(&self, font_id: FontId, font_size: Pixels) -> Result<Pixels> {
-        Ok(self.typographic_bounds(font_id, font_size, 'm')?.size.width)
+        let width = self
+            .typographic_bounds(font_id, font_size, 'm')
+            .map(|bounds| bounds.size.width)
+            .unwrap_or(font_size);
+        if width > px(0.0) {
+            Ok(width)
+        } else {
+            Ok(font_size)
+        }
     }
 
     /// Returns the advance width of an `em`.
     ///
-    /// Uses the advance width of the `m` character in the given font and size.
+    /// Uses the advance of `m` as a proxy for a typical character's advance,
+    /// not the CSS `em` unit (`font_size`). Falls back to `font_size` when the
+    /// font has no usable `m` glyph.
     pub fn em_advance(&self, font_id: FontId, font_size: Pixels) -> Result<Pixels> {
-        Ok(self.advance(font_id, font_size, 'm')?.width)
+        let advance = self
+            .advance(font_id, font_size, 'm')
+            .map(|advance| advance.width)
+            .unwrap_or(font_size);
+        if advance > px(0.0) {
+            Ok(advance)
+        } else {
+            Ok(font_size)
+        }
     }
 
     /// Returns the width of an `ch`.
@@ -933,8 +954,21 @@ impl WindowTextSystem {
     }
 
     /// Returns the shaped layout width of an `em`.
+    ///
+    /// Shapes `m` as a proxy for a typical character's layout width, not the
+    /// CSS `em` unit (`font_size`). Falls back to `font_size` when the font
+    /// has no usable `m` glyph.
     pub fn em_layout_width(&self, font_id: FontId, font_size: Pixels) -> Pixels {
-        self.layout_width(font_id, font_size, 'm')
+        if self
+            .text_system
+            .platform_text_system
+            .glyph_for_char(font_id, 'm')
+            .is_none()
+        {
+            return font_size;
+        }
+        let width = self.layout_width(font_id, font_size, 'm');
+        if width > px(0.0) { width } else { font_size }
     }
 }
 
