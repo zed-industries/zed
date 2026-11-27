@@ -11700,10 +11700,12 @@ fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
                     unknown: None,
                 })
                 .or(match upstream.tracking {
-                    git::repository::UpstreamTracking::Unknown => Some(proto::UpstreamTracking {
-                        unknown: Some(true),
-                        ..Default::default()
-                    }),
+                    git::repository::UpstreamTracking::Unknown(key) => {
+                        Some(proto::UpstreamTracking {
+                            unknown: Some(key),
+                            ..Default::default()
+                        })
+                    }
                     _ => None,
                 }),
         }),
@@ -11760,8 +11762,8 @@ fn proto_to_branch(proto: &proto::Branch) -> git::repository::Branch {
                     .tracking
                     .as_ref()
                     .map(|tracking| {
-                        if tracking.unknown == Some(true) {
-                            return git::repository::UpstreamTracking::Unknown;
+                        if let Some(key) = tracking.unknown {
+                            return git::repository::UpstreamTracking::Unknown(key);
                         }
                         git::repository::UpstreamTracking::Tracked(UpstreamTrackingStatus {
                             ahead: tracking.ahead as u32,
@@ -11891,7 +11893,7 @@ mod tests {
                 behind: 3,
             }
             .into(),
-            UpstreamTracking::Unknown,
+            UpstreamTracking::Unknown(u64::MAX),
         ] {
             let branch = Branch {
                 is_head: true,

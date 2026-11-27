@@ -9,7 +9,7 @@ use async_channel::Sender;
 use collections::HashMap;
 use file_content::{ByteContent, decode_byte_header};
 use futures::channel::oneshot;
-use futures::future::BoxFuture;
+use futures::future::{BoxFuture, OptionFuture};
 use futures::io::BufWriter;
 use futures::{AsyncWriteExt, FutureExt as _, select_biased};
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
@@ -24,6 +24,7 @@ use text::LineEnding;
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::atomic::AtomicBool;
 
 use std::process::{ExitStatus, Output};
@@ -462,8 +463,10 @@ pub enum UpstreamTracking {
     Gone,
     /// Remote ref present in local repository (fetched from remote).
     Tracked(UpstreamTrackingStatus),
-    /// Not counted: listing branches counts only the checked-out branch, if it can.
-    Unknown,
+    /// Not counted: listing branches counts only the checked-out branch, if it can. The key changes
+    /// with the upstream's object, the shallow boundary, and grafts, so that the branch then
+    /// compares unequal.
+    Unknown(u64),
 }
 
 impl From<UpstreamTrackingStatus> for UpstreamTracking {
@@ -475,7 +478,7 @@ impl From<UpstreamTrackingStatus> for UpstreamTracking {
 impl UpstreamTracking {
     pub fn status(&self) -> Option<UpstreamTrackingStatus> {
         match self {
-            UpstreamTracking::Gone | UpstreamTracking::Unknown => None,
+            UpstreamTracking::Gone | UpstreamTracking::Unknown(_) => None,
             UpstreamTracking::Tracked(status) => Some(*status),
         }
     }
@@ -2166,6 +2169,7 @@ impl GitRepository for RealGitRepository {
 
     fn branches(&self) -> BoxFuture<'_, Result<BranchesScanResult>> {
         let git = self.git_binary();
+        let common_dir = self.common_dir.clone();
         let last_head_with_upstream = self.last_head_with_upstream.clone();
         let executor = self.executor.clone();
         self.executor
@@ -2207,8 +2211,16 @@ impl GitRepository for RealGitRepository {
                         && listed_ref.commit_timestamp.is_some()
                 });
                 *last_head_with_upstream.lock() = head.map(|head| head.ref_name.to_vec());
-                let trackings =
-                    track_upstreams(&git, &listed_refs, head, guessed_head_read, &mut errors).await;
+                let trackings = track_upstreams(
+                    &git,
+                    &common_dir,
+                    &listed_refs,
+                    output.status.success(),
+                    head,
+                    guessed_head_read,
+                    &mut errors,
+                )
+                .await;
                 let error = (!errors.is_empty()).then(|| errors.join("; ").into());
                 let mut branches = listed_refs
                     .iter()
@@ -4307,10 +4319,14 @@ fn parse_upstream_track(upstream_track: &str) -> Result<UpstreamTracking> {
 }
 
 /// Each listed ref's upstream tracking, or `None` if it has no upstream. Only the checked-out
-/// branch, `head`, gets git's `%(upstream:track)`, which walks history. The others get `Unknown`.
+/// branch, `head`, gets git's `%(upstream:track)`, which walks history. The others get `Unknown`,
+/// keyed by their upstream's object, the shallow boundary, and grafts, so that they still compare
+/// unequal after a change that only their counts would have shown, such as their upstream moving.
 async fn track_upstreams(
     git: &GitBinary,
+    common_dir: &Path,
     listed_refs: &[ListedRef<'_>],
+    listing_succeeded: bool,
     head: Option<&ListedRef<'_>>,
     guessed_head_read: Option<(Vec<u8>, impl Future<Output = Result<Vec<u8>>>)>,
     errors: &mut Vec<String>,
@@ -4320,22 +4336,56 @@ async fn track_upstreams(
     let guessed_head_read = guessed_head_read
         .filter(|(ref_name, _)| head.is_some_and(|head| ref_name == head.ref_name))
         .map(|(_, read)| read);
-    let head_tracking = match head {
-        Some(head) => read_head_tracking(git, head, guessed_head_read).await,
-        None => Ok(None),
-    };
-    let head_tracking = head_tracking.unwrap_or_else(|error| {
+    let mut objects = listed_refs
+        .iter()
+        .map(|listed_ref| (listed_ref.ref_name, listed_ref.object_id))
+        .collect::<HashMap<_, _>>();
+    // An upstream under `refs/heads/` or `refs/remotes/` that a complete listing lacks is gone, or
+    // listed under another case on file systems that ignore case, so its changes show in the
+    // listing anyway. The others are listed by name, and git lists only refs under `refs/`.
+    let mut unlisted_upstreams = listed_refs
+        .iter()
+        .map(|listed_ref| listed_ref.upstream)
+        .filter(|upstream| {
+            upstream.starts_with(b"refs/")
+                && !objects.contains_key(upstream)
+                && !(listing_succeeded
+                    && (upstream.starts_with(b"refs/heads/")
+                        || upstream.starts_with(b"refs/remotes/")))
+        })
+        .collect::<Vec<_>>();
+    unlisted_upstreams.sort_unstable();
+    unlisted_upstreams.dedup();
+
+    let (head_tracking, unlisted_refs, shallow, grafts) = futures::join!(
+        OptionFuture::from(head.map(|head| read_head_tracking(git, head, guessed_head_read))),
+        read_refs(git, &unlisted_upstreams),
+        smol::fs::read(common_dir.join("shallow")),
+        smol::fs::read(common_dir.join("info/grafts")),
+    );
+    let mut report = |error: anyhow::Error| {
         let error = format!("failed to get upstream tracking: {error:#}");
         log::warn!("{error}");
         errors.push(error);
-        None
-    });
+    };
+    let head_tracking = head_tracking.transpose().map_err(&mut report);
+    let head_tracking = head_tracking.unwrap_or_default().flatten();
+    let unlisted_refs = unlisted_refs.map_err(&mut report).unwrap_or_default();
+    let unlisted_refs = listed_fields(&unlisted_refs).into_iter();
+    objects.extend(unlisted_refs.map(|[ref_name, object_id]| (ref_name, object_id)));
+
+    let mut history = DefaultHasher::new();
+    (shallow.ok(), grafts.ok()).hash(&mut history);
     listed_refs
         .iter()
         .map(|listed_ref| {
             (!listed_ref.upstream.is_empty()).then(|| match head_tracking {
                 Some(tracking) if listed_ref.is_head => tracking,
-                _ => UpstreamTracking::Unknown,
+                _ => {
+                    let mut hasher = history.clone();
+                    objects.get(listed_ref.upstream).hash(&mut hasher);
+                    UpstreamTracking::Unknown(hasher.finish())
+                }
             })
         })
         .collect()
@@ -4368,11 +4418,7 @@ async fn read_head_tracking(
 
 /// Reads `%(upstream:track)`, which walks history, for the branch named `ref_name`.
 async fn read_upstream_tracking(git: &GitBinary, ref_name: &[u8]) -> Result<Vec<u8>> {
-    #[cfg(unix)]
-    let ref_name = <OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(ref_name);
-    #[cfg(not(unix))]
-    let ref_name =
-        OsStr::new(std::str::from_utf8(ref_name).context("the branch's name isn't UTF-8")?);
+    let ref_name = ref_name_argument(ref_name)?;
     let format = "--format=%(refname)%00%(objectname)%00%(upstream)%00%(upstream:track)%00";
     let mut command =
         git.build_command(&[OsStr::new("for-each-ref"), OsStr::new(format), ref_name]);
@@ -4380,6 +4426,31 @@ async fn read_upstream_tracking(git: &GitBinary, ref_name: &[u8]) -> Result<Vec<
     let output = command.output().await?;
     anyhow::ensure!(output.status.success(), format_branch_scan_error(&output));
     Ok(output.stdout)
+}
+
+fn ref_name_argument(ref_name: &[u8]) -> Result<&OsStr> {
+    #[cfg(unix)]
+    let ref_name = <OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(ref_name);
+    #[cfg(not(unix))]
+    let ref_name = OsStr::new(std::str::from_utf8(ref_name).context("the ref's name isn't UTF-8")?);
+    Ok(ref_name)
+}
+
+/// Lists the refs named `names`, each with its object. Git matches the names against those of its
+/// refs, so it reads none of them as a revision, and it doesn't read the objects.
+async fn read_refs(git: &GitBinary, names: &[&[u8]]) -> Result<Vec<u8>> {
+    let names = names.iter().filter_map(|name| ref_name_argument(name).ok());
+    let mut listing = Vec::new();
+    // A command line only fits so many names.
+    for names in names.collect::<Vec<_>>().chunks(64) {
+        let mut args = vec![OsStr::new("for-each-ref")];
+        args.push(OsStr::new("--format=%(refname)%00%(objectname)%00"));
+        args.extend(names);
+        let output = git.build_command(&args).output().await?;
+        anyhow::ensure!(output.status.success(), format_branch_scan_error(&output));
+        listing.extend(output.stdout);
+    }
+    Ok(listing)
 }
 
 fn checkpoint_author_envs() -> HashMap<String, String> {
@@ -6253,7 +6324,7 @@ mod tests {
                 .iter()
                 .filter(|branch| !branch.is_head)
                 .filter_map(|branch| branch.upstream.as_ref())
-                .all(|upstream| upstream.tracking == UpstreamTracking::Unknown),
+                .all(|upstream| matches!(upstream.tracking, UpstreamTracking::Unknown(_))),
             "only the checked-out branch's commits are counted: {branches:?}"
         );
         let head = branches.into_iter().find(|branch| branch.is_head).unwrap();
@@ -6484,9 +6555,13 @@ mod tests {
             let upstreams = branches.into_iter().map(|branch| branch.upstream.unwrap());
             upstreams.map(|upstream| upstream.tracking).collect()
         };
-        assert_eq!(list().await, [tracked(1, 0), UpstreamTracking::Unknown]);
+        let trackings = list().await;
+        assert_eq!(trackings[0], tracked(1, 0));
         git(path, "update-ref refs/heads/zzz aaa");
-        assert_eq!(list().await, [tracked(0, 0), UpstreamTracking::Unknown]);
+        let next_trackings = list().await;
+        assert_eq!(next_trackings[0], tracked(0, 0));
+        assert!(matches!(next_trackings[1], UpstreamTracking::Unknown(_)));
+        assert_ne!(next_trackings[1], trackings[1]);
     }
 
     #[gpui::test]
@@ -6534,6 +6609,56 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_branches_differ_after_an_upstream_or_history_changes(cx: &mut TestAppContext) {
+        let repo_dir = init_test_repo(cx);
+        let path = repo_dir.path();
+        git(path, "commit --allow-empty -m first");
+        git(path, "branch tracks_tag");
+        git(path, "branch tracks_remote_tag");
+        git(path, "commit --allow-empty -m second");
+        let middle = git(path, "rev-parse HEAD");
+        git(path, "commit --allow-empty -m third");
+        // None of these upstreams is listed as a branch, so only the tracking of the branches
+        // that aren't checked out can tell that they changed.
+        git(path, "tag base tracks_tag");
+        git(path, "config branch.tracks_tag.remote .");
+        git(path, "config branch.tracks_tag.merge refs/tags/base");
+        git(path, "tag -a v1 -m v1 tracks_tag");
+        git(path, "remote add origin .");
+        git(path, "update-ref refs/remotes/origin/v1 v1");
+        git(path, "branch --set-upstream-to=origin/v1 tracks_remote_tag");
+
+        let repo = open_repo(path, cx);
+        let mut previous = repo.branches().await.unwrap();
+        let mut assert_branches_changed = async |changed: bool, change: &str| {
+            let branches = repo.branches().await.unwrap();
+            assert_eq!(branches.error, None, "{change}");
+            assert_eq!(branches.branches != previous.branches, changed, "{change}");
+            previous = branches;
+        };
+        assert_branches_changed(false, "listed again").await;
+        git(path, "tag --force base main");
+        assert_branches_changed(true, "moved a tag").await;
+        git(path, "pack-refs --all");
+        assert_branches_changed(false, "packed the refs").await;
+        git(path, "tag --delete base");
+        assert_branches_changed(true, "deleted a packed tag").await;
+        git(path, "tag -a --force v1 -m v1 main");
+        git(path, "update-ref refs/remotes/origin/v1 v1");
+        assert_branches_changed(true, "moved a remote ref to a tag").await;
+
+        // No branch points to this commit, so cutting it off from its parent only changes the
+        // commits between the branches and their upstreams.
+        fs::write(path.join(".git/shallow"), format!("{middle}\n")).unwrap();
+        assert_branches_changed(true, "moved the shallow boundary").await;
+        fs::remove_file(path.join(".git/shallow")).unwrap();
+        assert_branches_changed(true, "removed the shallow boundary").await;
+        fs::create_dir_all(path.join(".git/info")).unwrap();
+        fs::write(path.join(".git/info/grafts"), format!("{middle}\n")).unwrap();
+        assert_branches_changed(true, "added a graft").await;
+    }
+
+    #[gpui::test]
     async fn test_branches_upstream_tracking_failure(cx: &mut TestAppContext) {
         let repo_dir = init_test_repo(cx);
         let path = repo_dir.path();
@@ -6565,7 +6690,7 @@ mod tests {
             let head = branches.into_iter().find(|branch| branch.is_head).unwrap();
             let Upstream { ref_name, tracking } = head.upstream.unwrap();
             assert_eq!(ref_name, "refs/heads/upstream");
-            assert_eq!(tracking, UpstreamTracking::Unknown);
+            assert!(matches!(tracking, UpstreamTracking::Unknown(_)));
         }
 
         // The read alongside the listing still fails, but it's of another branch now.
@@ -6621,13 +6746,21 @@ mod tests {
         git(path, "checkout main");
         git_bytes(b"branch --quiet --set-upstream-to=topic\xe9");
         assert_head_upstream(&repo, "refs/heads/topic\u{FFFD}", tracked(1, 0)).await;
+
+        // A branch that isn't checked out, with an upstream outside the listed namespaces.
+        git_bytes(b"update-ref refs/custom/topic\xe9 main~1");
+        git_bytes(b"config branch.topic\xe9.remote .");
+        git_bytes(b"config branch.topic\xe9.merge refs/custom/topic\xe9");
+        let branches = repo.branches().await.unwrap().branches;
+        git_bytes(b"update-ref refs/custom/topic\xe9 main");
+        assert_ne!(repo.branches().await.unwrap().branches, branches);
     }
 
     fn parse_branches(listing: &str) -> Vec<Branch> {
         parse_listed_refs(listing.as_bytes())
             .iter()
             .filter_map(|listed| {
-                listed.branch((!listed.upstream.is_empty()).then_some(UpstreamTracking::Unknown))
+                listed.branch((!listed.upstream.is_empty()).then_some(UpstreamTracking::Unknown(0)))
             })
             .collect()
     }
@@ -6644,7 +6777,7 @@ mod tests {
                 ref_name: "refs/heads/zed-patches".into(),
                 upstream: Some(Upstream {
                     ref_name: "refs/remotes/origin/zed-patches".into(),
-                    tracking: UpstreamTracking::Unknown,
+                    tracking: UpstreamTracking::Unknown(0),
                 }),
                 most_recent_commit: Some(CommitSummary {
                     sha: "060964da10574cd9bf06463a53bf6e0769c5c45e".into(),
