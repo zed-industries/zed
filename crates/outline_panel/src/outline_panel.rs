@@ -2953,6 +2953,7 @@ impl OutlinePanel {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let settings = OutlinePanelSettings::get_global(cx);
+        let file_icons = settings.file_icons;
         let indicator = settings.folder_indicator;
         let indicators = FileIcons::get_folder_indicators(indicator, is_expanded, path, cx);
         let chevron = indicators.chevron.map(|path| {
@@ -2966,7 +2967,11 @@ impl OutlinePanel {
         let icon = indicators
             .icon
             .map(|path| Icon::from_path(path).color(color).into_any_element());
-        let (leading, trailing) = if indicator == FolderIndicator::Both {
+
+        // In the case a file row shows both the chevron and an icon, we need to
+        // ensure that folder rows also use two slots, so they line up.
+        let file_uses_two_slots = file_icons && !self.hide_symbols_active(cx);
+        let (leading, trailing) = if indicator == FolderIndicator::Both || file_uses_two_slots {
             (
                 chevron.unwrap_or_else(empty_icon),
                 Some(icon.unwrap_or_else(empty_icon)),
@@ -2974,6 +2979,7 @@ impl OutlinePanel {
         } else {
             (chevron.or(icon).unwrap_or_else(empty_icon), None)
         };
+
         h_flex()
             .flex_none()
             .gap_0p5()
@@ -2998,15 +3004,16 @@ impl OutlinePanel {
             (settings.file_icons || settings.folder_indicator == FolderIndicator::Both)
                 .then(empty_icon)
         });
-        let expand_collapse_icon = if self.hide_symbols_active(cx) {
-            empty_icon()
+        let expand_collapse_icon = if !self.hide_symbols_active(cx) {
+            Some(self.chevron_toggle(PanelEntry::Fs(entry.clone()), is_expanded, color, cx))
         } else {
-            self.chevron_toggle(PanelEntry::Fs(entry.clone()), is_expanded, color, cx)
+            (settings.folder_indicator == FolderIndicator::Both).then(empty_icon)
         };
+
         h_flex()
             .flex_none()
             .gap_0p5()
-            .child(expand_collapse_icon)
+            .children(expand_collapse_icon)
             .children(icon)
             .into_any_element()
     }
