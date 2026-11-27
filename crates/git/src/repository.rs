@@ -4446,12 +4446,21 @@ async fn read_head_tracking(
 async fn read_upstream_tracking(git: &GitBinary, ref_name: &[u8]) -> Result<Vec<u8>> {
     let ref_name = ref_name_argument(ref_name)?;
     let format = "--format=%(refname)%00%(objectname)%00%(upstream)%00%(upstream:track)%00";
-    let mut command =
-        git.build_command(&[OsStr::new("for-each-ref"), OsStr::new(format), ref_name]);
-    command.kill_on_drop(true);
-    let output = command.output().await?;
-    anyhow::ensure!(output.status.success(), format_branch_scan_error(&output));
-    Ok(output.stdout)
+    let args = [OsStr::new("for-each-ref"), OsStr::new(format), ref_name];
+    let read = async |config: &[(&str, &str)]| {
+        let mut command = git.build_command_with_config(config, &args);
+        command.kill_on_drop(true);
+        let output = command.output().await?;
+        anyhow::ensure!(output.status.success(), format_branch_scan_error(&output));
+        anyhow::Ok(output.stdout)
+    };
+    let output = read(&[]).await?;
+    // Git on macOS converts its arguments to precomposed Unicode, which then match no ref whose
+    // name `packed-refs` or a reftable stores decomposed, as the listing prints it.
+    if cfg!(target_os = "macos") && output.is_empty() && !ref_name.is_ascii() {
+        return read(&[("core.precomposeUnicode", "false")]).await;
+    }
+    Ok(output)
 }
 
 fn ref_name_argument(ref_name: &[u8]) -> Result<&OsStr> {
@@ -6880,6 +6889,25 @@ mod tests {
         let branches = repo.branches().await.unwrap().branches;
         git_bytes(b"update-ref refs/custom/topic\xe9 main");
         assert_ne!(repo.branches().await.unwrap().branches, branches);
+    }
+
+    // Only git on macOS converts its arguments to precomposed Unicode.
+    #[cfg(target_os = "macos")]
+    #[gpui::test]
+    async fn test_branches_upstream_tracking_decomposed_ref_name(cx: &mut TestAppContext) {
+        let repo_dir = init_test_repo(cx);
+        let path = repo_dir.path();
+        git(path, "commit --allow-empty -m first");
+        git(path, "commit --allow-empty -m second");
+        // Packed without precomposing, the head's name stays decomposed.
+        git(path, "config core.precomposeUnicode false");
+        git(path, "checkout -b cafe\u{301} main~1");
+        git(path, "branch --set-upstream-to=main");
+        git(path, "pack-refs --all");
+        git(path, "config core.precomposeUnicode true");
+        let repo = open_repo(path, cx);
+        assert_head_upstream(&repo, "refs/heads/main", tracked(0, 1)).await;
+        assert_head_upstream(&repo, "refs/heads/main", tracked(0, 1)).await;
     }
 
     fn parse_branches(listing: &str) -> Vec<Branch> {
