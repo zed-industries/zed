@@ -142,6 +142,7 @@ impl From<dap::TcpArguments> for extension::TcpArguments {
             host: value.host.into(),
             port: value.port,
             timeout: value.timeout,
+            stdio_proxy: None,
         }
     }
 }
