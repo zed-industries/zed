@@ -124,6 +124,9 @@ impl ThemeSelector {
         cx: &mut Context<Self>,
     ) -> Self {
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        cx.observe_pending_input(window, Self::observe_pending_input)
+            .detach();
+
         Self { picker }
     }
 
@@ -138,6 +141,14 @@ impl ThemeSelector {
                 .delegate
                 .set_compare_key_held(event.modifiers.alt, cx);
         });
+    }
+
+    fn observe_pending_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.picker.update(cx, |picker, cx| {
+            picker
+                .delegate
+                .set_compare_key_held(window.modifiers().alt, cx)
+        })
     }
 }
 
@@ -878,6 +889,41 @@ mod tests {
         assert_eq!(
             shown_theme_name(cx),
             "Test Dark A",
+            "selected theme should be shown again once alt is released"
+        );
+    }
+
+    #[gpui::test]
+    async fn shows_selected_theme_when_binding_starts_with_alt(cx: &mut TestAppContext) {
+        let app_state = setup_test(cx).await;
+        let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let original_theme_name = shown_theme_name(cx);
+
+        // With a binding that starts with a lone `alt`, releasing `alt` is
+        // handled as the first keystroke of that binding, so the modifiers
+        // changed event for the release never reaches the theme selector.
+        cx.update(|_, cx| cx.bind_keys([gpui::KeyBinding::new("alt x", Reload, None)]));
+        let picker = open_theme_selector(&workspace, cx);
+
+        select_theme(&picker, "Test Light", cx);
+        assert_ne!(shown_theme_name(cx), original_theme_name);
+        assert_eq!(shown_theme_name(cx), "Test Light");
+
+        cx.simulate_modifiers_change(Modifiers::alt());
+        assert_eq!(
+            shown_theme_name(cx),
+            original_theme_name,
+            "original theme should be shown while alt is held"
+        );
+
+        cx.simulate_modifiers_change(Modifiers::none());
+        assert_eq!(
+            shown_theme_name(cx),
+            "Test Light",
             "selected theme should be shown again once alt is released"
         );
     }
