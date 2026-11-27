@@ -1,5 +1,5 @@
 use super::*;
-use editor::{Editor, MultiBuffer};
+use editor::{Editor, MultiBuffer, PathKey, SelectionEffects};
 use gpui::{TestAppContext, VisualTestContext};
 use menu::SelectPrevious;
 use project::{Project, ProjectPath};
@@ -584,7 +584,10 @@ async fn test_open_in_active_pane_lists_multibuffer_and_its_files(cx: &mut gpui:
         .as_fake()
         .insert_tree(
             path!("/root"),
-            json!({"rick_astley.txt": "Never Gonna Give You Up"}),
+            json!({
+                "a.txt": "Never Gonna Give You Up",
+                "b.txt": "Take On Me",
+            }),
         )
         .await;
 
@@ -593,21 +596,40 @@ async fn test_open_in_active_pane_lists_multibuffer_and_its_files(cx: &mut gpui:
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
-    // With the file open, we'll also open a multibuffer for the same file,
-    // ensuring we have two tab items open that both report the same
-    // `ProjectPath` for `ItemHandle::project_path`.
-    let singleton_editor = open_buffer("rick_astley.txt", &workspace, cx).await;
+    // With both files open, we'll also open a multibuffer with excerpts for
+    // both files and place its cursor in the `a.txt` excerpt, ensuring we have
+    // two tab items open that both report the same `ProjectPath` for
+    // `ItemHandle::project_path`.
+    let item_a = open_buffer("rick_astley.txt", &workspace, cx).await;
+    let item_b = open_buffer("a_ha.txt", &workspace, cx).await;
+
     let multibuffer_editor = cx.new_window_entity(|window, cx| {
-        let editor = singleton_editor.act_as::<Editor>(cx).unwrap();
-        let buffer = editor.read(cx).buffer().read(cx).as_singleton().unwrap();
+        let editor_a = item_a.act_as::<Editor>(cx).unwrap();
+        let editor_b = item_b.act_as::<Editor>(cx).unwrap();
+        let buffer_a = editor_a.read(cx).buffer().read(cx).as_singleton().unwrap();
+        let buffer_b = editor_b.read(cx).buffer().read(cx).as_singleton().unwrap();
+
         let multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(buffer.read(cx).capability());
-            let range = Default::default()..buffer.read(cx).max_point();
-            multibuffer.set_excerpts_for_buffer(buffer, [range], 0, cx);
+            let mut multibuffer = MultiBuffer::new(buffer_a.read(cx).capability());
+
+            let range_a = Default::default()..buffer_a.read(cx).max_point();
+            let range_b = Default::default()..buffer_b.read(cx).max_point();
+            multibuffer.set_excerpts_for_buffer(buffer_a.clone(), [range_a], 0, cx);
+            multibuffer.set_excerpts_for_buffer(buffer_b.clone(), [range_b], 0, cx);
+
             multibuffer
         });
 
-        Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx)
+        let cursor = multibuffer
+            .read(cx)
+            .location_for_path(&PathKey::for_buffer(&buffer_a, cx), cx)
+            .unwrap();
+
+        let mut editor = Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx);
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_anchor_ranges([cursor..cursor])
+        });
+        editor
     });
 
     let pane = workspace.read_with(cx, |workspace, _cx| workspace.active_pane().clone());
@@ -622,12 +644,19 @@ async fn test_open_in_active_pane_lists_multibuffer_and_its_files(cx: &mut gpui:
         )
     });
 
-    assert_eq!(pane.read_with(cx, |pane, _cx| pane.items_len()), 2);
+    assert_eq!(pane.read_with(cx, |pane, _cx| pane.items_len()), 3);
+
+    // Ensure that both the singleton editor for `a.txt` and the
+    // multibuffer editor report the same `ProjectPath`.
+    cx.read(|cx| {
+        assert_eq!(multibuffer_editor.project_path(cx), item_a.project_path(cx));
+    });
 
     let tab_switcher = open_tab_switcher_for_active_pane(&workspace, cx);
     tab_switcher.read_with(cx, |picker, _cx| {
         assert_match_at_position(picker, 0, multibuffer_editor.boxed_clone());
-        assert_match_at_position(picker, 1, singleton_editor.boxed_clone());
+        assert_match_at_position(picker, 1, item_b.boxed_clone());
+        assert_match_at_position(picker, 2, item_a.boxed_clone());
     });
 }
 

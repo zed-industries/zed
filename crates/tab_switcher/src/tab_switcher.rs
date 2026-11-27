@@ -95,11 +95,7 @@ impl TabSwitcherMode {
     }
 
     fn select_last(&self) -> bool {
-        match self {
-            TabSwitcherMode::CurrentPane { select_last } => *select_last,
-            TabSwitcherMode::AllPanes => false,
-            TabSwitcherMode::OpenInActivePane => false,
-        }
+        matches!(self, TabSwitcherMode::CurrentPane { select_last: true })
     }
 }
 
