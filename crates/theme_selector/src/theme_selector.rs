@@ -56,6 +56,7 @@ fn toggle_theme_selector(
             cx.entity().downgrade(),
             fs,
             toggle.themes_filter.as_ref(),
+            window,
             cx,
         );
         ThemeSelector::new(delegate, window, cx)
@@ -74,6 +75,7 @@ fn toggle_icon_theme_selector(
             cx.entity().downgrade(),
             fs,
             toggle.themes_filter.as_ref(),
+            window,
             cx,
         );
         IconThemeSelector::new(delegate, window, cx)
@@ -174,6 +176,7 @@ impl ThemeSelectorDelegate {
         selector: WeakEntity<ThemeSelector>,
         fs: Arc<dyn Fs>,
         themes_filter: Option<&Vec<String>>,
+        window: &Window,
         cx: &mut Context<ThemeSelector>,
     ) -> Self {
         let original_theme = cx.theme().clone();
@@ -229,9 +232,9 @@ impl ThemeSelectorDelegate {
             original_theme_settings,
             original_system_appearance,
             original_theme_id,
-            new_theme: original_theme, // Start with the original theme.
+            new_theme: original_theme,
             compare_button_held: false,
-            compare_key_held: false,
+            compare_key_held: window.modifiers().alt,
             selected_index,
             selection_completed: false,
             selected_theme: None,

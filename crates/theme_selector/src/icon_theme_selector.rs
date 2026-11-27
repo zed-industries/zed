@@ -93,6 +93,7 @@ impl IconThemeSelectorDelegate {
         selector: WeakEntity<IconThemeSelector>,
         fs: Arc<dyn Fs>,
         themes_filter: Option<&Vec<String>>,
+        window: &Window,
         cx: &mut Context<IconThemeSelector>,
     ) -> Self {
         let theme_settings = ThemeSettings::get_global(cx);
@@ -134,7 +135,7 @@ impl IconThemeSelectorDelegate {
             matches,
             original_theme: original_theme.clone(),
             compare_button_held: false,
-            compare_key_held: false,
+            compare_key_held: window.modifiers().alt,
             selected_index: 0,
             selected_theme: None,
             selection_completed: false,
