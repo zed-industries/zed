@@ -190,8 +190,9 @@ fn publish(plan: &NamedJob, prepare: &NamedJob) -> NamedJob {
 }
 
 fn authenticate_repository(level: Level) -> (Step<Use>, StepOutput) {
-    let mut permissions = vec![(TokenPermissions::Contents, level.clone())];
-    if level == Level::Write {
+    let write = level == Level::Write;
+    let mut permissions = vec![(TokenPermissions::Contents, level)];
+    if write {
         permissions.push((TokenPermissions::Workflows, Level::Write));
     }
     steps::authenticate_as_zippy()
