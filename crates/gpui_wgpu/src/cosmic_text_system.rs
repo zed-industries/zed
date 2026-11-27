@@ -64,7 +64,7 @@ struct CosmicTextSystemState {
 struct LoadedFont {
     font: Arc<CosmicTextFont>,
     features: CosmicFontFeatures,
-    is_known_emoji_font: bool,
+    has_color_glyphs: bool,
     /// resolved at load time so `layout_line` shares one chain across faces.
     /// `Arc` keeps clone cheap on the per-run hot path.
     user_fallback_chain: Arc<[(FontId, SharedString)]>,
@@ -436,7 +436,7 @@ impl CosmicTextSystemState {
             self.loaded_fonts.push(LoadedFont {
                 font,
                 features: cosmic_features.clone(),
-                is_known_emoji_font: check_is_known_emoji_font(&postscript_name),
+                has_color_glyphs: has_color_glyphs(self.font_system.db(), database_id),
                 user_fallback_chain: Arc::clone(&user_fallback_chain),
             });
             self.loaded_font_ids_by_key.insert(key, font_id);
@@ -575,17 +575,11 @@ impl CosmicTextSystemState {
                 .font_system
                 .get_font(id, cosmic_text::Weight::NORMAL)
                 .context("failed to get fallback font from cosmic-text font system")?;
-            let face = self
-                .font_system
-                .db()
-                .face(id)
-                .context("fallback font face not found in cosmic-text database")?;
-
             let font_id = FontId(self.loaded_fonts.len());
             self.loaded_fonts.push(LoadedFont {
                 font,
                 features: CosmicFontFeatures::new(),
-                is_known_emoji_font: check_is_known_emoji_font(&face.post_script_name),
+                has_color_glyphs: has_color_glyphs(self.font_system.db(), id),
                 user_fallback_chain: Arc::from(Vec::new()),
             });
 
@@ -806,7 +800,7 @@ impl CosmicTextSystemState {
                     }
                 }
             }
-            let is_emoji = loaded_font.is_known_emoji_font;
+            let is_emoji = loaded_font.has_color_glyphs;
 
             // HACK: Prevent crash caused by variation selectors.
             if glyph.glyph_id == 3 && is_emoji {
@@ -1201,9 +1195,16 @@ fn face_info_into_properties(
     }
 }
 
-fn check_is_known_emoji_font(postscript_name: &str) -> bool {
-    // TODO: Include other common emoji fonts
-    postscript_name == "NotoColorEmoji"
+fn has_color_glyphs(db: &cosmic_text::fontdb::Database, id: cosmic_text::fontdb::ID) -> bool {
+    db.with_face_data(id, |data, face_index| {
+        ttf_parser::Face::parse(data, face_index)
+            .map(|face| {
+                let tables = face.tables();
+                tables.colr.is_some() || tables.cbdt.is_some() || tables.sbix.is_some()
+            })
+            .unwrap_or(false)
+    })
+    .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -1235,6 +1236,51 @@ mod tests {
             Cow::Borrowed(include_bytes!("../../../assets/fonts/lilex/Lilex-Bold.ttf")),
         ])?;
         assert_eq!(text_system.all_font_names(), ["IBM Plex Sans", "Lilex"]);
+        Ok(())
+    }
+
+    #[test]
+    fn color_glyph_support_is_detected_from_tables() -> Result<()> {
+        let platform_text_system = Arc::new(CosmicTextSystem::new_without_system_fonts("Lilex"));
+        let text_system = Arc::new(gpui::TextSystem::new(platform_text_system.clone()));
+        text_system.add_fonts(vec![
+            Cow::Borrowed(LILEX),
+            Cow::Borrowed(include_bytes!("../../gpui/test_fonts/GpuiTestColor.ttf")),
+        ])?;
+
+        let monochrome_id = platform_text_system.font_id(&gpui::font("Lilex"))?;
+        let color_id = platform_text_system.font_id(&gpui::font("GpuiTestColor"))?;
+        assert!(
+            !platform_text_system
+                .0
+                .read()
+                .loaded_font(monochrome_id)
+                .has_color_glyphs
+        );
+        assert!(
+            platform_text_system
+                .0
+                .read()
+                .loaded_font(color_id)
+                .has_color_glyphs
+        );
+
+        let layout = platform_text_system.layout_line(
+            "A",
+            gpui::px(16.0),
+            &[gpui::FontRun {
+                font_id: color_id,
+                len: 1,
+            }],
+        );
+        let glyphs = layout
+            .runs
+            .iter()
+            .flat_map(|run| &run.glyphs)
+            .collect::<Vec<_>>();
+        assert!(!glyphs.is_empty());
+        assert!(glyphs.iter().all(|glyph| glyph.is_emoji));
+
         Ok(())
     }
 
