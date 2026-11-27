@@ -878,9 +878,7 @@ impl MacWindowState {
         }
     }
 
-    /// `window_state` is the handle this state lives in; the view's display
-    /// link holds it weakly to deliver frames.
-    fn start_display_link(&mut self, window_state: &Rc<Mutex<MacWindowState>>) {
+    fn start_display_link(&mut self) {
         if !self
             .native_window()
             .occlusionState()
@@ -890,29 +888,7 @@ impl MacWindowState {
             return;
         }
         match &mut self.frame_source {
-            FrameSource::View(frames) => {
-                let main_thread =
-                    crate::main_thread_marker().expect("macOS windows require the main thread");
-                let native_view = self.native_view.cast::<NSView>();
-                let window_state = Rc::downgrade(window_state);
-                frames.start(
-                    main_thread,
-                    |target, selector| {
-                        // SAFETY: `native_view` is a live `GPUIView` (`NSView` subclass), and
-                        // `DisplayLink` supplies a target implementing `selector`.
-                        unsafe {
-                            native_view
-                                .as_ref()
-                                .displayLinkWithTarget_selector(target, selector)
-                        }
-                    },
-                    move || {
-                        if let Some(window_state) = window_state.upgrade() {
-                            display_link_frame(&window_state);
-                        }
-                    },
-                );
-            }
+            FrameSource::View(frames) => frames.resume(),
             FrameSource::DisplayLink(frame_source) => {
                 if let Some(existing) = frame_source.as_mut() {
                     existing.stop();
@@ -1164,71 +1140,97 @@ impl MacWindow {
             let native_view: *mut AnyObject = msg_send![native_view, initWithFrame: content_bounds];
             assert!(!native_view.is_null());
 
-            let view_link = is_macos_version_at_least(NSOperatingSystemVersion {
-                majorVersion: 14,
-                minorVersion: 0,
-                patchVersion: 0,
-            })
-            .then(Rc::<DisplayLinkFrames>::default);
-            let state = Rc::new(Mutex::new(MacWindowState {
-                handle,
-                foreground_executor,
-                background_executor,
-                native_window,
-                native_view: NonNull::new_unchecked(native_view),
-                blurred_view: None,
-                background_appearance: WindowBackgroundAppearance::Opaque,
-                cursor_style: CursorStyle::Arrow,
-                cursor_visible,
-                frame_source: match &view_link {
-                    Some(view_link) => FrameSource::View(view_link.clone()),
+            let native_view_ptr = NonNull::new_unchecked(native_view);
+            let mut view_link = None;
+            let state = Rc::new_cyclic(|weak_state| {
+                let frames = is_macos_version_at_least(NSOperatingSystemVersion {
+                    majorVersion: 14,
+                    minorVersion: 0,
+                    patchVersion: 0,
+                })
+                .then(|| {
+                    let weak_state = weak_state.clone();
+                    let native_view = native_view_ptr.cast::<NSView>();
+                    Rc::new(DisplayLinkFrames::new(
+                        marker,
+                        |target, selector| {
+                            // SAFETY: `native_view` is a live `GPUIView` (`NSView` subclass), and
+                            // `DisplayLink` supplies a target implementing `selector`.
+                            unsafe {
+                                native_view
+                                    .as_ref()
+                                    .displayLinkWithTarget_selector(target, selector)
+                            }
+                        },
+                        move || {
+                            if let Some(window_state) = weak_state.upgrade() {
+                                display_link_frame(&window_state);
+                            }
+                        },
+                    ))
+                });
+                let frame_source = match &frames {
+                    Some(frames) => FrameSource::View(frames.clone()),
                     None => FrameSource::DisplayLink(None),
-                },
-                renderer,
-                request_frame_callback: None,
-                event_callback: None,
-                activate_callback: None,
-                visibility_callback: None,
-                last_visibility: None,
-                resize_callback: None,
-                moved_callback: None,
-                display_changed_callback: None,
-                should_close_callback: None,
-                close_callback: None,
-                appearance_changed_callback: None,
-                input_handler: None,
-                last_key_equivalent: None,
-                last_left_mouse_down_event: None,
-                synthetic_drag_counter: 0,
-                traffic_light_position: titlebar
-                    .as_ref()
-                    .and_then(|titlebar| titlebar.traffic_light_position),
-                native_titlebar_visible: true,
-                traffic_light_frames: None,
-                pre_fullscreen_traffic_light_frames: None,
-                transparent_titlebar: titlebar
-                    .as_ref()
-                    .is_none_or(|titlebar| titlebar.appears_transparent),
-                previous_modifiers_changed_event: None,
-                keystroke_for_do_command: None,
-                do_command_handled: None,
-                external_files_dragged: false,
-                first_mouse: false,
-                app_owns_titlebar_drag,
-                fullscreen_restore_bounds: Bounds::default(),
-                is_exiting_fullscreen: false,
-                simple_fullscreen_state: None,
-                move_tab_to_new_window_callback: None,
-                merge_all_windows_callback: None,
-                select_next_tab_callback: None,
-                select_previous_tab_callback: None,
-                toggle_tab_bar_callback: None,
-                activated_least_once: false,
-                closed: Arc::new(AtomicBool::new(false)),
-                accesskit_adapter: None,
-                sheet_parent: None,
-                native_views: native_views::NativeViews::default(),
-            }));
+                };
+                view_link = frames;
+                Mutex::new(MacWindowState {
+                    handle,
+                    foreground_executor,
+                    background_executor,
+                    native_window,
+                    native_view: native_view_ptr,
+                    blurred_view: None,
+                    background_appearance: WindowBackgroundAppearance::Opaque,
+                    cursor_style: CursorStyle::Arrow,
+                    cursor_visible,
+                    frame_source,
+                    renderer,
+                    request_frame_callback: None,
+                    event_callback: None,
+                    activate_callback: None,
+                    visibility_callback: None,
+                    last_visibility: None,
+                    resize_callback: None,
+                    moved_callback: None,
+                    display_changed_callback: None,
+                    should_close_callback: None,
+                    close_callback: None,
+                    appearance_changed_callback: None,
+                    input_handler: None,
+                    last_key_equivalent: None,
+                    last_left_mouse_down_event: None,
+                    synthetic_drag_counter: 0,
+                    traffic_light_position: titlebar
+                        .as_ref()
+                        .and_then(|titlebar| titlebar.traffic_light_position),
+                    native_titlebar_visible: true,
+                    traffic_light_frames: None,
+                    pre_fullscreen_traffic_light_frames: None,
+                    transparent_titlebar: titlebar
+                        .as_ref()
+                        .is_none_or(|titlebar| titlebar.appears_transparent),
+                    previous_modifiers_changed_event: None,
+                    keystroke_for_do_command: None,
+                    do_command_handled: None,
+                    external_files_dragged: false,
+                    first_mouse: false,
+                    app_owns_titlebar_drag,
+                    fullscreen_restore_bounds: Bounds::default(),
+                    is_exiting_fullscreen: false,
+                    simple_fullscreen_state: None,
+                    move_tab_to_new_window_callback: None,
+                    merge_all_windows_callback: None,
+                    select_next_tab_callback: None,
+                    select_previous_tab_callback: None,
+                    toggle_tab_bar_callback: None,
+                    activated_least_once: false,
+                    closed: Arc::new(AtomicBool::new(false)),
+                    accesskit_adapter: None,
+                    sheet_parent: None,
+                    native_views: native_views::NativeViews::default(),
+                })
+            });
             let mut window = Self(state, marker, view_link);
 
             (*native_window)
@@ -3284,7 +3286,7 @@ extern "C" fn window_did_change_occlusion_state(this: &AnyObject, _: Sel, _: *mu
         .contains(NSWindowOcclusionState::Visible)
     {
         lock.move_traffic_light();
-        lock.start_display_link(&window_state);
+        lock.start_display_link();
     } else {
         lock.stop_display_link();
     }
@@ -3402,7 +3404,7 @@ extern "C" fn window_did_change_screen(this: &AnyObject, _: Sel, _: *mut AnyObje
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
     if matches!(lock.frame_source, FrameSource::DisplayLink(_)) {
-        lock.start_display_link(&window_state);
+        lock.start_display_link();
     }
     drop(lock);
     update_window_scale_factor(&window_state);
@@ -3492,7 +3494,7 @@ extern "C" fn window_did_change_key_status(this: &AnyObject, selector: Sel, _: *
                 let mut lock = window_state.lock();
                 lock.request_frame_callback = Some(callback);
                 lock.renderer.set_presents_with_transaction(false);
-                lock.start_display_link(&window_state);
+                lock.start_display_link();
             }
         } else {
             lock.activated_least_once = true;
@@ -3618,7 +3620,7 @@ extern "C" fn display_layer(this: &AnyObject, _: Sel, _: *mut AnyObject) {
         let mut lock = window_state.lock();
         lock.request_frame_callback = Some(callback);
         lock.renderer.set_presents_with_transaction(false);
-        lock.start_display_link(&window_state);
+        lock.start_display_link();
         drop(lock);
         native_views::check_pointer_after_frame(&window_state);
     }
@@ -3672,8 +3674,8 @@ fn display_link_frame(window_state: &Rc<Mutex<MacWindowState>>) {
 }
 
 /// Draws immediately after a key press instead of waiting up to a full refresh
-/// for the next `CADisplayLink` tick, as long as the previous present was at
-/// least one refresh ago.
+/// for the next `CADisplayLink` tick, as long as GPUI has not already presented
+/// since the previous tick.
 fn draw_after_input(this: &AnyObject) {
     let signal_at = PlatformFrameSignal::capture(scheduler::Instant::now);
     let window_state = unsafe { get_window_state(this) };

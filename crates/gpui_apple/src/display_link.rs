@@ -6,7 +6,7 @@ use objc2::{
 };
 use objc2_foundation::{NSObject, NSObjectProtocol, NSRunLoop, NSRunLoopCommonModes};
 pub use objc2_quartz_core::CADisplayLink;
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 
 struct DisplayLinkTargetIvars {
     callback: Box<dyn Fn()>,
@@ -51,6 +51,7 @@ impl DisplayLinkTarget {
 pub struct DisplayLink {
     link: Retained<CADisplayLink>,
     _target: Retained<DisplayLinkTarget>,
+    invalidated: Cell<bool>,
     _main_thread: MainThreadMarker,
 }
 
@@ -62,14 +63,35 @@ impl DisplayLink {
         create: impl FnOnce(&AnyObject, Sel) -> Retained<CADisplayLink>,
         callback: impl Fn() + 'static,
     ) -> Self {
+        Self::build(main_thread, false, create, callback)
+    }
+
+    /// Creates a `CADisplayLink` registered on the main run loop in common
+    /// modes, initially paused until [`Self::set_paused`] resumes it.
+    pub fn new_paused(
+        main_thread: MainThreadMarker,
+        create: impl FnOnce(&AnyObject, Sel) -> Retained<CADisplayLink>,
+        callback: impl Fn() + 'static,
+    ) -> Self {
+        Self::build(main_thread, true, create, callback)
+    }
+
+    fn build(
+        main_thread: MainThreadMarker,
+        paused: bool,
+        create: impl FnOnce(&AnyObject, Sel) -> Retained<CADisplayLink>,
+        callback: impl Fn() + 'static,
+    ) -> Self {
         let target = DisplayLinkTarget::new(main_thread, callback);
         let link = create(&target, sel!(displayLinkFired:));
+        link.setPaused(paused);
         // SAFETY: `MainThreadMarker` confines `Self` to the main thread, and
         // the main run loop outlives the link.
         unsafe { link.addToRunLoop_forMode(&NSRunLoop::mainRunLoop(), NSRunLoopCommonModes) };
         Self {
             link,
             _target: target,
+            invalidated: Cell::new(false),
             _main_thread: main_thread,
         }
     }
@@ -94,11 +116,21 @@ impl DisplayLink {
     pub fn is_paused(&self) -> bool {
         self.link.isPaused()
     }
+
+    pub fn invalidate(&self) {
+        if !self.invalidated.replace(true) {
+            self.link.invalidate();
+        }
+    }
+
+    pub fn is_invalidated(&self) -> bool {
+        self.invalidated.get()
+    }
 }
 
 impl Drop for DisplayLink {
     fn drop(&mut self) {
-        self.link.invalidate();
+        self.invalidate();
     }
 }
 
@@ -106,18 +138,12 @@ impl Drop for DisplayLink {
 pub struct DisplayLinkDebugState {
     pub attached: bool,
     pub active: bool,
-    pub paused: Option<bool>,
+    pub paused: bool,
     pub woken: bool,
 }
 
-/// Demand-driven `CADisplayLink` frame state shared with GPUI's frame waker so
-/// that waking a paused link does not need to acquire a platform window lock.
-///
-/// The link pauses after any tick in which GPUI neither presented nor asked for
-/// another frame, so an idle window receives no callbacks.
 #[derive(Default)]
-pub struct DisplayLinkFrames {
-    link: RefCell<Option<DisplayLink>>,
+struct FrameDemand {
     /// Whether the owner currently permits display-link ticks (e.g. visible and
     /// not inside a synchronous transaction draw).
     active: Cell<bool>,
@@ -127,99 +153,113 @@ pub struct DisplayLinkFrames {
     presented: Cell<bool>,
 }
 
+impl FrameDemand {
+    fn stop(&self) {
+        self.active.set(false);
+        self.presented.set(false);
+    }
+
+    fn wake(&self) -> bool {
+        self.woken.set(true);
+        self.active.get()
+    }
+
+    fn can_draw_early(&self) -> bool {
+        self.active.get() && !self.presented.get()
+    }
+
+    fn begin_frame(&self) {
+        self.woken.set(false);
+        self.presented.set(false);
+    }
+
+    fn should_pause_after_frame(&self) -> bool {
+        !self.presented.get() && !self.woken.get()
+    }
+}
+
+/// Demand-driven `CADisplayLink` frame state shared with GPUI's frame waker so
+/// that waking a paused link does not need to acquire a platform window lock.
+///
+/// The link is created once when the window opens and pauses after any tick in
+/// which GPUI neither presented nor asked for another frame, so an idle window
+/// receives no callbacks.
+pub struct DisplayLinkFrames {
+    link: DisplayLink,
+    demand: FrameDemand,
+}
+
 impl DisplayLinkFrames {
-    /// Resumes the link, calling `create` to build it on first start.
-    pub fn start(
-        &self,
+    pub fn new(
         main_thread: MainThreadMarker,
         create: impl FnOnce(&AnyObject, Sel) -> Retained<CADisplayLink>,
         callback: impl Fn() + 'static,
-    ) {
-        self.active.set(true);
-        let mut slot = self.link.borrow_mut();
-        if let Some(link) = slot.as_ref() {
-            link.set_paused(false);
-            return;
+    ) -> Self {
+        Self {
+            link: DisplayLink::new_paused(main_thread, create, callback),
+            demand: FrameDemand::default(),
         }
-        *slot = Some(DisplayLink::new(main_thread, create, callback));
+    }
+
+    pub fn resume(&self) {
+        self.demand.active.set(true);
+        self.link.set_paused(false);
     }
 
     pub fn stop(&self) {
-        self.active.set(false);
-        self.presented.set(false);
-        self.pause();
-    }
-
-    fn pause(&self) {
-        if let Ok(link) = self.link.try_borrow()
-            && let Some(link) = link.as_ref()
-        {
-            link.set_paused(true);
-        }
+        self.demand.stop();
+        self.link.set_paused(true);
     }
 
     pub fn invalidate(&self) {
-        self.active.set(false);
-        self.presented.set(false);
-        drop(self.link.borrow_mut().take());
+        self.demand.stop();
+        self.link.invalidate();
     }
 
     pub fn wake(&self) {
-        self.woken.set(true);
-        // The link is only borrowed mutably while being created in `start`,
-        // where a new link already begins unpaused.
-        if self.active.get()
-            && let Ok(link) = self.link.try_borrow()
-            && let Some(link) = link.as_ref()
-        {
-            link.set_paused(false);
+        if self.demand.wake() {
+            self.link.set_paused(false);
         }
     }
 
     pub fn has_pending_wake(&self) -> bool {
-        self.woken.get()
+        self.demand.woken.get()
     }
 
     pub fn clear_pending_wake(&self) {
-        self.woken.set(false);
+        self.demand.woken.set(false);
     }
 
     pub fn did_present(&self) {
-        self.presented.set(true);
+        self.demand.presented.set(true);
     }
 
     /// Whether an input-triggered draw can present immediately without
     /// presenting more than once in the current refresh interval.
     pub fn can_draw_early(&self) -> bool {
-        self.active.get() && !self.presented.get()
+        self.demand.can_draw_early()
     }
 
     pub fn begin_frame(&self) {
-        self.woken.set(false);
-        self.presented.set(false);
+        self.demand.begin_frame();
     }
 
     /// Ends a tick, pausing the link if GPUI neither presented nor asked for
     /// another frame while it ran. Returns whether it paused.
     pub fn end_frame(&self) -> bool {
-        let pause = !self.presented.get() && !self.woken.get();
+        let pause = self.demand.should_pause_after_frame();
         if pause {
-            self.pause();
+            self.link.set_paused(true);
         }
         pause
     }
 
     pub fn debug_state(&self) -> DisplayLinkDebugState {
-        let paused = self
-            .link
-            .try_borrow()
-            .ok()
-            .and_then(|link| link.as_ref().map(DisplayLink::is_paused));
         DisplayLinkDebugState {
-            attached: paused.is_some(),
-            active: self.active.get(),
-            paused,
-            woken: self.woken.get(),
+            attached: !self.link.is_invalidated(),
+            active: self.demand.active.get(),
+            paused: self.link.is_paused(),
+            woken: self.demand.woken.get(),
         }
     }
 }
@@ -230,72 +270,75 @@ mod tests {
 
     #[test]
     fn frames_pause_only_when_gpui_neither_presents_nor_asks_again() {
-        let frames = DisplayLinkFrames::default();
+        let demand = FrameDemand::default();
 
-        frames.begin_frame();
-        frames.did_present();
+        demand.begin_frame();
+        demand.presented.set(true);
         assert!(
-            !frames.end_frame(),
+            !demand.should_pause_after_frame(),
             "a frame that presented keeps the link running"
         );
 
-        frames.begin_frame();
-        frames.wake();
+        demand.begin_frame();
+        demand.wake();
         assert!(
-            !frames.end_frame(),
+            !demand.should_pause_after_frame(),
             "a wake during the tick, like a throttled frame's retry, keeps it running"
         );
 
-        frames.wake();
-        frames.begin_frame();
+        demand.wake();
+        demand.begin_frame();
         assert!(
-            frames.end_frame(),
+            demand.should_pause_after_frame(),
             "a wake before the tick was served by it"
         );
 
-        frames.did_present();
-        frames.begin_frame();
+        demand.presented.set(true);
+        demand.begin_frame();
         assert!(
-            frames.end_frame(),
+            demand.should_pause_after_frame(),
             "a present before the tick, like an input-driven frame, was not this tick's"
         );
 
-        frames.begin_frame();
-        assert!(frames.end_frame(), "an idle tick pauses the link");
+        demand.begin_frame();
+        assert!(
+            demand.should_pause_after_frame(),
+            "an idle tick pauses the link"
+        );
     }
 
     #[test]
     fn early_draws_cap_at_one_present_until_next_tick() {
-        let frames = DisplayLinkFrames::default();
+        let demand = FrameDemand::default();
         assert!(
-            !frames.can_draw_early(),
+            !demand.can_draw_early(),
             "an inactive link does not draw early"
         );
 
-        frames.active.set(true);
+        demand.active.set(true);
         assert!(
-            frames.can_draw_early(),
+            demand.can_draw_early(),
             "idle active window draws the first keypress immediately"
         );
 
-        frames.did_present();
+        demand.presented.set(true);
         assert!(
-            !frames.can_draw_early(),
+            !demand.can_draw_early(),
             "a second keypress before vsync waits for the display-link tick"
         );
 
-        frames.begin_frame();
+        demand.begin_frame();
         assert!(
-            frames.can_draw_early(),
+            demand.can_draw_early(),
             "the next vsync tick re-allows an early draw once idle"
         );
 
-        frames.did_present();
-        frames.stop();
-        assert!(!frames.can_draw_early());
-        frames.active.set(true);
+        demand.presented.set(true);
+        demand.stop();
+        assert!(!demand.can_draw_early());
+        demand.active.set(true);
         assert!(
-            frames.can_draw_early(),
+            demand.can_draw_early(),
             "stopping resets the presented flag"
         );
     }
