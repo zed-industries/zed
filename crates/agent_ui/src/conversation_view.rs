@@ -7786,6 +7786,139 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_retried_subagent_tool_call_shows_the_retry_state(cx: &mut TestAppContext) {
+        use super::subagent_card::{SubagentCardState, SubagentEntries, SubagentStatus};
+
+        init_test(cx);
+        let project = Project::test(FakeFs::new(cx.executor()), [], cx).await;
+        let connection: Rc<dyn AgentConnection> = Rc::new(StubAgentConnection::new());
+        let parent = cx.update(|cx| {
+            create_test_acp_thread(None, "parent", connection.clone(), project.clone(), cx)
+        });
+        let parent_session_id = parent.read_with(cx, |thread, _| thread.session_id().clone());
+        let subagent = cx.update(|cx| {
+            create_test_acp_subagent(parent_session_id, "child", connection, project, cx)
+        });
+        subagent.update(cx, |subagent, cx| {
+            subagent
+                .update_subagent_association(
+                    &acp_v2::SubagentUpdate::new("child").capabilities(
+                        acp_v2::SubagentSessionCapabilities::new()
+                            .cancel(acp_v2::SessionCancelCapabilities::new()),
+                    ),
+                    cx,
+                )
+                .expect("ACP subagent")
+        });
+        let work = |id: &str, cx: &mut TestAppContext| {
+            subagent
+                .update(cx, |subagent, cx| {
+                    subagent.upsert_assistant_message(
+                        acp_v2::AgentMessage::new(id).content(vec!["Working".into()]),
+                        cx,
+                    )
+                })
+                .expect("subagent work");
+        };
+        let report = |state: acp_v2::StateUpdate, cx: &mut TestAppContext| {
+            subagent
+                .update(cx, |subagent, cx| subagent.update_session_state(state, cx))
+                .expect("reported state");
+        };
+        let idle = |stop_reason: acp_v2::StopReason| {
+            acp_v2::StateUpdate::Idle(acp_v2::IdleStateUpdate::new().stop_reason(stop_reason))
+        };
+        let mut failure = acp_v2::Error::internal_error();
+        failure.message = "connection error".into();
+        // The retry's work is a new entry in the same run, with no new message.
+        let retry_work = |cx: &mut TestAppContext| {
+            subagent
+                .update(cx, |subagent, cx| {
+                    subagent.upsert_wire_tool_call(
+                        acp_v2::ToolCallUpdate::new("retry-read")
+                            .title("Read file")
+                            .status(acp_v2::ToolCallStatus::Completed),
+                        cx,
+                    )
+                })
+                .expect("retry work");
+        };
+
+        work("first", cx);
+        report(
+            idle(acp_v2::StopReason::Error(
+                acp_v2::ErrorStopReason::new().error(failure.clone()),
+            )),
+            cx,
+        );
+        let session_info = acp_v2::Meta::from_iter([(
+            acp_thread::SUBAGENT_SESSION_INFO_META_KEY.into(),
+            serde_json::to_value(acp_thread::SubagentSessionInfo {
+                session_id: acp_v2::SessionId::new("child"),
+                message_start_index: 0,
+                message_end_index: Some(0),
+            })
+            .expect("subagent session info should serialize"),
+        )]);
+        parent
+            .update(cx, |thread, cx| {
+                thread.upsert_wire_tool_call(
+                    acp_v2::ToolCallUpdate::new("spawn")
+                        .title("Explore")
+                        .status(acp_v2::ToolCallStatus::Failed)
+                        .content(vec!["connection error".into()])
+                        .meta(session_info),
+                    cx,
+                )
+            })
+            .expect("spawn tool call should apply");
+        let card = |cx: &mut TestAppContext| {
+            cx.update(|cx| {
+                let (_, tool_call) = parent
+                    .read(cx)
+                    .tool_call(&acp_v2::ToolCallId::new("spawn"))
+                    .expect("spawn tool call should exist");
+                SubagentCardState::for_subagent_tool_call(tool_call, Some(subagent.read(cx)), cx)
+            })
+        };
+        let assert_card = |status, can_stop, end, cx: &mut TestAppContext| {
+            let card = card(cx);
+            assert_eq!(card.status, status);
+            assert_eq!(card.error, None);
+            assert_eq!(card.can_stop, can_stop);
+            assert_eq!(card.entries, Some(SubagentEntries { start: 0, end }));
+        };
+        assert_eq!(card(cx).status, SubagentStatus::Failed);
+
+        report(
+            acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+            cx,
+        );
+        assert_card(SubagentStatus::Running, true, Some(0), cx);
+        retry_work(cx);
+        report(idle(acp_v2::StopReason::EndTurn), cx);
+        assert_card(SubagentStatus::Completed, false, Some(1), cx);
+
+        // A later message to the subagent starts a run of its own.
+        subagent.update(cx, |subagent, cx| {
+            subagent.push_user_content_block(None, "Next task".into(), cx)
+        });
+        report(
+            acp_v2::StateUpdate::Running(acp_v2::RunningStateUpdate::new()),
+            cx,
+        );
+        assert_card(SubagentStatus::Completed, false, Some(1), cx);
+        work("next", cx);
+        report(
+            idle(acp_v2::StopReason::Error(
+                acp_v2::ErrorStopReason::new().error(failure),
+            )),
+            cx,
+        );
+        assert_card(SubagentStatus::Completed, false, Some(1), cx);
+    }
+
+    #[gpui::test]
     async fn test_referenced_subagents_load_only_without_the_subagents_rfd(
         cx: &mut TestAppContext,
     ) {
