@@ -8,9 +8,10 @@ use semver::Version as SemanticVersion;
 use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::net::SocketAddr;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use std::{
     path::{Path, PathBuf},
+    pin::pin,
     sync::Arc,
 };
 use util::ResultExt;
@@ -23,8 +24,9 @@ use util::{
 };
 
 use futures::channel::mpsc::{Sender, UnboundedReceiver, UnboundedSender};
+use futures::future::{self, Either};
 use futures::{StreamExt, TryStreamExt};
-use gpui::{App, AppContext, AsyncApp, Task};
+use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, FutureExt, Task};
 use rpc::proto::Envelope;
 
 use crate::{
@@ -443,11 +445,16 @@ impl DockerExecConnection {
         Ok(())
     }
 
+    /// Uploads the regular files under `src_path` to the same paths under `dst_path`
+    /// as the remote user, creating files with mode 600 and directories with mode 700;
+    /// symlinks to files are uploaded as copies of their targets,
+    /// other entries are not supported, and empty directories are not created.
     async fn upload_directory_as_remote_user(
         docker_cli: String,
         connection_options: DockerConnectionOptions,
         src_path: PathBuf,
         dst_path: String,
+        executor: BackgroundExecutor,
     ) -> Result<()> {
         // More parallel podman --remote calls over SSH, as Podman machine makes,
         // start failing at sshd's default MaxStartups of 10.
@@ -472,6 +479,7 @@ impl DockerExecConnection {
 
         let docker_cli = docker_cli.as_str();
         let connection_options = &connection_options;
+        let executor = &executor;
         futures::stream::iter(files.into_iter().map(anyhow::Ok))
             .try_for_each_concurrent(
                 MAX_CONCURRENT_UPLOADS,
@@ -481,6 +489,8 @@ impl DockerExecConnection {
                         connection_options,
                         &local_path,
                         &remote_path,
+                        executor,
+                        EXIT_AFTER_UPLOAD_TIMEOUT,
                     )
                     .await
                 },
@@ -493,6 +503,8 @@ impl DockerExecConnection {
         connection_options: &DockerConnectionOptions,
         src_path: &Path,
         dst_path: &str,
+        executor: &BackgroundExecutor,
+        exit_timeout: Duration,
     ) -> Result<()> {
         let file = smol::fs::File::open(src_path)
             .await
@@ -528,16 +540,26 @@ impl DockerExecConnection {
         async move {
             let mut child = command.spawn()?;
             let stdin = child.stdin.take();
-            let (written, output) = futures::join!(
-                async move {
-                    if let Some(content) = content {
-                        let mut stdin = stdin.context("failed to open the stdin of docker exec")?;
-                        futures::io::copy(content, &mut stdin).await?;
-                    }
-                    anyhow::Ok(())
-                },
-                child.output()
-            );
+            let copy = pin!(async move {
+                if let Some(content) = content {
+                    let mut stdin = stdin.context("failed to open the stdin of docker exec")?;
+                    futures::io::copy(content, &mut stdin).await?;
+                }
+                anyhow::Ok(())
+            });
+            let output = pin!(child.output());
+            let (written, output) = match future::select(copy, output).await {
+                Either::Left((written, output)) => {
+                    let Ok(output) = output.with_timeout(exit_timeout, executor).await else {
+                        written?;
+                        anyhow::bail!(
+                            "{docker_cli} exec did not exit within {exit_timeout:?} after its input was closed"
+                        );
+                    };
+                    (written, output)
+                }
+                Either::Right((output, copy)) => (copy.await, output),
+            };
             let output = output?;
             let status = output.status;
             if !status.success() {
@@ -565,12 +587,15 @@ impl DockerExecConnection {
         let docker_cli = self.docker_cli().to_string();
         let connection_options = self.connection_options.clone();
         let src_path = src_path.to_path_buf();
+        let executor = cx.background_executor().clone();
         cx.background_spawn(async move {
             Self::upload_file_as_remote_user(
                 &docker_cli,
                 &connection_options,
                 &src_path,
                 &full_server_path,
+                &executor,
+                EXIT_AFTER_UPLOAD_TIMEOUT,
             )
             .await
         })
@@ -809,6 +834,7 @@ impl RemoteConnection for DockerExecConnection {
             self.connection_options.clone(),
             src_path,
             dest_path.to_string(),
+            cx.background_executor().clone(),
         );
 
         cx.background_spawn(upload_task)
@@ -1007,6 +1033,8 @@ impl RemoteConnection for DockerExecConnection {
         String::from("/bin/sh")
     }
 }
+
+const EXIT_AFTER_UPLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 fn push_environment<'a>(
     args: &mut Vec<String>,
@@ -1340,6 +1368,7 @@ mod tests {
         let remote_extension = remote_home.join("uploads").join("rust");
         let mut connection_options = connection(&[]).connection_options;
         connection_options.remote_user = "user:group".to_string();
+        let executor = BackgroundExecutor::new(Arc::new(gpui::TestDispatcher::new(0)));
         let logged_calls = |docker_cli: &str| -> Result<Vec<Vec<String>>> {
             let mut calls = std::fs::read_dir(format!("{docker_cli}.calls"))?
                 .map(|entry| {
@@ -1371,6 +1400,7 @@ mod tests {
                 connection_options.clone(),
                 extension,
                 remote_extension_path.clone(),
+                executor.clone(),
             ))
             .map_err(|error| format!("{error:#}")),
             Ok(())
@@ -1448,6 +1478,8 @@ mod tests {
                 &connection_options,
                 &large_server,
                 &remote_server,
+                &executor,
+                EXIT_AFTER_UPLOAD_TIMEOUT,
             ))
             .map_err(|error| format!("{error:#}")),
             Err(format!(
@@ -1462,6 +1494,47 @@ mod tests {
                 &connection_options,
                 &large_server,
                 &remote_server,
+                &executor,
+                EXIT_AFTER_UPLOAD_TIMEOUT,
+            ))
+            .map_err(|error| format!("{error:#}")),
+            Err(format!(
+                "failed to upload {large_server:?} -> {remote_server}: Broken pipe (os error 32)"
+            ))
+        );
+
+        let hanging_docker_cli = fake_docker_cli(
+            &directory.path().join("hanging"),
+            "cat > /dev/null\nexec sleep 10\n",
+        )?;
+        let exit_timeout = Duration::ZERO;
+        assert_eq!(
+            smol::block_on(DockerExecConnection::upload_file_as_remote_user(
+                &hanging_docker_cli,
+                &connection_options,
+                &large_server,
+                &remote_server,
+                &executor,
+                exit_timeout,
+            ))
+            .map_err(|error| format!("{error:#}")),
+            Err(format!(
+                "failed to upload {large_server:?} -> {remote_server}: {hanging_docker_cli} exec did not exit within {exit_timeout:?} after its input was closed"
+            ))
+        );
+
+        let closing_docker_cli = fake_docker_cli(
+            &directory.path().join("closing"),
+            "exec 0<&-\nexec sleep 10\n",
+        )?;
+        assert_eq!(
+            smol::block_on(DockerExecConnection::upload_file_as_remote_user(
+                &closing_docker_cli,
+                &connection_options,
+                &large_server,
+                &remote_server,
+                &executor,
+                exit_timeout,
             ))
             .map_err(|error| format!("{error:#}")),
             Err(format!(
