@@ -7169,7 +7169,7 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
-    async fn test_retried_subagent_tool_call_shows_the_retrys_state(cx: &mut TestAppContext) {
+    async fn test_retried_subagent_tool_call_shows_the_retry_state(cx: &mut TestAppContext) {
         use super::subagent_card::{SubagentCardState, SubagentEntries, SubagentStatus};
 
         init_test(cx);
