@@ -480,7 +480,7 @@ mod tests {
     use serde_json::json;
     use theme::{ChevronIcons, DirectoryIcons, IconTheme, ThemeRegistry};
     use util::path;
-    use workspace::MultiWorkspace;
+    use workspace::{MultiWorkspace, Workspace};
 
     fn init_test(cx: &mut TestAppContext) -> Arc<workspace::AppState> {
         cx.update(|cx| {
@@ -520,7 +520,9 @@ mod tests {
         });
     }
 
-    async fn setup_test(cx: &mut TestAppContext) -> Arc<workspace::AppState> {
+    async fn setup_workspace(
+        cx: &mut TestAppContext,
+    ) -> (Entity<Workspace>, &mut VisualTestContext) {
         let app_state = init_test(cx);
         register_test_icon_themes(cx);
         app_state
@@ -528,7 +530,14 @@ mod tests {
             .as_fake()
             .insert_tree(path!("/test"), json!({}))
             .await;
-        app_state
+
+        let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+
+        (workspace, cx)
     }
 
     fn open_icon_theme_selector(
@@ -576,12 +585,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_icon_theme_selector_preserves_selection_on_empty_filter(cx: &mut TestAppContext) {
-        let app_state = setup_test(cx).await;
-        let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace =
-            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let (workspace, cx) = setup_workspace(cx).await;
         let picker = open_icon_theme_selector(&workspace, cx);
 
         let target_index = picker.read_with(cx, |picker, _| {
@@ -642,12 +646,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_icon_theme_selector_shows_original_while_alt_is_held(cx: &mut TestAppContext) {
-        let app_state = setup_test(cx).await;
-        let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace =
-            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let (workspace, cx) = setup_workspace(cx).await;
         let picker = open_icon_theme_selector(&workspace, cx);
         let original_theme_name =
             picker.read_with(cx, |picker, _| picker.delegate.original_theme.0.to_string());
@@ -680,12 +679,7 @@ mod tests {
 
     #[gpui::test]
     async fn shows_selected_theme_when_binding_starts_with_alt(cx: &mut TestAppContext) {
-        let app_state = setup_test(cx).await;
-        let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace =
-            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let (workspace, cx) = setup_workspace(cx).await;
 
         // With a binding that starts with a lone `alt`, releasing `alt` is
         // handled as the first keystroke of that binding, so the modifiers
@@ -716,12 +710,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_icon_theme_selector_shows_original_while_button_is_held(cx: &mut TestAppContext) {
-        let app_state = setup_test(cx).await;
-        let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace =
-            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let (workspace, cx) = setup_workspace(cx).await;
         let picker = open_icon_theme_selector(&workspace, cx);
         let original_theme_name =
             picker.read_with(cx, |picker, _| picker.delegate.original_theme.0.to_string());

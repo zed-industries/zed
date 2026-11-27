@@ -159,7 +159,10 @@ struct ThemeSelectorDelegate {
     /// The theme that was selected before the `ThemeSelector` menu was opened.
     ///
     /// We use this to return back to theme that was set if the user dismisses the menu.
-    original_theme_settings: ThemeSettings,
+    /// Only the theme selection is kept, rather than all of the theme settings,
+    /// so that returning to it doesn't undo changes made to other settings
+    /// while the menu is open.
+    original_theme_selection: ThemeSelection,
     /// The current system appearance.
     original_system_appearance: Appearance,
     /// The id of the original theme in the list of themes.
@@ -191,7 +194,7 @@ impl ThemeSelectorDelegate {
         cx: &mut Context<ThemeSelector>,
     ) -> Self {
         let original_theme = cx.theme().clone();
-        let original_theme_settings = ThemeSettings::get_global(cx).clone();
+        let original_theme_selection = ThemeSettings::get_global(cx).theme.clone();
         let original_system_appearance = SystemAppearance::global(cx).0;
 
         let registry = ThemeRegistry::global(cx);
@@ -240,7 +243,7 @@ impl ThemeSelectorDelegate {
             fs,
             themes,
             matches,
-            original_theme_settings,
+            original_theme_selection,
             original_system_appearance,
             original_theme_id,
             new_theme: original_theme,
@@ -284,11 +287,19 @@ impl ThemeSelectorDelegate {
 
     fn revert_theme(&mut self, cx: &mut App) {
         if !self.selection_completed {
-            SettingsStore::update_global(cx, |store, _| {
-                store.override_global(self.original_theme_settings.clone());
-            });
+            self.restore_original_theme(cx);
             self.selection_completed = true;
         }
+    }
+
+    /// Updates the global (in-memory) theme settings to show the theme that
+    /// was set before the selector was opened.
+    fn restore_original_theme(&self, cx: &mut App) {
+        SettingsStore::update_global(cx, |store, _| {
+            let mut theme_settings = store.get::<ThemeSettings>(None).clone();
+            theme_settings.theme = self.original_theme_selection.clone();
+            store.override_global(theme_settings);
+        });
     }
 
     fn set_theme(&mut self, new_theme: Arc<Theme>, cx: &mut App) {
@@ -306,7 +317,7 @@ impl ThemeSelectorDelegate {
             override_global_theme(
                 store,
                 &self.new_theme,
-                &self.original_theme_settings.theme,
+                &self.original_theme_selection,
                 self.original_system_appearance,
             )
         });
@@ -344,9 +355,7 @@ impl ThemeSelectorDelegate {
 
     fn update_showing_original_theme(&mut self, cx: &mut Context<Picker<ThemeSelectorDelegate>>) {
         if self.showing_original_theme() {
-            SettingsStore::update_global(cx, |store, _| {
-                store.override_global(self.original_theme_settings.clone());
-            });
+            self.restore_original_theme(cx);
         } else {
             self.override_global_theme(cx);
         }
@@ -733,9 +742,10 @@ mod tests {
     use gpui::{TestAppContext, VisualTestContext};
     use project::Project;
     use serde_json::json;
+    use settings::FontSize;
     use theme::{Appearance, ThemeFamily, ThemeRegistry, default_color_scales};
     use util::path;
-    use workspace::MultiWorkspace;
+    use workspace::{MultiWorkspace, Workspace};
 
     fn init_test(cx: &mut TestAppContext) -> Arc<workspace::AppState> {
         cx.update(|cx| {
@@ -776,7 +786,9 @@ mod tests {
         });
     }
 
-    async fn setup_test(cx: &mut TestAppContext) -> Arc<workspace::AppState> {
+    async fn setup_workspace(
+        cx: &mut TestAppContext,
+    ) -> (Entity<Workspace>, &mut VisualTestContext) {
         let app_state = init_test(cx);
         register_test_themes(cx);
         app_state
@@ -784,7 +796,14 @@ mod tests {
             .as_fake()
             .insert_tree(path!("/test"), json!({}))
             .await;
-        app_state
+
+        let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+
+        (workspace, cx)
     }
 
     fn open_theme_selector(
@@ -858,12 +877,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_theme_selector_shows_original_while_alt_is_held(cx: &mut TestAppContext) {
-        let app_state = setup_test(cx).await;
-        let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace =
-            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let (workspace, cx) = setup_workspace(cx).await;
         let original_theme_name = shown_theme_name(cx);
         let picker = open_theme_selector(&workspace, cx);
 
@@ -895,12 +909,7 @@ mod tests {
 
     #[gpui::test]
     async fn shows_selected_theme_when_binding_starts_with_alt(cx: &mut TestAppContext) {
-        let app_state = setup_test(cx).await;
-        let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace =
-            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let (workspace, cx) = setup_workspace(cx).await;
         let original_theme_name = shown_theme_name(cx);
 
         // With a binding that starts with a lone `alt`, releasing `alt` is
@@ -930,12 +939,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_theme_selector_shows_original_while_button_is_held(cx: &mut TestAppContext) {
-        let app_state = setup_test(cx).await;
-        let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace =
-            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let (workspace, cx) = setup_workspace(cx).await;
         let original_theme_name = shown_theme_name(cx);
         let picker = open_theme_selector(&workspace, cx);
 
@@ -965,12 +969,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_theme_selector_preserves_selection_on_empty_filter(cx: &mut TestAppContext) {
-        let app_state = setup_test(cx).await;
-        let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace =
-            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let (workspace, cx) = setup_workspace(cx).await;
         let picker = open_theme_selector(&workspace, cx);
 
         let target_index = picker.read_with(cx, |picker, _| {
@@ -1008,5 +1007,41 @@ mod tests {
             "Test Light",
             "previewed theme should be preserved after clearing an empty filter"
         );
+    }
+
+    #[gpui::test]
+    async fn does_not_revert_ui_font_size_setting(cx: &mut TestAppContext) {
+        let (workspace, cx) = setup_workspace(cx).await;
+        let original_theme_name = shown_theme_name(cx);
+        let picker = open_theme_selector(&workspace, cx);
+
+        select_theme(&picker, "Test Light", cx);
+        assert_eq!(shown_theme_name(cx), "Test Light");
+        assert_ne!(shown_theme_name(cx), original_theme_name);
+
+        let ui_font_size = |cx: &mut VisualTestContext| {
+            cx.read(|cx| ThemeSettings::get_global(cx).ui_font_size_settings())
+        };
+
+        // Update the `ui_font_size` setting to a different value to verify that
+        // holding `alt` only restores `ThemeSettings::theme` and not the other
+        // fields.
+        assert_ne!(ui_font_size(cx), px(18.0));
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.ui_font_size = Some(FontSize(18.0))
+                });
+            });
+        });
+        assert_eq!(ui_font_size(cx), px(18.0));
+
+        cx.simulate_modifiers_change(Modifiers::alt());
+        assert_eq!(shown_theme_name(cx), original_theme_name);
+        assert_eq!(ui_font_size(cx), px(18.0));
+
+        cx.simulate_modifiers_change(Modifiers::none());
+        assert_eq!(shown_theme_name(cx), "Test Light");
+        assert_eq!(ui_font_size(cx), px(18.0));
     }
 }
