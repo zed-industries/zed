@@ -1154,13 +1154,11 @@ impl MacWindow {
                     Rc::new(DisplayLinkFrames::new(
                         marker,
                         |target, selector| {
-                            // SAFETY: `native_view` is a live `GPUIView` (`NSView` subclass), and
+                            // `native_view` is a live `GPUIView` (`NSView` subclass), and
                             // `DisplayLink` supplies a target implementing `selector`.
-                            unsafe {
-                                native_view
-                                    .as_ref()
-                                    .displayLinkWithTarget_selector(target, selector)
-                            }
+                            native_view
+                                .as_ref()
+                                .displayLinkWithTarget_selector(target, selector)
                         },
                         move || {
                             if let Some(window_state) = weak_state.upgrade() {
