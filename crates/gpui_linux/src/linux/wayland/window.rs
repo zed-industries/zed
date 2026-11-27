@@ -2397,6 +2397,128 @@ fn add_rounded_rect(
     }
 }
 
+fn add_opaque_rect(
+    area: Bounds<i32>,
+    radii: Corners<Pixels>,
+    tiling: Tiling,
+    mut add_rectangle: impl FnMut(i32, i32, i32, i32),
+) {
+    let left = area.origin.x + i32::from(!tiling.left);
+    let top = area.origin.y + i32::from(!tiling.top);
+    let right = area.origin.x + area.size.width - i32::from(!tiling.right);
+    let bottom = area.origin.y + area.size.height - i32::from(!tiling.bottom);
+    let width = right - left;
+    let height = bottom - top;
+    if width <= 0 || height <= 0 {
+        return;
+    }
+
+    let clamp_radius =
+        |radius: Pixels| radius.ceil().to_i32().max(0).min(width / 2).min(height / 2);
+    let top_left = clamp_radius(radii.top_left);
+    let top_right = clamp_radius(radii.top_right);
+    let bottom_left = clamp_radius(radii.bottom_left);
+    let bottom_right = clamp_radius(radii.bottom_right);
+    let top_height = top_left.max(top_right);
+    let bottom_height = bottom_left.max(bottom_right);
+
+    let mut add_non_empty = |x: i32, y: i32, width: i32, height: i32| {
+        if width > 0 && height > 0 {
+            add_rectangle(x, y, width, height);
+        }
+    };
+    add_non_empty(
+        left + top_left,
+        top,
+        width - top_left - top_right,
+        top_height,
+    );
+    add_non_empty(
+        left,
+        top + top_height,
+        width,
+        height - top_height - bottom_height,
+    );
+    add_non_empty(
+        left + bottom_left,
+        bottom - bottom_height,
+        width - bottom_left - bottom_right,
+        bottom_height,
+    );
+}
+
+#[cfg(test)]
+mod opaque_rect_tests {
+    use super::add_opaque_rect;
+    use gpui::{Bounds, Corners, Pixels, Tiling, point, px, size};
+
+    fn rectangles(
+        area: Bounds<i32>,
+        radii: Corners<Pixels>,
+        tiling: Tiling,
+    ) -> Vec<(i32, i32, i32, i32)> {
+        let mut rectangles = Vec::new();
+        add_opaque_rect(area, radii, tiling, |x, y, width, height| {
+            rectangles.push((x, y, width, height));
+        });
+        rectangles
+    }
+
+    #[test]
+    fn fully_tiled_covers_area() {
+        let area = Bounds::new(point(0, 0), size(100, 50));
+        assert_eq!(
+            rectangles(area, Corners::default(), Tiling::tiled()),
+            vec![(0, 0, 100, 50)]
+        );
+    }
+
+    #[test]
+    fn floating_excludes_border_and_corners() {
+        let area = Bounds::new(point(10, 10), size(100, 50));
+        assert_eq!(
+            rectangles(area, Corners::all(px(10.0)), Tiling::default()),
+            vec![(21, 11, 78, 10), (11, 21, 98, 28), (21, 49, 78, 10)]
+        );
+    }
+
+    #[test]
+    fn half_tiled_keeps_tiled_edges() {
+        let area = Bounds::new(point(0, 0), size(100, 50));
+        let tiling = Tiling {
+            top: true,
+            left: true,
+            bottom: true,
+            right: false,
+        };
+        assert_eq!(
+            rectangles(area, Corners::default(), tiling),
+            vec![(0, 0, 99, 50)]
+        );
+    }
+
+    #[test]
+    fn fractional_radii_round_up() {
+        let area = Bounds::new(point(0, 0), size(100, 50));
+        let radii = Corners {
+            top_left: px(2.5),
+            ..Corners::default()
+        };
+        assert_eq!(
+            rectangles(area, radii, Tiling::tiled()),
+            vec![(3, 0, 97, 3), (0, 3, 100, 47)]
+        );
+    }
+
+    #[test]
+    fn empty_area() {
+        for dimensions in [size(0, 10), size(10, 0), size(2, 10), size(-1, 10)] {
+            let area = Bounds::new(point(10, 20), dimensions);
+            assert!(rectangles(area, Corners::all(px(4.0)), Tiling::default()).is_empty());
+        }
+    }
+}
+
 #[cfg(test)]
 mod rounded_rect_tests {
     use super::add_rounded_rect;
@@ -2482,17 +2604,20 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
         .compositor
         .create_region(&state.globals.qh, ());
 
-    // Client decorations include transparent shadows and antialiased corners,
-    // so don't promise the compositor an opaque region.
+    let opaque_area = match state.decorations {
+        WindowDecorations::Server => Some((area, Corners::default(), Tiling::tiled())),
+        // Until the client reports its inset, the shadow can't be told apart from the content.
+        WindowDecorations::Client => state
+            .client_inset
+            .map(|_| (area, state.client_corner_radii, state.tiling)),
+    };
+
     if state.background_appearance == WindowBackgroundAppearance::Opaque
-        && state.decorations == WindowDecorations::Server
+        && let Some((area, radii, tiling)) = opaque_area
     {
-        region.add(
-            area.origin.x,
-            area.origin.y,
-            area.size.width,
-            area.size.height,
-        );
+        add_opaque_rect(area, radii, tiling, |x, y, width, height| {
+            region.add(x, y, width, height);
+        });
 
         // Promise the compositor that this region of the window surface
         // contains no transparent pixels. This allows the compositor to skip
