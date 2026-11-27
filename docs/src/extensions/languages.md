@@ -811,6 +811,20 @@ Open the Extensions page and click `Install Dev Extension`, or run {#action zed:
 
 This example uses the `proto` extension ID. If you have the published Proto extension installed, the dev extension overrides it. Reinstall the published extension when you finish testing if you want to return to it.
 
+Zed's default settings prefer `buf` for Proto files and disable `protols`. Open the Settings Editor ({#kb zed::OpenSettings}) and set the language servers for Proto to `protols`. Or add this to your `settings.json`:
+
+```json [settings]
+{
+  "languages": {
+    "Proto": {
+      "language_servers": ["protols", "..."]
+    }
+  }
+}
+```
+
+The `"..."` entry keeps any other registered language servers available. See [Choosing Language Servers](../configuring-languages.md#choosing-language-servers) for more information about this setting.
+
 Create `example.proto` in a workspace with the following contents:
 
 ```proto
@@ -842,7 +856,7 @@ Common failures include:
 - **The WebAssembly target is missing:** Run `rustup target add wasm32-wasip2`, then rebuild the dev extension.
 - **Zed cannot find Protols:** Run `protols --version` in the same environment as your workspace. Install Protols if needed, then reopen the workspace so Zed can refresh its environment.
 - **A highlighting query fails to compile:** Check Zed.log for the invalid node or capture name. Use node names from the grammar revision pinned in `extension.toml`.
-- **The language server does not start:** Confirm that `languages` in `extension.toml` exactly matches `name` in `config.toml`, then inspect Zed.log for the server error.
+- **The language server does not start:** Confirm that `languages` in `extension.toml` exactly matches `name` in `config.toml` and that Protols is enabled in your settings as shown above, then inspect Zed.log for the server error.
 
 ### 7. Install the Server from the Extension {#tutorial-server-installation}
 
