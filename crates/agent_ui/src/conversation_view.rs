@@ -334,6 +334,7 @@ impl Conversation {
                             .entry(session_id.clone())
                             .or_default()
                             .push(id.clone());
+                        cx.notify();
                     }
                     AcpThreadEvent::ElicitationResponded(id) => {
                         if let Some(elicitations) = this.elicitation_requests.get_mut(&session_id) {
@@ -342,6 +343,7 @@ impl Conversation {
                                 this.elicitation_requests.shift_remove(&session_id);
                             }
                         }
+                        cx.notify();
                     }
                     AcpThreadEvent::NewEntry
                     | AcpThreadEvent::ActivityConfirmedIdle
@@ -518,6 +520,39 @@ impl Conversation {
                 }
             })
             .collect()
+    }
+
+    /// Subagent sessions that are blocked on the user, either by a tool call
+    /// awaiting permission or by a pending elicitation (e.g. `ask_user`).
+    /// Background subagents keep running after their parent's turn ends, so
+    /// this is the only place the parent view learns they are waiting.
+    pub fn subagents_awaiting_input(&self, cx: &App) -> Vec<(acp_v2::SessionId, usize)> {
+        let mut awaiting = self.subagents_awaiting_permission(cx);
+        for (session_id, elicitation_ids) in &self.elicitation_requests {
+            let Some(thread) = self.threads.get(session_id) else {
+                continue;
+            };
+            let thread = thread.read(cx);
+            if thread.parent_session_id().is_none() {
+                continue;
+            }
+            let pending = elicitation_ids
+                .iter()
+                .filter(|id| {
+                    thread.elicitation(id).is_some_and(|(_, elicitation)| {
+                        matches!(elicitation.status, ElicitationStatus::Pending { .. })
+                    })
+                })
+                .count();
+            if pending == 0 {
+                continue;
+            }
+            match awaiting.iter_mut().find(|(id, _)| id == session_id) {
+                Some((_, count)) => *count += pending,
+                None => awaiting.push((session_id.clone(), pending)),
+            }
+        }
+        awaiting
     }
 
     /// Returns the first pending tool call request for exactly `session_id`.
@@ -18532,6 +18567,91 @@ pub(crate) mod tests {
             assert!(conversation.subagents_awaiting_permission(cx).is_empty());
         });
         cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_subagent_tool_call_waiting_on_ask_user_counts_as_awaiting_input(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection: Rc<dyn AgentConnection> = Rc::new(StubAgentConnection::new());
+        let root_session_id = acp_v2::SessionId::new("root");
+        let child_session_id = acp_v2::SessionId::new("child");
+        let (root, child) = cx.update(|cx| {
+            let root =
+                create_test_acp_thread(None, "root", connection.clone(), project.clone(), cx);
+            let child = create_test_acp_thread(
+                Some(root_session_id.clone()),
+                "child",
+                connection,
+                project,
+                cx,
+            );
+            (root, child)
+        });
+        let conversation = cx.update(|cx| {
+            cx.new(|cx| {
+                let mut conversation = Conversation::default();
+                conversation.register_thread(root.clone(), cx);
+                conversation.register_thread(child.clone(), cx);
+                conversation
+            })
+        });
+
+        let request_for = |session_id: &acp_v2::SessionId| {
+            acp_v2::CreateElicitationRequest::new(
+                acp_v2::ElicitationFormMode::new(
+                    acp_v2::ElicitationSessionScope::new(session_id.clone()),
+                    acp_v2::ElicitationSchema::new().string("other", true),
+                ),
+                "Which directory should we explore?",
+            )
+        };
+        let _root_response = root.update(cx, |thread, cx| {
+            thread
+                .request_elicitation(request_for(&root_session_id), cx)
+                .expect("root elicitation should be accepted")
+        });
+        let _child_response = child.update(cx, |thread, cx| {
+            thread
+                .request_elicitation(request_for(&child_session_id), cx)
+                .expect("child elicitation should be accepted")
+        });
+        cx.run_until_parked();
+
+        conversation.read_with(cx, |conversation, cx| {
+            assert!(conversation.subagents_awaiting_permission(cx).is_empty());
+            assert_eq!(
+                conversation.subagents_awaiting_input(cx),
+                vec![(child_session_id.clone(), 1)],
+                "Only the subagent's pending ask_user should be listed"
+            );
+        });
+
+        let elicitation_id = child.read_with(cx, |thread, _| {
+            thread
+                .entries()
+                .iter()
+                .find_map(|entry| match entry {
+                    AgentThreadEntry::Elicitation(id) => Some(id.clone()),
+                    _ => None,
+                })
+                .expect("child elicitation entry should exist")
+        });
+        child.update(cx, |thread, cx| {
+            thread.respond_to_elicitation(
+                &elicitation_id,
+                acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Cancel),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        conversation.read_with(cx, |conversation, cx| {
+            assert!(conversation.subagents_awaiting_input(cx).is_empty());
+        });
     }
 
     #[gpui::test]

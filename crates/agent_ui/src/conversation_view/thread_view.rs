@@ -4650,7 +4650,7 @@ impl ThreadView {
     }
 
     fn render_subagents_awaiting_permission(&self, cx: &Context<Self>) -> Option<AnyElement> {
-        let awaiting = self.conversation.read(cx).subagents_awaiting_permission(cx);
+        let awaiting = self.conversation.read(cx).subagents_awaiting_input(cx);
 
         if awaiting.is_empty() {
             return None;
@@ -4683,7 +4683,7 @@ impl ThreadView {
                         .border_b_1()
                         .border_color(cx.theme().colors().border)
                         .child(
-                            Label::new("Subagents Awaiting Permission:")
+                            Label::new("Subagents Awaiting Input:")
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
                         )
