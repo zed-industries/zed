@@ -8481,6 +8481,7 @@ impl Editor {
         }
 
         let snapshot = multi_buffer.read(cx);
+        let mut previous_buffer_id = None;
         self.selections
             .disjoint_anchor_ranges()
             .flat_map(|range| [range.start, range.end])
@@ -8492,8 +8493,9 @@ impl Editor {
                 })
             })
             // Selections are ordered, so this collapses each run of selections in the same buffer
-            // into a single range formatting check.
-            .dedup()
+            // into a single range formatting check. `Itertools::dedup` would read a whole run
+            // before yielding its buffer.
+            .filter(|buffer_id| previous_buffer_id.replace(*buffer_id) != Some(*buffer_id))
             .filter_map(|buffer_id| multi_buffer.buffer(buffer_id))
             .any(|buffer| project.supports_range_formatting(&buffer, cx))
     }
