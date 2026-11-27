@@ -7,7 +7,7 @@ mod unique_publish_names;
 
 use std::fmt;
 
-use guppy::graph::{DependencyDirection, ExternalSource, PackageSet};
+use guppy::graph::{DependencyDirection, ExternalSource, PackageMetadata, PackageSet};
 use thiserror::Error;
 
 use super::crate_graph::is_zed_fork;
@@ -16,6 +16,7 @@ use crate::tasks::gpui::publish_plan::PublishPlanEntry;
 const RULES: &[&dyn Rule] = &[
     &apache_licensed::ApacheLicensed,
     &unique_publish_names::UniquePublishNames,
+    &ZedOwnedRepositories,
 ];
 
 /// A check over the crates selected for a GPUI release.
@@ -24,7 +25,11 @@ pub(crate) trait Rule {
     fn name(&self) -> &'static str;
 
     /// Returns one violation per crate that breaks the rule.
-    fn check(&self, plan: &[PublishPlanEntry<'_>]) -> Vec<Violation>;
+    fn check(
+        &self,
+        plan: &[PublishPlanEntry<'_>],
+        dependencies: &[PackageMetadata<'_>],
+    ) -> Vec<Violation>;
 }
 
 /// Why a crate does not satisfy a [`Rule`].
@@ -36,35 +41,50 @@ pub fn validate(
     plan: &[PublishPlanEntry<'_>],
     dependencies: &PackageSet<'_>,
 ) -> Result<(), ValidationError> {
-    let mut violations = validate_with(RULES, plan)
-        .err()
-        .map_or_else(Vec::new, |error| error.violations);
-    for package in dependencies.packages(DependencyDirection::Forward) {
-        let source = package.source();
-        if let Some(ExternalSource::Git { repository, .. }) = source.parse_external()
-            && !is_zed_fork(source)
-        {
-            violations.push((
-                "Zed-owned repositories",
-                format!("{} requires a fork of {repository}", package.name()).into(),
-            ));
-        }
+    let dependencies: Vec<_> = dependencies
+        .packages(DependencyDirection::Forward)
+        .collect();
+    validate_with(RULES, plan, &dependencies)
+}
+
+struct ZedOwnedRepositories;
+
+impl Rule for ZedOwnedRepositories {
+    fn name(&self) -> &'static str {
+        "Zed-owned repositories"
     }
-    if violations.is_empty() {
-        Ok(())
-    } else {
-        Err(ValidationError { violations })
+
+    fn check(
+        &self,
+        _: &[PublishPlanEntry<'_>],
+        dependencies: &[PackageMetadata<'_>],
+    ) -> Vec<Violation> {
+        dependencies
+            .iter()
+            .filter_map(|package| {
+                let source = package.source();
+                if let Some(ExternalSource::Git { repository, .. }) = source.parse_external()
+                    && !is_zed_fork(source)
+                {
+                    return Some(
+                        format!("{} requires a fork of {repository}", package.name()).into(),
+                    );
+                }
+                None
+            })
+            .collect()
     }
 }
 
 fn validate_with(
     rules: &[&dyn Rule],
     plan: &[PublishPlanEntry<'_>],
+    dependencies: &[PackageMetadata<'_>],
 ) -> Result<(), ValidationError> {
     let violations = rules
         .iter()
         .flat_map(|rule| {
-            rule.check(plan)
+            rule.check(plan, dependencies)
                 .into_iter()
                 .map(|violation| (rule.name(), violation))
         })
@@ -110,7 +130,7 @@ mod tests {
             "crates are structurally sound"
         }
 
-        fn check(&self, _: &[PublishPlanEntry<'_>]) -> Vec<Violation> {
+        fn check(&self, _: &[PublishPlanEntry<'_>], _: &[PackageMetadata<'_>]) -> Vec<Violation> {
             vec![
                 Violation::from(Ramshackle("util")),
                 Violation::from(Ramshackle("gpui")),
@@ -120,10 +140,10 @@ mod tests {
 
     #[test]
     fn labels_each_violation_with_the_rule_that_found_it() {
-        assert!(validate_with(&[], &[]).is_ok());
+        assert!(validate_with(&[], &[], &[]).is_ok());
 
-        let error =
-            validate_with(&[&Failing], &[]).expect_err("expected the failing rule to be reported");
+        let error = validate_with(&[&Failing], &[], &[])
+            .expect_err("expected the failing rule to be reported");
         assert_eq!(
             error.to_string(),
             indoc::indoc! {"
