@@ -15,7 +15,8 @@ use gpui::{
     Subscription, Task, TextRun, WeakEntity, Window,
 };
 use language::{
-    Buffer, CodeLabel, File as _, Language, Location, Rope, ToOffset, ToPoint, lsp_to_symbol_kind,
+    Buffer, CodeLabel, File as _, Language, LanguageServerId, Location, Rope, ToOffset, ToPoint,
+    lsp_to_symbol_kind,
 };
 use picker::{Picker, PickerDelegate};
 use project::{CallHierarchyItem, LspStoreEvent, Project};
@@ -200,36 +201,107 @@ impl CallHierarchyView {
     ) -> CallHierarchyView {
         let prev_scroll_position = editor.update(cx, |editor, cx| Some(editor.scroll_position(cx)));
         let project_subscription =
-            cx.subscribe_in(&project, window, |view, _, event, window, cx| match event {
-                project::Event::LanguageServerBufferRegistered { buffer_id, .. } => {
-                    view.retry_empty_hierarchy(
-                        |delegate, cx| {
-                            delegate
-                                .queried_buffer
-                                .as_ref()
-                                .is_some_and(|buffer| buffer.read(cx).remote_id() == *buffer_id)
-                        },
-                        window,
-                        cx,
-                    );
+            cx.subscribe_in(&project, window, |view, _, event, window, cx| {
+                if let project::Event::LanguageServerBufferRegistered { buffer_id, .. } = event {
+                    view.picker.update(cx, |picker, cx| {
+                        let delegate = &mut picker.delegate;
+                        let queried_buffer_registered = delegate
+                            .queried_buffer
+                            .as_ref()
+                            .is_some_and(|buffer| buffer.read(cx).remote_id() == *buffer_id);
+                        if !queried_buffer_registered || delegate.root_item.is_some() {
+                            return;
+                        }
+                        match delegate.state {
+                            FetchState::Loading => {
+                                delegate.pending_refetch = Some(Refetch::AfterRegistration)
+                            }
+                            FetchState::NoSymbol => delegate.fetch_root(true, window, cx),
+                            FetchState::Loaded => {}
+                        }
+                    });
                 }
-                _ => {}
             });
         let lsp_store_subscription = cx.subscribe_in(
             &project.read(cx).lsp_store(),
             window,
-            |view, _, event, window, cx| match event {
-                LspStoreEvent::LanguageServerUpdate {
-                    message: proto::update_language_server::Variant::WorkEnd(_),
+            |view, _, event, window, cx| {
+                let LspStoreEvent::LanguageServerUpdate {
+                    language_server_id,
+                    message,
                     ..
-                } => {
-                    view.retry_empty_hierarchy(
-                        |delegate, _| delegate.queried_buffer.is_some(),
-                        window,
-                        cx,
+                } = event
+                else {
+                    return;
+                };
+                view.picker.update(cx, |picker, cx| {
+                    let delegate = &mut picker.delegate;
+                    if delegate.root_item.is_some() {
+                        return;
+                    }
+                    let ended_token = match message {
+                        proto::update_language_server::Variant::WorkStart(
+                            proto::LspWorkStart {
+                                token: Some(token), ..
+                            },
+                        ) => {
+                            delegate
+                                .started_work
+                                .push((*language_server_id, token.clone()));
+                            return;
+                        }
+                        proto::update_language_server::Variant::WorkEnd(proto::LspWorkEnd {
+                            token,
+                        }) => token.as_ref(),
+                        _ => return,
+                    };
+                    let started_index = delegate.started_work.iter().position(
+                        |(started_server_id, started_token)| {
+                            started_server_id == language_server_id
+                                && Some(started_token) == ended_token
+                        },
                     );
-                }
-                _ => {}
+                    match started_index {
+                        Some(index) => {
+                            delegate.started_work.swap_remove(index);
+                        }
+                        None => {
+                            if !delegate
+                                .servers_finished_earlier_work
+                                .contains(language_server_id)
+                            {
+                                delegate
+                                    .servers_finished_earlier_work
+                                    .push(*language_server_id);
+                            }
+                        }
+                    }
+                    if !delegate.can_retry_after_work(*language_server_id)
+                        || !delegate.server_has_queried_buffer(*language_server_id, cx)
+                        || !delegate.server_idle(*language_server_id, cx)
+                    {
+                        return;
+                    }
+                    match delegate.state {
+                        FetchState::Loading => match &mut delegate.pending_refetch {
+                            Some(Refetch::AfterServerWork(idle_servers)) => {
+                                if !idle_servers.contains(language_server_id) {
+                                    idle_servers.push(*language_server_id);
+                                }
+                            }
+                            Some(Refetch::AfterRegistration) => {}
+                            pending_refetch @ None => {
+                                *pending_refetch =
+                                    Some(Refetch::AfterServerWork(vec![*language_server_id]));
+                            }
+                        },
+                        FetchState::NoSymbol => {
+                            delegate.retried_servers.push(*language_server_id);
+                            delegate.fetch_root(false, window, cx);
+                        }
+                        FetchState::Loaded => {}
+                    }
+                });
             },
         );
         let delegate = CallHierarchyDelegate::new(
@@ -260,7 +332,7 @@ impl CallHierarchyView {
         picker.update(cx, |picker, cx| {
             picker.delegate.modal_width = modal_width;
             picker.delegate.focus_handle = picker_focus_handle;
-            picker.delegate.fetch_root(window, cx);
+            picker.delegate.fetch_root(true, window, cx);
         });
 
         CallHierarchyView {
@@ -268,19 +340,6 @@ impl CallHierarchyView {
             mode,
             _subscriptions: [project_subscription, lsp_store_subscription],
         }
-    }
-
-    fn retry_empty_hierarchy(
-        &mut self,
-        should_retry: impl FnOnce(&CallHierarchyDelegate, &App) -> bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.picker.update(cx, |picker, cx| {
-            if picker.delegate.root_item.is_none() && should_retry(&picker.delegate, cx) {
-                picker.delegate.fetch_root(window, cx);
-            }
-        });
     }
 
     fn set_mode(&mut self, mode: CallHierarchyMode, window: &mut Window, cx: &mut Context<Self>) {
@@ -317,6 +376,10 @@ impl ModalView for CallHierarchyView {
     ) -> DismissDecision {
         self.picker.update(cx, |picker, cx| {
             picker.delegate.restore_editor(window, cx);
+            if picker.delegate.state != FetchState::Loaded {
+                picker.delegate.fetch_task = None;
+                workspace::deregister_reopenable_picker(&picker.focus_handle(cx), cx);
+            }
         });
         DismissDecision::Dismiss(true)
     }
@@ -352,6 +415,10 @@ pub struct CallHierarchyDelegate {
     prev_scroll_position: Option<Point<ScrollOffset>>,
     focus_handle: FocusHandle,
     queried_buffer: Option<Entity<Buffer>>,
+    retried_servers: Vec<LanguageServerId>,
+    started_work: Vec<(LanguageServerId, proto::ProgressToken)>,
+    servers_finished_earlier_work: Vec<LanguageServerId>,
+    pending_refetch: Option<Refetch>,
     modal_width: Pixels,
     calls: Vec<Call>,
     candidates: Arc<Vec<StringMatchCandidate>>,
@@ -382,6 +449,10 @@ impl CallHierarchyDelegate {
             prev_scroll_position,
             focus_handle,
             queried_buffer: None,
+            retried_servers: Vec::new(),
+            started_work: Vec::new(),
+            servers_finished_earlier_work: Vec::new(),
+            pending_refetch: None,
             modal_width: Pixels::ZERO,
             calls: Vec::new(),
             candidates: Arc::new(Vec::new()),
@@ -390,7 +461,12 @@ impl CallHierarchyDelegate {
         }
     }
 
-    fn fetch_root(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn fetch_root(&mut self, arm: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.pending_refetch = None;
+        if arm {
+            self.retried_servers.clear();
+            self.servers_finished_earlier_work.clear();
+        }
         let editor_anchor = self.editor.update(cx, |editor, cx| {
             let selection = editor.selections.newest_anchor().head();
             editor
@@ -431,9 +507,29 @@ impl CallHierarchyDelegate {
             };
             let Some(root_item) = root_item else {
                 picker
-                    .update_in(cx, |picker, _, cx| {
-                        picker.delegate.state = FetchState::NoSymbol;
-                        cx.notify();
+                    .update_in(cx, |picker, window, cx| {
+                        match picker.delegate.pending_refetch.take() {
+                            Some(Refetch::AfterRegistration) => {
+                                picker.delegate.fetch_root(true, window, cx)
+                            }
+                            Some(Refetch::AfterServerWork(idle_servers)) => {
+                                let still_idle = idle_servers
+                                    .into_iter()
+                                    .filter(|server_id| picker.delegate.server_idle(*server_id, cx))
+                                    .collect::<Vec<_>>();
+                                if still_idle.is_empty() {
+                                    picker.delegate.state = FetchState::NoSymbol;
+                                    cx.notify();
+                                } else {
+                                    picker.delegate.retried_servers.extend(still_idle);
+                                    picker.delegate.fetch_root(false, window, cx);
+                                }
+                            }
+                            None => {
+                                picker.delegate.state = FetchState::NoSymbol;
+                                cx.notify();
+                            }
+                        }
                     })
                     .ok();
                 return;
@@ -446,6 +542,39 @@ impl CallHierarchyDelegate {
                 .ok();
             load_and_apply_calls(picker, root_item, None, &mut cx).await;
         }));
+    }
+
+    fn server_has_queried_buffer(&self, server_id: LanguageServerId, cx: &App) -> bool {
+        let Some(buffer) = self.queried_buffer.as_ref() else {
+            return false;
+        };
+        self.project
+            .read(cx)
+            .lsp_store()
+            .read(cx)
+            .relevant_server_ids_for_capability_check(buffer, cx)
+            .contains(&server_id)
+    }
+
+    fn server_idle(&self, server_id: LanguageServerId, cx: &App) -> bool {
+        let lsp_store = self.project.read(cx).lsp_store();
+        !lsp_store
+            .read(cx)
+            .language_server_statuses()
+            .any(|(status_server_id, status)| {
+                status_server_id == server_id && !status.pending_work.is_empty()
+            })
+    }
+
+    fn can_retry_after_work(&self, server_id: LanguageServerId) -> bool {
+        let retries = self
+            .retried_servers
+            .iter()
+            .filter(|retried_server_id| **retried_server_id == server_id)
+            .count();
+        let allowed_retries =
+            1 + usize::from(self.servers_finished_earlier_work.contains(&server_id));
+        retries < allowed_retries
     }
 
     fn load_calls(
@@ -856,6 +985,12 @@ impl Render for CallSignatureTooltip {
                 )
         })
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Refetch {
+    AfterRegistration,
+    AfterServerWork(Vec<LanguageServerId>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1297,7 +1432,7 @@ mod tests {
     use serde_json::json;
     use std::sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     };
     use theme::SyntaxTheme;
     use util::{path, rel_path::rel_path};
@@ -2200,13 +2335,23 @@ mod tests {
             setup_modal_test("fn main() { helper(); }\nfn helper() {}\n", cx).await;
 
         let server_ready = Arc::new(AtomicBool::new(false));
+        let prepare_requests = Arc::new(AtomicUsize::new(0));
+        let (unblock_first_prepare, first_prepare_blocked) =
+            futures::channel::oneshot::channel::<()>();
+        let mut first_prepare_blocked = Some(first_prepare_blocked);
         fake_server.set_request_handler::<lsp::request::CallHierarchyPrepare, _, _>({
             let uri = test_uri.clone();
             let server_ready = server_ready.clone();
+            let prepare_requests = prepare_requests.clone();
             move |_, _| {
+                prepare_requests.fetch_add(1, Ordering::AcqRel);
+                let blocked = first_prepare_blocked.take();
                 let uri = uri.clone();
                 let server_ready = server_ready.clone();
                 async move {
+                    if let Some(blocked) = blocked {
+                        blocked.await.ok();
+                    }
                     if server_ready.load(Ordering::Acquire) {
                         Ok(Some(vec![make_lsp_call_hierarchy_item("helper", uri, 1)]))
                     } else {
@@ -2216,9 +2361,8 @@ mod tests {
             }
         });
         fake_server.set_request_handler::<lsp::request::CallHierarchyIncomingCalls, _, _>({
-            let uri = test_uri.clone();
             move |_, _| {
-                let uri = uri.clone();
+                let uri = test_uri.clone();
                 async move {
                     Ok(Some(vec![lsp::CallHierarchyIncomingCall {
                         from: make_lsp_call_hierarchy_item("main", uri, 0),
@@ -2230,7 +2374,6 @@ mod tests {
 
         cx.dispatch_action(ShowIncomingCalls);
         cx.executor().run_until_parked();
-
         let modal = workspace
             .update(cx, |workspace, cx| {
                 workspace.active_modal::<CallHierarchyView>(cx)
@@ -2238,22 +2381,13 @@ mod tests {
             .expect("modal should be open");
         let (project, buffer_id) = modal.read_with(cx, |view, cx| {
             let delegate = &view.picker.read(cx).delegate;
-            assert_eq!(
-                delegate.state,
-                FetchState::NoSymbol,
-                "prepare against a not-yet-ready server should find nothing"
-            );
-            assert_eq!(
-                delegate.root_item.as_ref().map(|item| item.name.as_str()),
-                None
-            );
+            assert_eq!(delegate.state, FetchState::Loading);
             let buffer = delegate
                 .queried_buffer
                 .clone()
                 .expect("queried buffer should be recorded");
             (delegate.project.clone(), buffer.read(cx).remote_id())
         });
-
         let emit_registered = |cx: &mut VisualTestContext| {
             project.update(cx, |_, cx| {
                 cx.emit(project::Event::LanguageServerBufferRegistered {
@@ -2264,54 +2398,425 @@ mod tests {
                 });
             });
         };
+        let fetch_state = |cx: &mut VisualTestContext| {
+            modal.read_with(cx, |view, cx| view.picker.read(cx).delegate.state)
+        };
+
+        emit_registered(cx);
+        cx.executor().run_until_parked();
+        assert_eq!(
+            (fetch_state(cx), prepare_requests.load(Ordering::Acquire)),
+            (FetchState::Loading, 1),
+            "registration should not replace the pending preparation"
+        );
+
+        unblock_first_prepare.send(()).unwrap();
+        cx.executor().run_until_parked();
+        assert_eq!(
+            (fetch_state(cx), prepare_requests.load(Ordering::Acquire)),
+            (FetchState::NoSymbol, 2),
+            "registration during an empty preparation should retry once it finishes"
+        );
 
         server_ready.store(true, Ordering::Release);
         emit_registered(cx);
+        cx.executor().run_until_parked();
+        assert_eq!(prepare_requests.load(Ordering::Acquire), 3);
+        modal.read_with(cx, |view, cx| {
+            let delegate = &view.picker.read(cx).delegate;
+            assert_eq!(
+                delegate.root_item.as_ref().map(|item| item.name.as_str()),
+                Some("helper"),
+                "registration after an empty result should retry the preparation"
+            );
+            assert_eq!(delegate.calls[0].item.name, "main");
+        });
+
+        emit_registered(cx);
+        cx.executor().run_until_parked();
+        assert_eq!(
+            prepare_requests.load(Ordering::Acquire),
+            3,
+            "registration after results arrived should not refetch"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_call_hierarchy_modal_recovers_when_invoked_before_server_registration(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let server_ready = Arc::new(AtomicBool::new(false));
+        let prepare_requests = Arc::new(AtomicUsize::new(0));
+        let test_uri = lsp::Uri::from_file_path(path!("/test/src/main.rs")).unwrap();
+        let (workspace, mut fake_servers, cx) = open_modal_test_editor(
+            "fn main() { helper(); }\nfn helper() {}\n",
+            vec![call_hierarchy_adapter(Some(Box::new({
+                let server_ready = server_ready.clone();
+                let prepare_requests = prepare_requests.clone();
+                move |fake_server| {
+                    fake_server.set_request_handler::<lsp::request::CallHierarchyPrepare, _, _>({
+                        let uri = test_uri.clone();
+                        let server_ready = server_ready.clone();
+                        let prepare_requests = prepare_requests.clone();
+                        move |_, _| {
+                            prepare_requests.fetch_add(1, Ordering::AcqRel);
+                            let uri = uri.clone();
+                            let server_ready = server_ready.clone();
+                            async move {
+                                if server_ready.load(Ordering::Acquire) {
+                                    Ok(Some(vec![make_lsp_call_hierarchy_item("helper", uri, 1)]))
+                                } else {
+                                    Ok(Some(Vec::new()))
+                                }
+                            }
+                        }
+                    });
+                    fake_server
+                        .set_request_handler::<lsp::request::CallHierarchyIncomingCalls, _, _>({
+                            let uri = test_uri.clone();
+                            move |_, _| {
+                                let uri = uri.clone();
+                                async move {
+                                    Ok(Some(vec![lsp::CallHierarchyIncomingCall {
+                                        from: make_lsp_call_hierarchy_item("main", uri, 0),
+                                        from_ranges: Vec::new(),
+                                    }]))
+                                }
+                            }
+                        });
+                }
+            })))],
+            cx,
+        )
+        .await;
+
+        let registered_servers = workspace.update(cx, |workspace, cx| {
+            let editor = workspace
+                .active_item_as::<Editor>(cx)
+                .expect("editor should be open");
+            let buffer = editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .expect("editor should have a singleton buffer");
+            workspace
+                .project()
+                .read(cx)
+                .lsp_store()
+                .read(cx)
+                .relevant_server_ids_for_capability_check(&buffer, cx)
+                .len()
+        });
+        assert_eq!(
+            registered_servers, 0,
+            "the hierarchy should be invoked before the server has the buffer"
+        );
+
+        cx.dispatch_action(ShowIncomingCalls);
+        cx.executor().run_until_parked();
+        let modal = workspace
+            .update(cx, |workspace, cx| {
+                workspace.active_modal::<CallHierarchyView>(cx)
+            })
+            .expect("modal should be open");
+        assert_eq!(
+            (
+                modal.read_with(cx, |view, cx| view.picker.read(cx).delegate.state),
+                prepare_requests.load(Ordering::Acquire)
+            ),
+            (FetchState::NoSymbol, 1),
+            "server registration should ask the server that just got the buffer"
+        );
+
+        let fake_server = fake_servers[0]
+            .next()
+            .await
+            .expect("server should have started");
+        fake_server.start_progress("indexing").await;
+        cx.executor().run_until_parked();
+        server_ready.store(true, Ordering::Release);
+        fake_server.end_progress("indexing");
         cx.executor().run_until_parked();
         modal.read_with(cx, |view, cx| {
             let delegate = &view.picker.read(cx).delegate;
             assert_eq!(
                 delegate.root_item.as_ref().map(|item| item.name.as_str()),
                 Some("helper"),
-                "buffer registration should retry the preparation"
+                "a server that registered the buffer should be asked again once its work ends"
             );
             assert_eq!(delegate.calls[0].item.name, "main");
         });
-
-        fake_server.set_request_handler::<lsp::request::CallHierarchyIncomingCalls, _, _>({
-            move |_, _| {
-                let uri = test_uri.clone();
-                async move {
-                    Ok(Some(vec![lsp::CallHierarchyIncomingCall {
-                        from: make_lsp_call_hierarchy_item("other", uri, 0),
-                        from_ranges: Vec::new(),
-                    }]))
-                }
-            }
-        });
-        emit_registered(cx);
-        emit_work_end(&project, cx);
-        cx.executor().run_until_parked();
-        modal.read_with(cx, |view, cx| {
-            let delegate = &view.picker.read(cx).delegate;
-            assert_eq!(
-                delegate.calls[0].item.name, "main",
-                "server events after results arrived should not refetch"
-            );
-        });
+        assert_eq!(prepare_requests.load(Ordering::Acquire), 2);
     }
 
     #[gpui::test]
-    async fn test_call_hierarchy_modal_refreshes_on_lsp_work_end(cx: &mut TestAppContext) {
+    async fn test_call_hierarchy_modal_limits_retries_after_server_work(cx: &mut TestAppContext) {
         init_test(cx);
-        let (workspace, fake_server, test_uri, cx) =
+        let (workspace, fake_server, _test_uri, cx) =
             setup_modal_test("fn main() { helper(); }\nfn helper() {}\n", cx).await;
 
-        let server_ready = Arc::new(AtomicBool::new(false));
+        let prepare_requests = Arc::new(AtomicUsize::new(0));
+        let (unblock_first_prepare, first_prepare_blocked) =
+            futures::channel::oneshot::channel::<()>();
+        let (unblock_fourth_prepare, fourth_prepare_blocked) =
+            futures::channel::oneshot::channel::<()>();
+        let mut blocked_prepares = [
+            Some(first_prepare_blocked),
+            None,
+            None,
+            Some(fourth_prepare_blocked),
+        ];
         fake_server.set_request_handler::<lsp::request::CallHierarchyPrepare, _, _>({
+            let prepare_requests = prepare_requests.clone();
+            move |_, _| {
+                let request_index = prepare_requests.fetch_add(1, Ordering::AcqRel);
+                let blocked = blocked_prepares
+                    .get_mut(request_index)
+                    .and_then(Option::take);
+                async move {
+                    if let Some(blocked) = blocked {
+                        blocked.await.ok();
+                    }
+                    Ok(Some(Vec::new()))
+                }
+            }
+        });
+        let open_modal = |cx: &mut VisualTestContext| {
+            cx.dispatch_action(ShowIncomingCalls);
+            cx.executor().run_until_parked();
+            workspace
+                .update(cx, |workspace, cx| {
+                    workspace.active_modal::<CallHierarchyView>(cx)
+                })
+                .expect("modal should be open")
+        };
+        let fetch_state = |modal: &Entity<CallHierarchyView>, cx: &mut VisualTestContext| {
+            modal.read_with(cx, |view, cx| view.picker.read(cx).delegate.state)
+        };
+        let prepare_count = || prepare_requests.load(Ordering::Acquire);
+
+        fake_server.start_progress("indexing").await;
+        cx.executor().run_until_parked();
+        let modal = open_modal(cx);
+        assert_eq!(
+            (fetch_state(&modal, cx), prepare_count()),
+            (FetchState::Loading, 1)
+        );
+        fake_server.end_progress("indexing");
+        cx.executor().run_until_parked();
+        assert_eq!(
+            (fetch_state(&modal, cx), prepare_count()),
+            (FetchState::Loading, 1),
+            "a server finishing work should not replace the pending preparation"
+        );
+        unblock_first_prepare.send(()).unwrap();
+        cx.executor().run_until_parked();
+        assert_eq!(
+            (fetch_state(&modal, cx), prepare_count()),
+            (FetchState::NoSymbol, 2),
+            "a server that finished work during the preparation should be asked again after an empty result"
+        );
+        fake_server.start_progress("after-retry").await;
+        fake_server.end_progress("after-retry");
+        cx.executor().run_until_parked();
+        assert_eq!(
+            (fetch_state(&modal, cx), prepare_count()),
+            (FetchState::NoSymbol, 3),
+            "work started after invoking should still retry once when work running at invocation already did"
+        );
+        fake_server.start_progress("after-second-retry").await;
+        fake_server.end_progress("after-second-retry");
+        cx.executor().run_until_parked();
+        assert_eq!(
+            prepare_count(),
+            3,
+            "work started after invoking should retry at most once"
+        );
+
+        cx.dispatch_action(menu::Cancel);
+        drop(modal);
+        fake_server.start_progress("indexing-again").await;
+        cx.executor().run_until_parked();
+        let modal = open_modal(cx);
+        assert_eq!(
+            (fetch_state(&modal, cx), prepare_count()),
+            (FetchState::Loading, 4)
+        );
+        fake_server.end_progress("indexing-again");
+        fake_server.start_progress("background").await;
+        cx.executor().run_until_parked();
+        unblock_fourth_prepare.send(()).unwrap();
+        cx.executor().run_until_parked();
+        assert_eq!(
+            (fetch_state(&modal, cx), prepare_count()),
+            (FetchState::NoSymbol, 4),
+            "a server that is busy again when the result arrives should be waited for"
+        );
+        fake_server.end_progress("background");
+        cx.executor().run_until_parked();
+        assert_eq!(
+            (fetch_state(&modal, cx), prepare_count()),
+            (FetchState::NoSymbol, 5),
+            "a server that was busy when the hierarchy was invoked should be asked again once idle"
+        );
+
+        cx.dispatch_action(menu::Cancel);
+        drop(modal);
+        fake_server.start_progress("rebuilding").await;
+        cx.executor().run_until_parked();
+        let modal = open_modal(cx);
+        assert_eq!(
+            (fetch_state(&modal, cx), prepare_count()),
+            (FetchState::NoSymbol, 6)
+        );
+        fake_server.start_progress("short-task").await;
+        fake_server.end_progress("short-task");
+        cx.executor().run_until_parked();
+        assert_eq!(
+            prepare_count(),
+            6,
+            "a server that is still busy should not be asked again"
+        );
+        fake_server.end_progress("rebuilding");
+        cx.executor().run_until_parked();
+        assert_eq!(
+            (fetch_state(&modal, cx), prepare_count()),
+            (FetchState::NoSymbol, 7),
+            "a server should be asked again once all its work ends"
+        );
+
+        cx.dispatch_action(menu::Cancel);
+        drop(modal);
+        let modal = open_modal(cx);
+        assert_eq!(
+            (fetch_state(&modal, cx), prepare_count()),
+            (FetchState::NoSymbol, 8)
+        );
+        fake_server.start_progress("own-request").await;
+        fake_server.end_progress("own-request");
+        cx.executor().run_until_parked();
+        assert_eq!(
+            (fetch_state(&modal, cx), prepare_count()),
+            (FetchState::NoSymbol, 9)
+        );
+        let lsp_store =
+            workspace.read_with(cx, |workspace, cx| workspace.project().read(cx).lsp_store());
+        let emit_work_end = |server_id: lsp::LanguageServerId,
+                             token: &str,
+                             cx: &mut VisualTestContext| {
+            lsp_store.update(cx, |_, cx| {
+                cx.emit(LspStoreEvent::LanguageServerUpdate {
+                    language_server_id: server_id,
+                    name: None,
+                    message: proto::update_language_server::Variant::WorkEnd(proto::LspWorkEnd {
+                        token: Some(proto::ProgressToken {
+                            value: Some(proto::progress_token::Value::String(token.to_string())),
+                        }),
+                    }),
+                });
+            });
+        };
+        emit_work_end(
+            lsp::LanguageServerId(usize::MAX),
+            "indexing-before-join",
+            cx,
+        );
+        cx.executor().run_until_parked();
+        assert_eq!(
+            prepare_count(),
+            9,
+            "work of a server without the buffer should not retry"
+        );
+        emit_work_end(fake_server.server.server_id(), "indexing-before-join", cx);
+        cx.executor().run_until_parked();
+        assert_eq!(
+            (fetch_state(&modal, cx), prepare_count()),
+            (FetchState::NoSymbol, 10),
+            "work this client never saw starting should retry even after the shared retry was used"
+        );
+        emit_work_end(fake_server.server.server_id(), "loading-before-join", cx);
+        cx.executor().run_until_parked();
+        assert_eq!(
+            prepare_count(),
+            10,
+            "work this client never saw starting should retry at most once"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_call_hierarchy_modal_progress_of_each_request_does_not_loop(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (workspace, fake_server, _test_uri, cx) = setup_modal_test("fn main() {}\n", cx).await;
+
+        let prepare_requests = Arc::new(AtomicUsize::new(0));
+        fake_server.set_request_handler::<lsp::request::CallHierarchyPrepare, _, _>({
+            let prepare_requests = prepare_requests.clone();
+            let progress_server = fake_server.clone();
+            move |_, _| {
+                let request_index = prepare_requests.fetch_add(1, Ordering::AcqRel);
+                let progress_server = progress_server.clone();
+                async move {
+                    if request_index < 10 {
+                        let token = format!("prepare-{request_index}");
+                        progress_server.start_progress(token.clone()).await;
+                        progress_server.end_progress(token);
+                    }
+                    Ok(Some(Vec::new()))
+                }
+            }
+        });
+
+        cx.dispatch_action(ShowIncomingCalls);
+        cx.executor().run_until_parked();
+        let modal = workspace
+            .update(cx, |workspace, cx| {
+                workspace.active_modal::<CallHierarchyView>(cx)
+            })
+            .expect("modal should be open");
+        assert_eq!(
+            (
+                modal.read_with(cx, |view, cx| view.picker.read(cx).delegate.state),
+                prepare_requests.load(Ordering::Acquire)
+            ),
+            (FetchState::NoSymbol, 2),
+            "progress reported for each request should cause at most one retry"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_call_hierarchy_modal_retry_is_not_blocked_by_other_busy_servers(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (workspace, mut fake_servers, cx) = open_modal_test_editor(
+            "fn main() { helper(); }\nfn helper() {}\n",
+            vec![
+                call_hierarchy_adapter(None),
+                FakeLspAdapter {
+                    name: "no-call-hierarchy",
+                    ..FakeLspAdapter::default()
+                },
+            ],
+            cx,
+        )
+        .await;
+        let call_hierarchy_server = fake_servers[0].next().await.unwrap();
+        let other_server = fake_servers[1].next().await.unwrap();
+        cx.executor().run_until_parked();
+        let test_uri = lsp::Uri::from_file_path(path!("/test/src/main.rs")).unwrap();
+
+        let server_ready = Arc::new(AtomicBool::new(false));
+        let prepare_requests = Arc::new(AtomicUsize::new(0));
+        call_hierarchy_server.set_request_handler::<lsp::request::CallHierarchyPrepare, _, _>({
             let uri = test_uri.clone();
             let server_ready = server_ready.clone();
+            let prepare_requests = prepare_requests.clone();
             move |_, _| {
+                prepare_requests.fetch_add(1, Ordering::AcqRel);
                 let uri = uri.clone();
                 let server_ready = server_ready.clone();
                 async move {
@@ -2323,9 +2828,85 @@ mod tests {
                 }
             }
         });
-        fake_server.set_request_handler::<lsp::request::CallHierarchyIncomingCalls, _, _>({
-            move |_, _| {
+        call_hierarchy_server
+            .set_request_handler::<lsp::request::CallHierarchyIncomingCalls, _, _>(move |_, _| {
                 let uri = test_uri.clone();
+                async move {
+                    Ok(Some(vec![lsp::CallHierarchyIncomingCall {
+                        from: make_lsp_call_hierarchy_item("main", uri, 0),
+                        from_ranges: Vec::new(),
+                    }]))
+                }
+            });
+
+        call_hierarchy_server.start_progress("indexing").await;
+        other_server.start_progress("other-indexing").await;
+        cx.executor().run_until_parked();
+        cx.dispatch_action(ShowIncomingCalls);
+        cx.executor().run_until_parked();
+        let modal = workspace
+            .update(cx, |workspace, cx| {
+                workspace.active_modal::<CallHierarchyView>(cx)
+            })
+            .expect("modal should be open");
+        let fetch_state = |cx: &mut VisualTestContext| {
+            modal.read_with(cx, |view, cx| view.picker.read(cx).delegate.state)
+        };
+        assert_eq!(
+            (fetch_state(cx), prepare_requests.load(Ordering::Acquire)),
+            (FetchState::NoSymbol, 1)
+        );
+
+        server_ready.store(true, Ordering::Release);
+        call_hierarchy_server.end_progress("indexing");
+        cx.executor().run_until_parked();
+        modal.read_with(cx, |view, cx| {
+            let delegate = &view.picker.read(cx).delegate;
+            assert_eq!(
+                delegate.root_item.as_ref().map(|item| item.name.as_str()),
+                Some("helper"),
+                "a busy server that is not queried should not block the retry"
+            );
+            assert_eq!(delegate.calls[0].item.name, "main");
+        });
+        assert_eq!(prepare_requests.load(Ordering::Acquire), 2);
+    }
+
+    #[gpui::test]
+    async fn test_call_hierarchy_modal_keeps_pending_prepare_until_dismissed(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (workspace, fake_server, test_uri, cx) =
+            setup_modal_test("fn main() { helper(); }\nfn helper() {}\n", cx).await;
+
+        let prepare_requests = Arc::new(AtomicUsize::new(0));
+        let incoming_requests = Arc::new(AtomicUsize::new(0));
+        let outgoing_requests = Arc::new(AtomicUsize::new(0));
+        let (unblock_first_prepare, first_prepare_blocked) =
+            futures::channel::oneshot::channel::<()>();
+        let mut first_prepare_blocked = Some(first_prepare_blocked);
+        fake_server.set_request_handler::<lsp::request::CallHierarchyPrepare, _, _>({
+            let uri = test_uri.clone();
+            let prepare_requests = prepare_requests.clone();
+            move |_, _| {
+                prepare_requests.fetch_add(1, Ordering::AcqRel);
+                let blocked = first_prepare_blocked.take();
+                let uri = uri.clone();
+                async move {
+                    if let Some(blocked) = blocked {
+                        blocked.await.ok();
+                    }
+                    Ok(Some(vec![make_lsp_call_hierarchy_item("helper", uri, 1)]))
+                }
+            }
+        });
+        fake_server.set_request_handler::<lsp::request::CallHierarchyIncomingCalls, _, _>({
+            let uri = test_uri.clone();
+            let incoming_requests = incoming_requests.clone();
+            move |_, _| {
+                incoming_requests.fetch_add(1, Ordering::AcqRel);
+                let uri = uri.clone();
                 async move {
                     Ok(Some(vec![lsp::CallHierarchyIncomingCall {
                         from: make_lsp_call_hierarchy_item("main", uri, 0),
@@ -2334,43 +2915,112 @@ mod tests {
                 }
             }
         });
+        fake_server.set_request_handler::<lsp::request::CallHierarchyOutgoingCalls, _, _>({
+            let outgoing_requests = outgoing_requests.clone();
+            move |_, _| {
+                outgoing_requests.fetch_add(1, Ordering::AcqRel);
+                let uri = test_uri.clone();
+                async move {
+                    Ok(Some(vec![lsp::CallHierarchyOutgoingCall {
+                        to: make_lsp_call_hierarchy_item("leaf", uri, 0),
+                        from_ranges: Vec::new(),
+                    }]))
+                }
+            }
+        });
+        let active_modal = |cx: &mut VisualTestContext| {
+            workspace.update(cx, |workspace, cx| {
+                workspace.active_modal::<CallHierarchyView>(cx)
+            })
+        };
+        let request_counts = || {
+            (
+                prepare_requests.load(Ordering::Acquire),
+                incoming_requests.load(Ordering::Acquire),
+                outgoing_requests.load(Ordering::Acquire),
+            )
+        };
+
+        fake_server.start_progress("indexing").await;
+        cx.executor().run_until_parked();
+        cx.dispatch_action(ShowIncomingCalls);
+        cx.executor().run_until_parked();
+        let pending_modal = active_modal(cx).expect("modal should be open");
+        assert_eq!(
+            pending_modal.read_with(cx, |view, cx| view.picker.read(cx).delegate.state),
+            FetchState::Loading
+        );
+        assert_eq!(request_counts(), (1, 0, 0));
+
+        fake_server.end_progress("indexing");
+        cx.executor().run_until_parked();
+        assert_eq!(
+            request_counts(),
+            (1, 0, 0),
+            "finished server work should not restart the pending preparation"
+        );
+
+        cx.dispatch_action(menu::Cancel);
+        cx.executor().run_until_parked();
+        assert_eq!(active_modal(cx), None);
+        assert_eq!(
+            unblock_first_prepare.send(()),
+            Err(()),
+            "dismissing should cancel the pending preparation"
+        );
+        cx.dispatch_action(workspace::ReopenLastPicker);
+        cx.executor().run_until_parked();
+        assert_eq!(
+            active_modal(cx),
+            None,
+            "a dismissed pending hierarchy should not be kept for reopening"
+        );
+        assert_eq!(request_counts(), (1, 0, 0));
 
         cx.dispatch_action(ShowIncomingCalls);
         cx.executor().run_until_parked();
+        let loaded_modal = active_modal(cx).expect("modal should be open");
+        assert_eq!(request_counts(), (2, 1, 0));
 
-        let modal = workspace
-            .update(cx, |workspace, cx| {
-                workspace.active_modal::<CallHierarchyView>(cx)
-            })
-            .expect("modal should be open");
-        let project = modal.read_with(cx, |view, cx| {
-            let delegate = &view.picker.read(cx).delegate;
-            assert_eq!(delegate.state, FetchState::NoSymbol);
-            delegate.project.clone()
-        });
-
-        emit_work_end(&project, cx);
+        cx.dispatch_action(menu::Cancel);
         cx.executor().run_until_parked();
-        modal.read_with(cx, |view, cx| {
-            assert_eq!(
-                view.picker.read(cx).delegate.state,
-                FetchState::NoSymbol,
-                "a retry against a still-empty server should stay empty"
-            );
-        });
-
-        server_ready.store(true, Ordering::Release);
-        emit_work_end(&project, cx);
+        assert_eq!(active_modal(cx), None);
+        cx.dispatch_action(workspace::ReopenLastPicker);
         cx.executor().run_until_parked();
-        modal.read_with(cx, |view, cx| {
+        assert_eq!(
+            active_modal(cx),
+            Some(loaded_modal.clone()),
+            "a loaded hierarchy should stay reopenable"
+        );
+        loaded_modal.read_with(cx, |view, cx| {
             let delegate = &view.picker.read(cx).delegate;
             assert_eq!(
                 delegate.root_item.as_ref().map(|item| item.name.as_str()),
-                Some("helper"),
-                "finished language server work should retry the preparation"
+                Some("helper")
             );
             assert_eq!(delegate.calls[0].item.name, "main");
         });
+        assert_eq!(request_counts(), (2, 1, 0));
+
+        cx.update(|window, cx| {
+            window.dispatch_action(Box::new(ToggleDirection), cx);
+            window.dispatch_action(Box::new(menu::Cancel), cx);
+        });
+        cx.executor().run_until_parked();
+        assert_eq!(active_modal(cx), None);
+        assert_eq!(
+            request_counts(),
+            (2, 1, 0),
+            "closing before the calls are requested should not request them"
+        );
+        cx.dispatch_action(workspace::ReopenLastPicker);
+        cx.executor().run_until_parked();
+        assert_eq!(
+            active_modal(cx),
+            None,
+            "a hierarchy closed while loading calls should not be kept for reopening"
+        );
+        assert_eq!(request_counts(), (2, 1, 0));
     }
 
     #[gpui::test]
@@ -2395,6 +3045,18 @@ mod tests {
             assert_eq!(delegate.state, FetchState::NoSymbol);
             assert_eq!(delegate.calls.len(), 0);
         });
+
+        cx.dispatch_action(menu::Cancel);
+        cx.executor().run_until_parked();
+        cx.dispatch_action(workspace::ReopenLastPicker);
+        cx.executor().run_until_parked();
+        assert_eq!(
+            workspace.update(cx, |workspace, cx| {
+                workspace.active_modal::<CallHierarchyView>(cx)
+            }),
+            None,
+            "a hierarchy without a symbol should not be kept for reopening"
+        );
     }
 
     #[gpui::test]
@@ -2603,19 +3265,6 @@ mod tests {
         }
     }
 
-    fn emit_work_end(project: &Entity<Project>, cx: &mut VisualTestContext) {
-        let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
-        lsp_store.update(cx, |_, cx| {
-            cx.emit(LspStoreEvent::LanguageServerUpdate {
-                language_server_id: lsp::LanguageServerId(0),
-                name: None,
-                message: proto::update_language_server::Variant::WorkEnd(proto::LspWorkEnd {
-                    token: None,
-                }),
-            });
-        });
-    }
-
     fn highlighted_display_rows(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> Vec<u32> {
         editor.update_in(cx, |editor, window, cx| {
             editor
@@ -2635,6 +3284,36 @@ mod tests {
         lsp::Uri,
         &'a mut VisualTestContext,
     ) {
+        let (workspace, mut fake_servers, cx) =
+            open_modal_test_editor(source_text, vec![call_hierarchy_adapter(None)], cx).await;
+        let fake_server = fake_servers[0].next().await.unwrap();
+        cx.executor().run_until_parked();
+        let test_uri = lsp::Uri::from_file_path(path!("/test/src/main.rs")).unwrap();
+        (workspace, fake_server, test_uri, cx)
+    }
+
+    fn call_hierarchy_adapter(
+        initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
+    ) -> FakeLspAdapter {
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                call_hierarchy_provider: Some(lsp::CallHierarchyServerCapability::Simple(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer,
+            ..FakeLspAdapter::default()
+        }
+    }
+
+    async fn open_modal_test_editor<'a>(
+        source_text: &str,
+        adapters: Vec<FakeLspAdapter>,
+        cx: &'a mut TestAppContext,
+    ) -> (
+        Entity<Workspace>,
+        Vec<futures::channel::mpsc::UnboundedReceiver<lsp::FakeLanguageServer>>,
+        &'a mut VisualTestContext,
+    ) {
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(path!("/test"), json!({"src": {"main.rs": source_text}}))
             .await;
@@ -2642,19 +3321,11 @@ mod tests {
         let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
         project.read_with(cx, |project, _| project.languages().add(rust_lang()));
 
-        let mut fake_servers = project.read_with(cx, |project, _| {
-            project.languages().register_fake_lsp(
-                "Rust",
-                FakeLspAdapter {
-                    capabilities: lsp::ServerCapabilities {
-                        call_hierarchy_provider: Some(lsp::CallHierarchyServerCapability::Simple(
-                            true,
-                        )),
-                        ..lsp::ServerCapabilities::default()
-                    },
-                    ..FakeLspAdapter::default()
-                },
-            )
+        let fake_servers = project.read_with(cx, |project, _| {
+            adapters
+                .into_iter()
+                .map(|adapter| project.languages().register_fake_lsp("Rust", adapter))
+                .collect::<Vec<_>>()
         });
 
         let (multi_workspace, cx) =
@@ -2683,9 +3354,6 @@ mod tests {
             .downcast::<Editor>()
             .unwrap();
 
-        let fake_server = fake_servers.next().await.unwrap();
-        cx.executor().run_until_parked();
-        let test_uri = lsp::Uri::from_file_path(path!("/test/src/main.rs")).unwrap();
-        (workspace, fake_server, test_uri, cx)
+        (workspace, fake_servers, cx)
     }
 }
