@@ -1207,12 +1207,52 @@ pub enum DocumentSymbols {
     /// breadcrumbs. When enabled, tree-sitter is not used for document symbols.
     #[serde(alias = "language_server")]
     On,
+    /// Use LSP symbols after a successful language server response, including empty responses,
+    /// which mean no symbols. Keep the last successful LSP result while a refresh is pending.
+    /// Fall back to tree-sitter before the first success, on errors, or when no server is available,
+    /// and keep using tree-sitter during retries until a request succeeds.
+    PreferLsp,
 }
 
 impl DocumentSymbols {
-    /// Returns true if LSP document symbols should be used instead of tree-sitter.
+    /// Returns true if document symbols should be requested from language servers.
     pub fn lsp_enabled(&self) -> bool {
-        self == &Self::On
+        matches!(self, Self::On | Self::PreferLsp)
+    }
+}
+
+#[cfg(test)]
+mod document_symbols_tests {
+    use super::DocumentSymbols;
+
+    #[test]
+    fn document_symbols_serde() -> anyhow::Result<()> {
+        for (value, setting) in [
+            ("off", DocumentSymbols::Off),
+            ("on", DocumentSymbols::On),
+            ("prefer_lsp", DocumentSymbols::PreferLsp),
+        ] {
+            let json = serde_json::to_string(value)?;
+            assert_eq!(serde_json::from_str::<DocumentSymbols>(&json)?, setting);
+            assert_eq!(serde_json::to_string(&setting)?, json);
+        }
+
+        for (alias, setting) in [
+            ("tree_sitter", DocumentSymbols::Off),
+            ("language_server", DocumentSymbols::On),
+        ] {
+            let json = serde_json::to_string(alias)?;
+            assert_eq!(serde_json::from_str::<DocumentSymbols>(&json)?, setting);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn document_symbols_requests() {
+        assert_eq!(DocumentSymbols::default(), DocumentSymbols::Off);
+        assert!(!DocumentSymbols::Off.lsp_enabled());
+        assert!(DocumentSymbols::On.lsp_enabled());
+        assert!(DocumentSymbols::PreferLsp.lsp_enabled());
     }
 }
 

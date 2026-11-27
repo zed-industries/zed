@@ -8,6 +8,7 @@ use multi_buffer::{
     Anchor, AnchorRangeExt as _, MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot,
     ToOffset as _,
 };
+use settings::DocumentSymbols;
 use text::BufferId;
 use theme::{ActiveTheme as _, SyntaxTheme};
 use unicode_segmentation::UnicodeSegmentation as _;
@@ -29,7 +30,17 @@ impl Editor {
             return Task::ready(Vec::new());
         };
 
-        if lsp_symbols_enabled(buffer.read(cx), cx) {
+        if self.should_use_lsp_document_symbols(buffer.read(cx), cx) {
+            if LanguageSettings::for_buffer(buffer.read(cx), cx).document_symbols
+                == DocumentSymbols::PreferLsp
+            {
+                return Task::ready(
+                    self.lsp_document_symbols
+                        .get(&buffer_id)
+                        .cloned()
+                        .unwrap_or_default(),
+                );
+            }
             let refresh_task = self
                 .lsp_data_tasks
                 .get(&buffer_id)
@@ -53,12 +64,40 @@ impl Editor {
         } else {
             let buffer_snapshot = buffer.read(cx).snapshot();
             let syntax = cx.theme().syntax().clone();
-            cx.background_executor()
-                .spawn(async move { buffer_snapshot.outline(Some(&syntax)).items })
+            let outline_task = cx
+                .background_executor()
+                .spawn(async move { buffer_snapshot.outline(Some(&syntax)).items });
+            cx.spawn(async move |editor, cx| {
+                let items = outline_task.await;
+                editor
+                    .read_with(cx, |editor, cx| {
+                        // LSP symbols may have arrived while the tree-sitter outline was computing.
+                        if editor.should_use_lsp_document_symbols(buffer.read(cx), cx) {
+                            editor
+                                .lsp_document_symbols
+                                .get(&buffer_id)
+                                .cloned()
+                                .unwrap_or_default()
+                        } else {
+                            items
+                        }
+                    })
+                    .unwrap_or_default()
+            })
         }
     }
 
-    /// Whether the buffer at `cursor` has LSP document symbols enabled.
+    fn should_use_lsp_document_symbols(&self, buffer: &Buffer, cx: &App) -> bool {
+        match LanguageSettings::for_buffer(buffer, cx).document_symbols {
+            DocumentSymbols::Off => false,
+            DocumentSymbols::On => true,
+            DocumentSymbols::PreferLsp => {
+                self.lsp_document_symbols.contains_key(&buffer.remote_id())
+            }
+        }
+    }
+
+    /// Whether the buffer at `cursor` should display LSP document symbols.
     pub(super) fn uses_lsp_document_symbols(
         &self,
         cursor: Anchor,
@@ -71,7 +110,7 @@ impl Editor {
         let Some(buffer) = self.buffer.read(cx).buffer(anchor.buffer_id) else {
             return false;
         };
-        lsp_symbols_enabled(buffer.read(cx), cx)
+        self.should_use_lsp_document_symbols(buffer.read(cx), cx)
     }
 
     /// Filters editor-local LSP document symbols to the ancestor chain
@@ -172,23 +211,24 @@ impl Editor {
             .unique_by(|buffer| buffer.read(cx).remote_id())
             .collect::<Vec<_>>();
 
-        let mut symbols_altered = false;
+        let mut removed_buffers = Vec::new();
         let multi_buffer = self.buffer().clone();
         self.lsp_document_symbols.retain(|buffer_id, _| {
             let Some(buffer) = multi_buffer.read(cx).buffer(*buffer_id) else {
-                symbols_altered = true;
+                removed_buffers.push(*buffer_id);
                 return false;
             };
             let retain = lsp_symbols_enabled(buffer.read(cx), cx);
-            symbols_altered |= !retain;
+            if !retain {
+                removed_buffers.push(*buffer_id);
+            }
             retain
         });
-        if symbols_altered {
+        if !removed_buffers.is_empty() {
+            for buffer_id in removed_buffers {
+                cx.emit(crate::EditorEvent::DocumentSymbolsChanged(buffer_id));
+            }
             self.refresh_outline_symbols_at_cursor(cx);
-        }
-
-        if buffers_to_query.is_empty() {
-            return;
         }
 
         self.spawn_lsp_data_tasks(
@@ -199,22 +239,40 @@ impl Editor {
             |buffer, cx| {
                 let project = project.clone();
                 let buffer_id = buffer.read(cx).remote_id();
+                let language_id = buffer.read(cx).language().map(|language| language.id());
                 cx.spawn(async move |editor, cx| {
                     cx.background_executor()
                         .timer(LSP_REQUEST_DEBOUNCE_TIMEOUT)
                         .await;
 
-                    let Ok(task) = project.update(cx, |project, cx| {
-                        project.lsp_store().update(cx, |lsp_store, cx| {
+                    let Ok((buffer_version, task)) = project.update(cx, |project, cx| {
+                        let buffer_version = buffer.read(cx).version();
+                        let task = project.lsp_store().update(cx, |lsp_store, cx| {
                             lsp_store.fetch_document_symbols(&buffer, cx)
-                        })
+                        });
+                        (buffer_version, task)
                     }) else {
                         return;
                     };
 
-                    let mut items = task.await;
+                    let items = task.await;
                     editor
                         .update(cx, |editor, cx| {
+                            if editor.buffer.read(cx).buffer(buffer_id).is_none()
+                                || !lsp_symbols_enabled(buffer.read(cx), cx)
+                                || buffer.read(cx).language().map(|language| language.id())
+                                    != language_id
+                                || buffer.read(cx).version() != buffer_version
+                            {
+                                return;
+                            }
+                            let Some(mut items) = items else {
+                                if editor.lsp_document_symbols.remove(&buffer_id).is_some() {
+                                    cx.emit(crate::EditorEvent::DocumentSymbolsChanged(buffer_id));
+                                    editor.refresh_outline_symbols_at_cursor(cx);
+                                }
+                                return;
+                            };
                             let syntax = cx.theme().syntax().clone();
                             let display_snapshot =
                                 editor.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -229,8 +287,11 @@ impl Editor {
                                         highlight_ranges_from_text(&item.text, language, &syntax);
                                 }
                             }
-                            editor.lsp_document_symbols.insert(buffer_id, items);
-                            editor.refresh_outline_symbols_at_cursor(cx);
+                            if editor.lsp_document_symbols.get(&buffer_id) != Some(&items) {
+                                editor.lsp_document_symbols.insert(buffer_id, items);
+                                cx.emit(crate::EditorEvent::DocumentSymbolsChanged(buffer_id));
+                                editor.refresh_outline_symbols_at_cursor(cx);
+                            }
                         })
                         .ok();
                 })
@@ -658,6 +719,348 @@ mod tests {
                 .unwrap_or_else(|| highlight_ranges_from_text(label, &language, &syntax));
             assert_eq!(highlights, expected, "label {label:?}");
         }
+    }
+
+    async fn buffer_outline_texts(cx: &mut EditorLspTestContext) -> Vec<String> {
+        cx.update_editor(|editor, _, cx| {
+            let buffer_id = editor
+                .buffer
+                .read(cx)
+                .as_singleton()
+                .expect("test editor should contain one buffer")
+                .read(cx)
+                .remote_id();
+            editor.buffer_outline_items(buffer_id, cx)
+        })
+        .await
+        .into_iter()
+        .map(|item| item.text.to_string())
+        .collect()
+    }
+
+    #[gpui::test]
+    async fn test_prefer_lsp_document_symbols(cx: &mut TestAppContext) {
+        check_prefer_lsp_document_symbols(cx, false).await;
+    }
+
+    #[gpui::test]
+    async fn test_prefer_lsp_empty_document_symbols(cx: &mut TestAppContext) {
+        check_prefer_lsp_document_symbols(cx, true).await;
+    }
+
+    async fn check_prefer_lsp_document_symbols(cx: &mut TestAppContext, empty: bool) {
+        init_test(cx, |_| {});
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                document_symbol_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            cx,
+        )
+        .await;
+        let (request_started, mut requests) = futures::channel::mpsc::unbounded();
+        let (send_response, responses) = futures::channel::mpsc::unbounded();
+        let responses = Arc::new(futures::lock::Mutex::new(responses));
+        let mut completed_requests = cx
+            .set_request_handler::<lsp::request::DocumentSymbolRequest, _, _>(move |_, _, _| {
+                request_started
+                    .unbounded_send(())
+                    .expect("request should be observed");
+                let responses = responses.clone();
+                async move {
+                    responses
+                        .lock()
+                        .await
+                        .next()
+                        .await
+                        .expect("response should be supplied")
+                }
+            });
+        cx.set_state("fn maˇin() {\n    let x = 1;\n}\n");
+        cx.run_until_parked();
+        update_test_language_settings(&mut cx.cx.cx, &|settings| {
+            settings.defaults.document_symbols = Some(DocumentSymbols::PreferLsp);
+        });
+        requests
+            .next()
+            .await
+            .expect("LSP symbols should be requested");
+        cx.run_until_parked();
+        assert_eq!(buffer_outline_texts(&mut cx).await, ["fn main"]);
+        cx.update_editor(|editor, _, cx| {
+            assert_eq!(outline_symbol_names(editor), ["fn main"]);
+            assert!(breadcrumb_texts(editor, cx).contains(&"fn main".into()));
+            assert!(editor.lsp_document_symbols.is_empty());
+        });
+
+        send_response
+            .unbounded_send(Err(anyhow::anyhow!("document symbols unavailable")))
+            .expect("initial error should be sent");
+        assert!(completed_requests.next().await.is_some());
+        cx.run_until_parked();
+        assert_eq!(buffer_outline_texts(&mut cx).await, ["fn main"]);
+        cx.update_editor(|editor, _, _| {
+            assert_eq!(outline_symbol_names(editor), ["fn main"]);
+            assert!(editor.lsp_document_symbols.is_empty());
+        });
+
+        cx.update_editor(|editor, _, cx| editor.refresh_document_symbols(None, cx));
+        requests
+            .next()
+            .await
+            .expect("failed request should be retried");
+        cx.run_until_parked();
+        assert_eq!(buffer_outline_texts(&mut cx).await, ["fn main"]);
+        let symbols = if empty {
+            Vec::new()
+        } else {
+            vec![nested_symbol(
+                "lsp_main_symbol",
+                lsp::SymbolKind::FUNCTION,
+                lsp_range(0, 0, 2, 1),
+                lsp_range(0, 3, 0, 7),
+                Vec::new(),
+            )]
+        };
+        send_response
+            .unbounded_send(Ok(Some(lsp::DocumentSymbolResponse::Nested(symbols))))
+            .expect("successful response should be sent");
+        assert!(completed_requests.next().await.is_some());
+        cx.run_until_parked();
+        let expected_symbols = if empty {
+            Vec::new()
+        } else {
+            vec!["lsp_main_symbol".to_string()]
+        };
+        assert_eq!(buffer_outline_texts(&mut cx).await, expected_symbols);
+        cx.update_editor(|editor, _, cx| {
+            assert_eq!(editor.lsp_document_symbols.len(), 1);
+            if empty {
+                assert!(editor.outline_symbols_at_cursor.is_none());
+                assert!(!breadcrumb_texts(editor, cx).contains(&"fn main".into()));
+            } else {
+                assert_eq!(outline_symbol_names(editor), ["lsp_main_symbol"]);
+                assert!(breadcrumb_texts(editor, cx).contains(&"lsp_main_symbol".into()));
+            }
+        });
+
+        cx.update_editor(|editor, _, cx| {
+            let buffer = editor
+                .buffer
+                .read(cx)
+                .as_singleton()
+                .expect("single buffer");
+            buffer.update(cx, |buffer, cx| {
+                let end = buffer.len();
+                buffer.edit([(end..end, "\n")], None, cx);
+            });
+        });
+        requests
+            .next()
+            .await
+            .expect("edit should refresh LSP symbols");
+        cx.run_until_parked();
+        assert_eq!(buffer_outline_texts(&mut cx).await, expected_symbols);
+        send_response
+            .unbounded_send(Err(anyhow::anyhow!("document symbol refresh failed")))
+            .expect("refresh error should be sent");
+        assert!(completed_requests.next().await.is_some());
+        cx.run_until_parked();
+        assert_eq!(buffer_outline_texts(&mut cx).await, ["fn main"]);
+        cx.update_editor(|editor, _, cx| {
+            assert!(editor.lsp_document_symbols.is_empty());
+            assert_eq!(outline_symbol_names(editor), ["fn main"]);
+            assert!(breadcrumb_texts(editor, cx).contains(&"fn main".into()));
+        });
+        cx.executor()
+            .timer(LSP_REQUEST_DEBOUNCE_TIMEOUT + Duration::from_secs(1))
+            .await;
+        cx.run_until_parked();
+        assert!(
+            matches!(
+                requests.try_recv(),
+                Err(futures::channel::mpsc::TryRecvError::Empty)
+            ),
+            "failure and outline reads must not start an unsolicited retry"
+        );
+
+        let outline_changes = Arc::new(atomic::AtomicUsize::new(0));
+        let _subscription = cx.update_editor(|_, _, cx| {
+            cx.subscribe(&cx.entity(), {
+                let outline_changes = outline_changes.clone();
+                move |_, _, event, _| {
+                    if matches!(
+                        event,
+                        crate::EditorEvent::OutlineSymbolsChanged
+                            | crate::EditorEvent::DocumentSymbolsChanged(_)
+                    ) {
+                        outline_changes.fetch_add(1, atomic::Ordering::SeqCst);
+                    }
+                }
+            })
+        });
+        cx.update_editor(|editor, _, cx| editor.refresh_document_symbols(None, cx));
+        requests.next().await.expect("failure should be retried");
+        cx.run_until_parked();
+        assert_eq!(buffer_outline_texts(&mut cx).await, ["fn main"]);
+        send_response
+            .unbounded_send(Err(anyhow::anyhow!("document symbol retry failed")))
+            .expect("retry error should be sent");
+        assert!(completed_requests.next().await.is_some());
+        cx.run_until_parked();
+        assert_eq!(buffer_outline_texts(&mut cx).await, ["fn main"]);
+        assert_eq!(outline_changes.load(atomic::Ordering::SeqCst), 0);
+
+        cx.update_editor(|editor, _, cx| editor.refresh_document_symbols(None, cx));
+        requests.next().await.expect("failure should be retried");
+        cx.run_until_parked();
+        assert_eq!(buffer_outline_texts(&mut cx).await, ["fn main"]);
+        let symbols = if empty {
+            Vec::new()
+        } else {
+            vec![nested_symbol(
+                "lsp_main_symbol",
+                lsp::SymbolKind::FUNCTION,
+                lsp_range(0, 0, 2, 1),
+                lsp_range(0, 3, 0, 7),
+                Vec::new(),
+            )]
+        };
+        send_response
+            .unbounded_send(Ok(Some(lsp::DocumentSymbolResponse::Nested(symbols))))
+            .expect("recovery response should be sent");
+        assert!(completed_requests.next().await.is_some());
+        cx.run_until_parked();
+        assert_eq!(buffer_outline_texts(&mut cx).await, expected_symbols);
+        cx.update_editor(|editor, _, cx| {
+            assert_eq!(editor.lsp_document_symbols.len(), 1);
+            if empty {
+                assert!(editor.outline_symbols_at_cursor.is_none());
+                assert!(!breadcrumb_texts(editor, cx).contains(&"fn main".into()));
+            } else {
+                assert_eq!(outline_symbol_names(editor), ["lsp_main_symbol"]);
+                assert!(breadcrumb_texts(editor, cx).contains(&"lsp_main_symbol".into()));
+            }
+        });
+
+        outline_changes.store(0, atomic::Ordering::SeqCst);
+        cx.update_editor(|editor, _, cx| {
+            editor.refresh_document_symbols(None, cx);
+            editor
+                .lsp_data_tasks
+                .values()
+                .find_map(|tasks| tasks.get(&crate::LspDataKind::DocumentSymbols))
+                .expect("document-symbol refresh should be scheduled")
+                .clone()
+        })
+        .await;
+        cx.run_until_parked();
+        assert_eq!(buffer_outline_texts(&mut cx).await, expected_symbols);
+        assert_eq!(outline_changes.load(atomic::Ordering::SeqCst), 0);
+
+        update_test_language_settings(&mut cx.cx.cx, &|settings| {
+            settings.defaults.document_symbols = Some(DocumentSymbols::Off);
+        });
+        cx.run_until_parked();
+        assert_eq!(buffer_outline_texts(&mut cx).await, ["fn main"]);
+        cx.update_editor(|editor, _, _| {
+            assert_eq!(outline_symbol_names(editor), ["fn main"]);
+            assert!(editor.lsp_document_symbols.is_empty());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_prefer_lsp_document_symbols_per_buffer_and_pending_outline(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+        update_test_language_settings(cx, &|settings| {
+            settings.defaults.document_symbols = Some(DocumentSymbols::PreferLsp);
+        });
+        let language = rust_lang();
+        let first_buffer =
+            cx.new(|cx| Buffer::local("fn first() {}\n", cx).with_language(language.clone(), cx));
+        let second_buffer =
+            cx.new(|cx| Buffer::local("fn second() {}\n", cx).with_language(language.clone(), cx));
+        for buffer in [&first_buffer, &second_buffer] {
+            cx.condition(buffer, |buffer, _| !buffer.is_parsing()).await;
+        }
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+            for (index, buffer) in (0..).zip([&first_buffer, &second_buffer]) {
+                let snapshot = buffer.read(cx).snapshot();
+                multibuffer.set_excerpt_ranges_for_path(
+                    PathKey::sorted(index),
+                    buffer.clone(),
+                    &snapshot,
+                    vec![ExcerptRange::new(Point::new(0, 0)..snapshot.max_point())],
+                    cx,
+                );
+            }
+            multibuffer
+        });
+        let editor =
+            cx.add_window(|window, cx| Editor::for_multibuffer(multibuffer, None, window, cx));
+        cx.run_until_parked();
+        let pending_outline = editor
+            .update(cx, |editor, _, cx| {
+                let first_buffer_id = first_buffer.read(cx).remote_id();
+                let pending_outline = editor.buffer_outline_items(first_buffer_id, cx);
+                editor.refresh_outline_symbols_at_cursor(cx);
+                editor
+                    .lsp_document_symbols
+                    .insert(first_buffer_id, Vec::new());
+                editor.refresh_outline_symbols_at_cursor(cx);
+                assert!(editor.should_use_lsp_document_symbols(first_buffer.read(cx), cx));
+                assert!(!editor.should_use_lsp_document_symbols(second_buffer.read(cx), cx));
+                pending_outline
+            })
+            .expect("editor window should exist");
+        assert!(
+            pending_outline.await.is_empty(),
+            "LSP success should supersede pending tree-sitter work"
+        );
+        cx.run_until_parked();
+        let second_outline = editor
+            .update(cx, |editor, _, cx| {
+                assert!(editor.outline_symbols_at_cursor.is_none());
+                editor.buffer_outline_items(second_buffer.read(cx).remote_id(), cx)
+            })
+            .expect("editor window should exist")
+            .await;
+        assert_eq!(
+            second_outline
+                .iter()
+                .map(|item| item.text.as_str())
+                .collect::<Vec<_>>(),
+            ["fn second"],
+        );
+
+        first_buffer.update(cx, |buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+        cx.run_until_parked();
+        editor
+            .update(cx, |editor, _, cx| {
+                assert!(editor.lsp_document_symbols.is_empty());
+                assert!(!editor.should_use_lsp_document_symbols(first_buffer.read(cx), cx));
+                assert_eq!(outline_symbol_names(editor), ["fn first"]);
+            })
+            .expect("editor window should exist");
+    }
+
+    #[gpui::test]
+    async fn test_prefer_lsp_document_symbols_without_capability(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        update_test_language_settings(cx, &|settings| {
+            settings.defaults.document_symbols = Some(DocumentSymbols::PreferLsp);
+        });
+        let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+        cx.set_state("fn maˇin() {}\n");
+        cx.run_until_parked();
+        assert_eq!(buffer_outline_texts(&mut cx).await, ["fn main"]);
+        cx.update_editor(|editor, _, _| {
+            assert_eq!(outline_symbol_names(editor), ["fn main"]);
+            assert!(editor.lsp_document_symbols.is_empty());
+        });
     }
 
     #[gpui::test]

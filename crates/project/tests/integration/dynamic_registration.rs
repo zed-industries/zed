@@ -3947,6 +3947,7 @@ async fn fetch_all_lsp_data(
     labels.document_symbols.extend(
         document_symbols
             .await
+            .unwrap_or_default()
             .into_iter()
             .map(|symbol| symbol.text.to_string()),
     );

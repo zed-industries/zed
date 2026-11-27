@@ -4018,6 +4018,7 @@ impl Editor {
         let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
 
         if self.uses_lsp_document_symbols(cursor, &multi_buffer_snapshot, cx) {
+            self.refresh_outline_symbols_at_cursor_at_cursor_task = Task::ready(());
             self.outline_symbols_at_cursor =
                 self.lsp_symbols_at_cursor(cursor, &multi_buffer_snapshot, cx);
             cx.emit(EditorEvent::OutlineSymbolsChanged);
@@ -10232,6 +10233,10 @@ impl Editor {
                 self.refresh_runnables(None, window, cx);
             }
             multi_buffer::Event::LanguageChanged(buffer_id, is_fresh_language) => {
+                if self.lsp_document_symbols.remove(buffer_id).is_some() {
+                    cx.emit(EditorEvent::DocumentSymbolsChanged(*buffer_id));
+                    self.refresh_outline_symbols_at_cursor(cx);
+                }
                 if !is_fresh_language {
                     self.registered_buffers.remove(&buffer_id);
                 }
@@ -12775,6 +12780,7 @@ pub enum EditorEvent {
     CursorShapeChanged,
     BreadcrumbsChanged,
     OutlineSymbolsChanged,
+    DocumentSymbolsChanged(BufferId),
     PushedToNavHistory {
         anchor: Anchor,
         is_deactivate: bool,

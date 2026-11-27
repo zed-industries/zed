@@ -4049,6 +4049,7 @@ These values take in the same options as the root-level settings with the same n
 
 - `"off"`: Use tree-sitter queries to compute document symbols (default)
 - `"on"`: Use the language server's `textDocument/documentSymbol` LSP response. When enabled, tree-sitter is not used for document symbols
+- `"prefer_lsp"`: Use LSP symbols after a successful language server response, including empty responses, which mean no symbols. Keep the last successful LSP result while a refresh is pending. Fall back to tree-sitter before the first success, on errors, or when no server is available, and keep using tree-sitter during retries until a request succeeds
 
 LSP document symbols can provide more accurate symbols for complex language features (e.g., generic types, macros, decorators) that tree-sitter may not handle well. Use this when your language server provides better symbol information than the tree-sitter grammar.
 
@@ -5202,7 +5203,7 @@ To enable LSP folding ranges for a specific language:
 
 ## LSP Document Symbols
 
-- Description: Controls the source of document symbols used for outlines and breadcrumbs. This is an LSP feature — when enabled, tree-sitter is not used for document symbols, and the language server's `textDocument/documentSymbol` response is used instead.
+- Description: Controls the source of document symbols used for outlines and breadcrumbs.
 - Setting: `document_symbols`
 - Default: `off`
 
@@ -5210,6 +5211,7 @@ To enable LSP folding ranges for a specific language:
 
 1. `off`: Use tree-sitter queries to compute document symbols.
 2. `on`: Use the language server's `textDocument/documentSymbol` LSP response. When enabled, tree-sitter is not used for document symbols.
+3. `prefer_lsp`: Use LSP symbols after a successful language server response, including empty responses, which mean no symbols. Keep the last successful LSP result while a refresh is pending. Fall back to tree-sitter before the first success, on errors, or when no server is available, and keep using tree-sitter during retries until a request succeeds.
 
 To enable LSP document symbols globally:
 

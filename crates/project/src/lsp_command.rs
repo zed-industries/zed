@@ -2679,6 +2679,7 @@ impl LspCommand for GetDocumentSymbols {
             project_id,
             buffer_id: buffer.remote_id().into(),
             version: serialize_version(&buffer.version()),
+            server_ids: Vec::new(),
         }
     }
 
@@ -2737,7 +2738,10 @@ impl LspCommand for GetDocumentSymbols {
             })
             .collect::<Vec<_>>();
 
-        proto::GetDocumentSymbolsResponse { symbols }
+        proto::GetDocumentSymbolsResponse {
+            symbols,
+            inapplicable: false,
+        }
     }
 
     async fn response_from_proto(

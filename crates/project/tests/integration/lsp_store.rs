@@ -29,6 +29,259 @@ use util::{path, rel_path::rel_path};
 use crate::init_test;
 
 #[gpui::test]
+async fn test_document_symbols_without_capable_server(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "main.rs": "fn main() {}" }))
+        .await;
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+
+    for _ in 0..2 {
+        let symbols = lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.fetch_document_symbols(&buffer, cx)
+        });
+        assert!(symbols.await.is_none());
+    }
+}
+
+#[gpui::test]
+async fn test_document_symbols_retry_failure_cache_empty_and_change_language(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "main.rs": "fn main() {}" }))
+        .await;
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_symbol_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/root/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let fake_server = fake_servers.next().await.unwrap();
+    cx.run_until_parked();
+
+    let request_count = Arc::new(Mutex::new(0));
+    fake_server.set_request_handler::<lsp::request::DocumentSymbolRequest, _, _>({
+        let request_count = request_count.clone();
+        move |_, _| {
+            let should_fail = {
+                let mut request_count = request_count.lock();
+                *request_count += 1;
+                *request_count == 1
+            };
+            async move {
+                anyhow::ensure!(!should_fail, "document symbols unavailable");
+                Ok(Some(lsp::DocumentSymbolResponse::Nested(Vec::new())))
+            }
+        }
+    });
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let first = lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store.fetch_document_symbols(&buffer, cx)
+    });
+    let concurrent = lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store.fetch_document_symbols(&buffer, cx)
+    });
+    assert!(first.await.is_none());
+    assert!(concurrent.await.is_none());
+    assert_eq!(*request_count.lock(), 1);
+
+    for _ in 0..2 {
+        let symbols = lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.fetch_document_symbols(&buffer, cx)
+        });
+        assert!(symbols.await.is_some_and(|symbols| symbols.is_empty()));
+        assert_eq!(*request_count.lock(), 2);
+    }
+
+    let language = buffer.read_with(cx, |buffer, _| buffer.language().cloned());
+    let version = buffer.read_with(cx, |buffer, _| buffer.version());
+    buffer.update(cx, |buffer, cx| buffer.set_language(None, cx));
+    assert_eq!(buffer.read_with(cx, |buffer, _| buffer.version()), version);
+    for _ in 0..2 {
+        let symbols = lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.fetch_document_symbols(&buffer, cx)
+        });
+        assert!(symbols.await.is_none());
+        assert_eq!(*request_count.lock(), 2);
+    }
+
+    buffer.update(cx, |buffer, cx| buffer.set_language(language, cx));
+    let symbols = lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store.fetch_document_symbols(&buffer, cx)
+    });
+    assert!(symbols.await.is_some_and(|symbols| symbols.is_empty()));
+    assert_eq!(*request_count.lock(), 3);
+}
+
+#[gpui::test]
+async fn test_document_symbols_partial_refresh_failure_and_retry(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    for empty_response in [false, true] {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "main.rs": "fn main() {}" }))
+            .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
+        let capabilities = lsp::ServerCapabilities {
+            document_symbol_provider: Some(lsp::OneOf::Left(true)),
+            ..Default::default()
+        };
+        let mut first_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                name: "first-server",
+                capabilities: capabilities.clone(),
+                ..FakeLspAdapter::default()
+            },
+        );
+        let mut second_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                name: "second-server",
+                capabilities,
+                ..FakeLspAdapter::default()
+            },
+        );
+        cx.run_until_parked();
+        let (buffer, _handle) = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path!("/root/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let first_server = first_servers.next().await.unwrap();
+        let second_server = second_servers.next().await.unwrap();
+        let responses = Arc::new(Mutex::new([Some("first"), Some("second")]));
+        let request_counts = Arc::new(Mutex::new([0, 0]));
+        for (index, server) in [&first_server, &second_server].into_iter().enumerate() {
+            server.set_request_handler::<lsp::request::DocumentSymbolRequest, _, _>({
+                let responses = responses.clone();
+                let request_counts = request_counts.clone();
+                move |_, _| {
+                    request_counts.lock()[index] += 1;
+                    let response = responses.lock()[index];
+                    async move {
+                        let name =
+                            response.ok_or_else(|| anyhow::anyhow!("symbols unavailable"))?;
+                        #[allow(deprecated)]
+                        let symbols = if name.is_empty() {
+                            Vec::new()
+                        } else {
+                            vec![lsp::DocumentSymbol {
+                                name: name.to_string(),
+                                detail: None,
+                                kind: lsp::SymbolKind::FUNCTION,
+                                tags: None,
+                                deprecated: None,
+                                range: lsp::Range::default(),
+                                selection_range: lsp::Range::default(),
+                                children: None,
+                            }]
+                        };
+                        Ok(Some(lsp::DocumentSymbolResponse::Nested(symbols)))
+                    }
+                }
+            });
+        }
+        cx.run_until_parked();
+        let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+        let fetch = |cx: &mut TestAppContext| {
+            let task = lsp_store.update(cx, |lsp_store, cx| {
+                lsp_store.fetch_document_symbols(&buffer, cx)
+            });
+            async move {
+                task.await.map(|symbols| {
+                    let mut names = symbols
+                        .into_iter()
+                        .map(|symbol| symbol.text)
+                        .collect::<Vec<_>>();
+                    names.sort();
+                    names
+                })
+            }
+        };
+        assert_eq!(fetch(cx).await, Some(vec!["first".into(), "second".into()]));
+        assert_eq!(*request_counts.lock(), [1, 1]);
+
+        *responses.lock() = [None, None];
+        for (refresh_count, expected, counts) in
+            [(1, Some(vec!["second".into()]), [2, 1]), (2, None, [3, 2])]
+        {
+            for server in [&first_server, &second_server]
+                .into_iter()
+                .take(refresh_count)
+            {
+                server
+                    .request::<lsp::request::RegisterCapability>(
+                        lsp::RegistrationParams {
+                            registrations: vec![lsp::Registration {
+                                id: "document-symbols".to_string(),
+                                method: "textDocument/documentSymbol".to_string(),
+                                register_options: Some(
+                                    json!({ "label": format!("refresh-{refresh_count}") }),
+                                ),
+                            }],
+                        },
+                        lsp::DEFAULT_LSP_REQUEST_TIMEOUT,
+                    )
+                    .await
+                    .into_response()
+                    .unwrap();
+            }
+            cx.run_until_parked();
+            assert_eq!(fetch(cx).await, expected);
+            assert_eq!(*request_counts.lock(), counts);
+        }
+
+        responses.lock()[0] = Some(if empty_response { "" } else { "fresh" });
+        let expected = if empty_response {
+            Vec::new()
+        } else {
+            vec!["fresh".into()]
+        };
+        for counts in [[4, 3], [4, 4]] {
+            assert_eq!(fetch(cx).await, Some(expected.clone()));
+            assert_eq!(*request_counts.lock(), counts);
+        }
+
+        *responses.lock() = [None, None];
+        buffer.update(cx, |buffer, cx| buffer.edit([(0..0, " ")], None, cx));
+        assert_eq!(fetch(cx).await, None);
+        assert_eq!(*request_counts.lock(), [5, 5]);
+
+        *responses.lock() = [Some("recovered"), None];
+        assert_eq!(fetch(cx).await, Some(vec!["recovered".into()]));
+        assert_eq!(*request_counts.lock(), [6, 6]);
+    }
+}
+
+#[gpui::test]
 async fn test_diagnostic_batches_skip_paths_without_worktrees(cx: &mut TestAppContext) {
     init_test(cx);
 
