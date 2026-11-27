@@ -445,7 +445,7 @@ impl DispatchTree {
         }
     }
 
-    fn bindings_for_input(
+    pub(crate) fn bindings_for_input(
         &self,
         input: &[Keystroke],
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,

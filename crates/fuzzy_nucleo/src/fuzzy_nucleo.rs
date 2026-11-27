@@ -32,14 +32,6 @@ pub enum Case {
 }
 
 impl Case {
-    pub fn smart_if_uppercase_in(query: &str) -> Self {
-        if query.chars().any(|c| c.is_uppercase()) {
-            Self::Smart
-        } else {
-            Self::Ignore
-        }
-    }
-
     pub fn is_smart(self) -> bool {
         matches!(self, Self::Smart)
     }

@@ -36,7 +36,7 @@ use crate::{
         RemoteConnectionOptions,
     },
 };
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{
@@ -50,6 +50,7 @@ use futures::{
 use gpui::{App, AppContext as _, AsyncApp, Global, Task, TestAppContext};
 use rpc::{AnyProtoClient, proto::Envelope};
 use std::{
+    net::SocketAddr,
     path::PathBuf,
     sync::{
         Arc,
@@ -67,9 +68,12 @@ pub struct MockConnectionOptions {
 /// A mock implementation of `RemoteConnection` for testing.
 pub struct MockRemoteConnection {
     options: MockConnectionOptions,
+    tcp_proxy: bool,
     server_channel: Arc<ChannelClient>,
     server_cx: SendableCx,
     message_interceptors: parking_lot::Mutex<Option<MessageInterceptors>>,
+    path_style: parking_lot::Mutex<PathStyle>,
+    reported_options: parking_lot::Mutex<Option<RemoteConnectionOptions>>,
     pub(crate) proxy_tx: parking_lot::Mutex<
         Option<
             mpsc::UnboundedSender<(
@@ -78,6 +82,7 @@ pub struct MockRemoteConnection {
             )>,
         >,
     >,
+    pub(crate) proxy_exit_code: parking_lot::Mutex<Option<i32>>,
 }
 
 /// Wrapper to pass `AsyncApp` across thread boundaries in tests.
@@ -116,6 +121,17 @@ pub struct MockConnectionRegistry {
 impl Global for MockConnectionRegistry {}
 
 impl MockConnectionRegistry {
+    pub fn enable_tcp_proxy(&mut self, options: &MockConnectionOptions) -> Result<()> {
+        let (_, connection) = self
+            .pending
+            .get_mut(&options.id)
+            .context("Missing mock connection")?;
+        Arc::get_mut(connection)
+            .context("Mock connection already shared")?
+            .tcp_proxy = true;
+        Ok(())
+    }
+
     /// Called by `ConnectionPool::connect` to retrieve a pre-registered mock connection.
     pub fn take(
         &mut self,
@@ -141,18 +157,40 @@ impl MockConnection {
         client_to_server: impl Fn(&mut Envelope) + Send + Sync + 'static,
         server_to_client: impl Fn(&mut Envelope) + Send + Sync + 'static,
     ) {
+        *Self::pending(options, cx).message_interceptors.lock() = Some(MessageInterceptors {
+            client_to_server: Arc::new(client_to_server),
+            server_to_client: Arc::new(server_to_client),
+        });
+    }
+
+    /// Makes the connection report `path_style`, as a connection to a host of another OS would.
+    pub fn set_path_style(options: &RemoteConnectionOptions, path_style: PathStyle, cx: &mut App) {
+        *Self::pending(options, cx).path_style.lock() = path_style;
+    }
+
+    /// Makes the connection report `reported` as its options, as a real connection reports the
+    /// options it was opened with, such as a saved SSH connection.
+    pub fn report_connection_options(
+        options: &RemoteConnectionOptions,
+        reported: RemoteConnectionOptions,
+        cx: &mut App,
+    ) {
+        *Self::pending(options, cx).reported_options.lock() = Some(reported);
+    }
+
+    fn pending<'a>(
+        options: &RemoteConnectionOptions,
+        cx: &'a App,
+    ) -> &'a Arc<MockRemoteConnection> {
         let RemoteConnectionOptions::Mock(options) = options else {
-            panic!("message interception requires a mock connection");
+            panic!("this requires a mock connection");
         };
         let (_, connection) = cx
             .global::<MockConnectionRegistry>()
             .pending
             .get(&options.id)
-            .expect("message interceptors must be installed before connecting");
-        *connection.message_interceptors.lock() = Some(MessageInterceptors {
-            client_to_server: Arc::new(client_to_server),
-            server_to_client: Arc::new(server_to_client),
-        });
+            .expect("the mock connection must be configured before connecting");
+        connection
     }
 
     /// Creates a new mock connection pair for testing.
@@ -199,10 +237,14 @@ impl MockConnection {
 
         let connection = Arc::new(MockRemoteConnection {
             options: opts.clone(),
+            tcp_proxy: false,
             server_channel: server_client.clone(),
             server_cx: SendableCx::new(server_cx),
             message_interceptors: parking_lot::Mutex::new(None),
+            path_style: parking_lot::Mutex::new(PathStyle::local()),
+            reported_options: parking_lot::Mutex::new(None),
             proxy_tx: Default::default(),
+            proxy_exit_code: Default::default(),
         });
 
         let (tx, rx) = oneshot::channel();
@@ -233,12 +275,43 @@ impl RemoteConnection for MockRemoteConnection {
         false
     }
 
+    fn tcp_proxy_commands(
+        &self,
+        address: SocketAddr,
+        timeout: u64,
+        program: Option<&str>,
+        args: &[String],
+    ) -> Result<Option<(CommandTemplate, CommandTemplate)>> {
+        if !self.tcp_proxy {
+            return Ok(None);
+        }
+        let proxy_program = "mock-remote-server".to_owned();
+        let mut arguments = vec!["tcp".into(), address.to_string(), timeout.to_string()];
+        let attach_arguments = arguments.clone();
+        if let Some(program) = program {
+            arguments.extend(["--".into(), program.into()]);
+            arguments.extend_from_slice(args);
+        }
+        Ok(Some((
+            CommandTemplate {
+                program: proxy_program.clone(),
+                args: arguments,
+                env: Default::default(),
+            },
+            CommandTemplate {
+                program: proxy_program,
+                args: attach_arguments,
+                env: Default::default(),
+            },
+        )))
+    }
+
     fn build_command(
         &self,
         program: Option<String>,
         args: &[String],
         env: &HashMap<String, String>,
-        _working_dir: Option<String>,
+        working_dir: Option<String>,
         _port_forward: Option<(u16, String, u16)>,
         interactive: Interactive,
     ) -> Result<CommandTemplate> {
@@ -247,6 +320,11 @@ impl RemoteConnection for MockRemoteConnection {
         match interactive {
             Interactive::Yes => shell_args.push("-t".to_string()),
             Interactive::No => shell_args.push("-T".to_string()),
+        }
+        if self.tcp_proxy
+            && let Some(working_dir) = working_dir
+        {
+            shell_args.extend(["-w".into(), working_dir]);
         }
         shell_args.push(shell_program);
         shell_args.extend(args.iter().cloned());
@@ -286,7 +364,10 @@ impl RemoteConnection for MockRemoteConnection {
     }
 
     fn connection_options(&self) -> RemoteConnectionOptions {
-        RemoteConnectionOptions::Mock(self.options.clone())
+        self.reported_options
+            .lock()
+            .clone()
+            .unwrap_or_else(|| RemoteConnectionOptions::Mock(self.options.clone()))
     }
 
     fn simulate_disconnect(&self, cx: &AsyncApp) {
@@ -308,6 +389,9 @@ impl RemoteConnection for MockRemoteConnection {
         _delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Task<Result<i32>> {
+        if let Some(exit_code) = *self.proxy_exit_code.lock() {
+            return Task::ready(Ok(exit_code));
+        }
         if let Some(proxy_tx) = self.proxy_tx.lock().as_ref() {
             proxy_tx
                 .unbounded_send((client_incoming_tx, client_outgoing_rx))
@@ -356,7 +440,7 @@ impl RemoteConnection for MockRemoteConnection {
     }
 
     fn path_style(&self) -> PathStyle {
-        PathStyle::local()
+        *self.path_style.lock()
     }
 
     fn remote_platform(&self) -> crate::RemotePlatform {

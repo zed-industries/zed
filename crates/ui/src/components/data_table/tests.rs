@@ -102,9 +102,6 @@ mod reset_column_size {
     }
 
     macro_rules! check_reset_size {
-        (columns: $cols:expr, starting: $initial:expr, snapshot: $current:expr, expected: $expected:expr, resizing: $resizing:expr $(,)?) => {
-            check_reset_size($initial, $current, $expected, $resizing);
-        };
         ($name:ident, columns: $cols:expr, starting: $initial:expr, snapshot: $current:expr, expected: $expected:expr, minimums: $resizing:expr $(,)?) => {
             #[test]
             fn $name() {
@@ -280,9 +277,6 @@ mod drag_handle {
     }
 
     macro_rules! check {
-        (columns: $cols:expr, distance: $dist:expr, snapshot: $current:expr, expected: $expected:expr, resizing: $resizing:expr $(,)?) => {
-            check($dist, $current, $expected, $resizing);
-        };
         ($name:ident, columns: $cols:expr, distance: $dist:expr, snapshot: $current:expr, expected: $expected:expr, minimums: $resizing:expr $(,)?) => {
             #[test]
             fn $name() {

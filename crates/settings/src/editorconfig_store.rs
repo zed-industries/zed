@@ -164,6 +164,13 @@ impl EditorconfigStore {
         }
     }
 
+    pub(crate) fn has_worktree_state(&self, root_id: WorktreeId) -> bool {
+        self.worktree_state.contains_key(&root_id)
+            || self
+                .local_external_config_discovery_tasks
+                .contains_key(&root_id)
+    }
+
     fn internal_configs(
         &self,
         root_id: WorktreeId,
@@ -419,13 +426,6 @@ impl EditorconfigStore {
             .cloned()
             .collect();
         (worktree_ids, external_paths, watcher_paths)
-    }
-
-    pub fn external_config_paths_for_worktree(&self, worktree_id: WorktreeId) -> Vec<Arc<Path>> {
-        self.worktree_state
-            .get(&worktree_id)
-            .map(|state| state.external_config_paths.iter().cloned().collect())
-            .unwrap_or_default()
     }
 }
 

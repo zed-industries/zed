@@ -491,12 +491,6 @@ impl KeymapFile {
         })
     }
 
-    pub fn parse_action(
-        action: &KeymapAction,
-    ) -> Result<Option<(&String, Option<&Value>)>, String> {
-        Self::parse_action_value(&action.0)
-    }
-
     fn parse_action_value(action: &Value) -> Result<Option<(&String, Option<&Value>)>, String> {
         let name_and_input = match action {
             Value::Array(items) => {

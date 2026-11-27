@@ -432,6 +432,9 @@ fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
 }
 
 fn main() {
+    #[cfg(target_os = "windows")]
+    sandbox::run_windows_sandbox_launcher_if_invoked();
+
     if let Err(error) = run() {
         eprintln!("error: {error:#}");
         std::process::exit(1);

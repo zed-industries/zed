@@ -332,11 +332,3 @@ impl FakeProviderState {
             .unwrap();
     }
 }
-
-#[derive(Debug, PartialEq)]
-pub struct ToolUseRequest {
-    pub request: LanguageModelRequest,
-    pub name: String,
-    pub description: String,
-    pub schema: serde_json::Value,
-}

@@ -3509,6 +3509,39 @@ async fn test_keep_opened_file_on_top_of_search_results_and_select_next_one(
 }
 
 #[gpui::test]
+async fn test_skip_active_file_matched_by_directory(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
+    });
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({ "folder": { "first.txt": "", "second.txt": "" } }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    open_queried_buffer("first", 1, "first.txt", &workspace, cx).await;
+    let picker = open_file_picker(&workspace, cx);
+    simulate_input(cx, "folder");
+    picker.update(cx, |finder, _| {
+        assert_match_at_position(finder, 0, "first.txt");
+        assert_match_selection(finder, 1, "second.txt");
+    });
+}
+
+#[gpui::test]
 async fn test_setting_auto_select_first_and_select_active_file(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
 

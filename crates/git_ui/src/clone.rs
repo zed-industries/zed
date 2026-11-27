@@ -29,7 +29,7 @@ pub fn clone_and_open(
             let repo_name = repo_url
                 .split('/')
                 .next_back()
-                .map(|name| name.strip_suffix(".git").unwrap_or(name))
+                .map(|name| name.trim_suffix(".git"))
                 .unwrap_or("repository")
                 .to_owned();
 

@@ -36,6 +36,7 @@ cli = [
     "dep:plist",
     "dep:rayon",
     "dep:release_channel",
+    "dep:sandbox",
     "dep:tempfile",
     "dep:util",
     "dep:walkdir",
@@ -76,6 +77,7 @@ core-services = { workspace = true, optional = true }
 plist = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
+sandbox = { workspace = true, optional = true }
 windows = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "windows")'.build-dependencies]

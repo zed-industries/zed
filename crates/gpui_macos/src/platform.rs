@@ -2,6 +2,7 @@ use crate::{
     AppleActivity, AppleDispatcher, BoolExt, MacDisplay, MacKeyboardLayout, MacKeyboardMapper,
     MacWindow, events::key_to_menu_equivalent, main_thread_marker, ns_string,
     pasteboard::Pasteboard, renderer, set_active_window_cursor_style,
+    system_notifications::NotificationCommand,
 };
 use anyhow::{Context as _, anyhow};
 use block2::RcBlock;
@@ -1128,14 +1129,27 @@ impl Platform for MacPlatform {
 
     fn show_system_notification(&self, notification: gpui::SystemNotification) {
         let mut state = self.0.lock();
-        let executor = state.foreground_executor.clone();
-        state.system_notifications.show(&executor, notification);
+        let foreground_executor = state.foreground_executor.clone();
+        let background_executor = state.background_executor.clone();
+        state
+            .system_notifications
+            .send(
+                &foreground_executor,
+                &background_executor,
+                NotificationCommand::Show(notification),
+            )
+            .detach();
     }
 
-    fn dismiss_system_notification(&self, tag: &str) {
+    fn dismiss_system_notification(&self, tag: &str) -> Task<()> {
         let mut state = self.0.lock();
-        let executor = state.foreground_executor.clone();
-        state.system_notifications.dismiss(&executor, tag);
+        let foreground_executor = state.foreground_executor.clone();
+        let background_executor = state.background_executor.clone();
+        state.system_notifications.send(
+            &foreground_executor,
+            &background_executor,
+            NotificationCommand::Dismiss(gpui::SharedString::from(tag.to_owned())),
+        )
     }
 
     fn on_system_notification_response(

@@ -21,8 +21,6 @@ use onboarding::show_onboarding_view;
 use recent_projects::{RemoteSettings, navigate_to_positions, open_remote_project};
 use remote::{RemoteConnectionOptions, WslConnectionOptions};
 use settings::Settings;
-#[cfg(target_os = "windows")]
-use std::path::{Component, Prefix};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
@@ -30,7 +28,7 @@ use std::time::Duration;
 use ui::SharedString;
 use util::ResultExt;
 use util::debug_panic;
-use util::paths::PathWithPosition;
+use util::paths::{PathStyle, PathWithPosition, url_path_to_path};
 use workspace::PathList;
 use workspace::item::ItemHandle;
 use workspace::{AppState, MultiWorkspace, OpenOptions, OpenResult, SerializedWorkspaceLocation};
@@ -224,24 +222,14 @@ impl OpenRequest {
 
     fn parse_local_file_path(&mut self, file: &str) {
         if let Some(decoded) = urlencoding::decode(file).log_err() {
-            // URL paths keep a `/` before a Windows drive letter (`/C:/x`), which Windows cannot open.
-            #[cfg(target_os = "windows")]
-            if let Some(path) = decoded.strip_prefix('/')
-                && matches!(
-                    Path::new(path).components().next(),
-                    Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::Disk(_))
-                )
-            {
-                self.open_paths.push(path.to_owned());
-                return;
-            }
-            self.open_paths.push(decoded.into_owned())
+            self.open_paths
+                .push(url_path_to_path(&decoded, PathStyle::local()).to_owned())
         }
     }
 
     fn parse_agent_url(&mut self, agent_path: &str) {
         // Format: "" or "?prompt=<text>".
-        let agent_path = agent_path.strip_prefix('/').unwrap_or(agent_path);
+        let agent_path = agent_path.trim_prefix('/');
         let external_source_prompt = agent_path.strip_prefix('?').and_then(|query| {
             url::form_urlencoded::parse(query.as_bytes())
                 .find_map(|(key, value)| (key == "prompt").then_some(value))
@@ -261,7 +249,7 @@ impl OpenRequest {
 
     fn parse_git_clone_url(&mut self, clone_path: &str) -> Result<()> {
         // Format: /?repo=<url> or ?repo=<url>
-        let clone_path = clone_path.strip_prefix('/').unwrap_or(clone_path);
+        let clone_path = clone_path.trim_prefix('/');
 
         let query = clone_path
             .strip_prefix('?')

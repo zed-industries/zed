@@ -190,7 +190,6 @@ impl RatePredictionsModal {
 
         if let Some(prev_index) = prev_index {
             self.selected_index = prev_index;
-            cx.notify();
         }
         cx.notify();
     }
@@ -230,8 +229,6 @@ impl RatePredictionsModal {
         self.select_completion(current_completion, false, window, cx);
         self.select_next_edit(&Default::default(), window, cx);
         self.confirm(&Default::default(), window, cx);
-
-        cx.notify();
     }
 
     pub fn thumbs_down_active(
@@ -263,8 +260,6 @@ impl RatePredictionsModal {
         self.select_completion(current_completion, false, window, cx);
         self.select_next_edit(&Default::default(), window, cx);
         self.confirm(&Default::default(), window, cx);
-
-        cx.notify();
     }
 
     fn focus_completions(

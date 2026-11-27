@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{borrow::Cow, fmt};
 
 use chrono::{DateTime, Utc};
 use derive_more::Display;
@@ -47,8 +47,8 @@ pub struct SiteMetadata {
     pub banner_message: Option<String>,
 }
 
-/// Filters for listing crates. crates.io ignores `user_id` when `keyword` is
-/// set.
+/// Filters for listing crates. Among `keyword`, `user_id`, and `team_id`,
+/// crates.io uses only the first filter set, in that order.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CrateListQuery {
     /// Results are sorted by relevance with a search and alphabetically
@@ -58,6 +58,7 @@ pub struct CrateListQuery {
     pub category: Option<String>,
     pub keyword: Option<String>,
     pub user_id: Option<UserId>,
+    pub team_id: Option<TeamId>,
     /// Excludes crates whose versions are all yanked.
     pub exclude_yanked: bool,
 }
@@ -136,13 +137,16 @@ pub enum OwnerLogin {
     /// A crates.io user, or a GitHub user when removing owners. crates.io
     /// rejects names that match different accounts.
     #[display("{_0}")]
-    Username(String),
+    Username(Cow<'static, str>),
     #[display("crates.io:{_0}")]
-    CratesIoUser(String),
+    CratesIoUser(Cow<'static, str>),
     #[display("github:{_0}")]
-    GitHubUser(String),
+    GitHubUser(Cow<'static, str>),
     #[display("github:{organization}:{team}")]
-    GitHubTeam { organization: String, team: String },
+    GitHubTeam {
+        organization: Cow<'static, str>,
+        team: Cow<'static, str>,
+    },
 }
 
 /// The outcome of adding one owner, as crates.io describes it.

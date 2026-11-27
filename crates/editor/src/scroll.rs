@@ -190,18 +190,6 @@ impl ScrollManager {
         }
     }
 
-    pub fn set_native_display_map_id(
-        &mut self,
-        display_map_id: EntityId,
-        cx: &mut Context<Editor>,
-    ) {
-        self.anchor.update(cx, |shared, _| {
-            if shared.display_map_id.is_none() {
-                shared.display_map_id = Some(display_map_id);
-            }
-        });
-    }
-
     pub fn clone_state(
         &mut self,
         other: &Self,

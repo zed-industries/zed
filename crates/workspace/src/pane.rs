@@ -19,11 +19,11 @@ use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{StreamExt, stream::FuturesUnordered};
 use git::{CopyFilePermalink, OpenFilePermalink};
 use gpui::{
-    Action, Anchor, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Div,
+    Action, Anchor, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context,
     DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
     Focusable, KeyContext, MouseButton, NavigationDirection, Pixels, Point, PromptLevel, Render,
     ScrollHandle, Subscription, Task, TaskExt, WeakEntity, WeakFocusHandle, Window, actions,
-    anchored, deferred, prelude::*,
+    prelude::*,
 };
 use itertools::Itertools;
 use language::{Capability, DiagnosticSeverity};
@@ -442,7 +442,6 @@ pub struct Pane {
     display_nav_history_buttons: Option<bool>,
     double_click_dispatch_action: Box<dyn Action>,
     save_modals_spawned: HashSet<EntityId>,
-    close_pane_if_empty: bool,
     pub new_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub split_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pinned_tab_count: usize,
@@ -453,8 +452,6 @@ pub struct Pane {
     /// If a certain project item wants to get recreated with specific data, it can persist its data before the recreation here.
     pub project_item_restoration_data: HashMap<ProjectItemKind, Box<dyn Any + Send>>,
     welcome_page: Option<Entity<crate::welcome::WelcomePage>>,
-
-    pub in_center_group: bool,
 }
 
 pub struct ActivationHistoryEntry {
@@ -615,7 +612,6 @@ impl Pane {
             _subscriptions: subscriptions,
             double_click_dispatch_action,
             save_modals_spawned: HashSet::default(),
-            close_pane_if_empty: true,
             split_item_context_menu_handle: Default::default(),
             new_item_context_menu_handle: Default::default(),
             pinned_tab_count: 0,
@@ -625,7 +621,6 @@ impl Pane {
             diagnostic_summary_update: Task::ready(()),
             project_item_restoration_data: HashMap::default(),
             welcome_page: None,
-            in_center_group: false,
         }
     }
 
@@ -850,18 +845,6 @@ impl Pane {
 
     pub fn set_can_toggle_zoom(&mut self, can_toggle_zoom: bool, cx: &mut Context<Self>) {
         self.can_toggle_zoom = can_toggle_zoom;
-        cx.notify();
-    }
-
-    pub fn set_close_pane_if_empty(&mut self, close_pane_if_empty: bool, cx: &mut Context<Self>) {
-        self.close_pane_if_empty = close_pane_if_empty;
-        cx.notify();
-    }
-
-    pub fn set_can_navigate(&mut self, can_navigate: bool, cx: &mut Context<Self>) {
-        self.toolbar.update(cx, |toolbar, cx| {
-            toolbar.set_can_navigate(can_navigate, cx);
-        });
         cx.notify();
     }
 
@@ -1694,7 +1677,7 @@ impl Pane {
         let pinned_item_ids = self.pinned_item_ids();
         let matching_item_ids: Vec<_> = self
             .items()
-            .filter(|item| item.project_path(cx).as_ref() == Some(project_path))
+            .filter(|item| item.single_file_project_path(cx).as_ref() == Some(project_path))
             .map(|item| item.item_id())
             .collect();
         self.close_items(window, cx, save_intent, &move |item_id| {
@@ -2078,13 +2061,7 @@ impl Pane {
                 // Remove the item from the pane.
                 if should_close {
                     pane.update_in(cx, |pane, window, cx| {
-                        pane.remove_item(
-                            item_to_close.item_id(),
-                            false,
-                            pane.close_pane_if_empty,
-                            window,
-                            cx,
-                        );
+                        pane.remove_item(item_to_close.item_id(), false, true, window, cx);
                     })
                     .ok();
                 }
@@ -3825,12 +3802,6 @@ impl Pane {
             }))
     }
 
-    pub fn render_menu_overlay(menu: &Entity<ContextMenu>) -> Div {
-        div().absolute().bottom_0().right_0().size_0().child(
-            deferred(anchored().anchor(Anchor::TopRight).child(menu.clone())).with_priority(1),
-        )
-    }
-
     pub fn set_zoomed(&mut self, zoomed: bool, cx: &mut Context<Self>) {
         self.zoomed = zoomed;
         cx.notify();
@@ -3891,9 +3862,7 @@ impl Pane {
             None
         };
 
-        if direction != self.drag_split_direction {
-            self.drag_split_direction = direction;
-        }
+        self.drag_split_direction = direction;
     }
 
     pub fn handle_tab_drop(
@@ -4807,10 +4776,6 @@ impl ItemNavHistory {
 
     pub fn pop_backward(&mut self, cx: &mut App) -> Option<NavigationEntry> {
         self.history.pop(NavigationMode::GoingBack, cx)
-    }
-
-    pub fn pop_forward(&mut self, cx: &mut App) -> Option<NavigationEntry> {
-        self.history.pop(NavigationMode::GoingForward, cx)
     }
 
     pub(crate) fn push_path(

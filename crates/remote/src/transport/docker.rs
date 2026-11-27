@@ -3,11 +3,11 @@ use anyhow::Result;
 use anyhow::anyhow;
 use async_trait::async_trait;
 use collections::HashMap;
-use parking_lot::Mutex;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use semver::Version as SemanticVersion;
 use std::collections::BTreeMap;
 use std::fmt::Write;
+use std::net::SocketAddr;
 use std::time::Instant;
 use std::{
     path::{Path, PathBuf},
@@ -56,7 +56,6 @@ pub struct DockerConnectionOptions {
 }
 
 pub(crate) struct DockerExecConnection {
-    proxy_process: Mutex<Option<u32>>,
     remote_dir_for_server: String,
     remote_binary_relpath: Option<Arc<RelPath>>,
     connection_options: DockerConnectionOptions,
@@ -67,13 +66,24 @@ pub(crate) struct DockerExecConnection {
 }
 
 impl DockerExecConnection {
+    fn remote_binary_path(&self) -> Result<String> {
+        let relative_path = self
+            .remote_binary_relpath
+            .as_ref()
+            .context("Remote binary path not set")?;
+        Ok(format!(
+            "{}/{}",
+            self.remote_dir_for_server.trim_end_matches('/'),
+            relative_path.display(PathStyle::Unix),
+        ))
+    }
+
     pub async fn new(
         connection_options: DockerConnectionOptions,
         delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         let mut this = Self {
-            proxy_process: Mutex::new(None),
             remote_dir_for_server: "/".to_string(),
             remote_binary_relpath: None,
             connection_options,
@@ -461,12 +471,16 @@ impl DockerExecConnection {
         let mut chown_command = util::command::new_command(&docker_cli);
         chown_command.kill_on_drop(true);
         chown_command.arg("exec");
+        chown_command.arg("-u");
+        chown_command.arg("0");
         chown_command.arg(connection_options.container_id);
         chown_command.arg("chown");
-        chown_command.arg(format!(
-            "{}:{}",
-            connection_options.remote_user, connection_options.remote_user,
-        ));
+        chown_command.arg(
+            connection_options
+                .remote_user
+                .split_once(':')
+                .map_or(connection_options.remote_user.as_str(), |(user, _)| user),
+        );
         chown_command.arg(&dst_path);
 
         let output = chown_command.output().await?;
@@ -641,21 +655,6 @@ impl DockerExecConnection {
         }
         Ok(())
     }
-
-    fn kill_inner(&self) -> Result<()> {
-        if let Some(pid) = self.proxy_process.lock().take() {
-            if let Ok(_) = util::command::new_command("kill")
-                .arg(pid.to_string())
-                .spawn()
-            {
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!("Failed to kill process"))
-            }
-        } else {
-            Ok(())
-        }
-    }
 }
 
 #[async_trait(?Send)]
@@ -673,13 +672,6 @@ impl RemoteConnection for DockerExecConnection {
         delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Task<Result<i32>> {
-        // We'll try connecting anew every time we open a devcontainer, so proactively try to kill any old connections.
-        if !self.has_been_killed() {
-            if let Err(e) = self.kill_inner() {
-                return Task::ready(Err(e));
-            };
-        }
-
         delegate.set_status(Some("Starting proxy"), cx);
 
         let Some(remote_binary_relpath) = self.remote_binary_relpath.clone() else {
@@ -729,9 +721,6 @@ impl RemoteConnection for DockerExecConnection {
             )));
         };
 
-        let mut proxy_process = self.proxy_process.lock();
-        *proxy_process = Some(child.id());
-
         cx.spawn(async move |cx| {
             super::handle_rpc_messages_over_child_process_stdio(
                 child,
@@ -770,11 +759,39 @@ impl RemoteConnection for DockerExecConnection {
     }
 
     async fn kill(&self) -> Result<()> {
-        self.kill_inner()
+        Ok(())
     }
 
     fn has_been_killed(&self) -> bool {
-        self.proxy_process.lock().is_none()
+        false
+    }
+
+    fn tcp_proxy_commands(
+        &self,
+        address: SocketAddr,
+        timeout: u64,
+        program: Option<&str>,
+        args: &[String],
+    ) -> Result<Option<(CommandTemplate, CommandTemplate)>> {
+        let proxy_program = self.remote_binary_path()?;
+        let mut arguments = vec!["tcp".to_owned(), address.to_string(), timeout.to_string()];
+        let attach_arguments = arguments.clone();
+        if let Some(program) = program {
+            arguments.extend(["--".to_owned(), program.to_owned()]);
+            arguments.extend_from_slice(args);
+        }
+        Ok(Some((
+            CommandTemplate {
+                program: proxy_program.clone(),
+                args: arguments,
+                env: Default::default(),
+            },
+            CommandTemplate {
+                program: proxy_program,
+                args: attach_arguments,
+                env: Default::default(),
+            },
+        )))
     }
 
     fn build_command(
@@ -783,9 +800,13 @@ impl RemoteConnection for DockerExecConnection {
         args: &[String],
         env: &HashMap<String, String>,
         working_dir: Option<String>,
-        _port_forward: Option<(u16, String, u16)>,
+        port_forward: Option<(u16, String, u16)>,
         interactive: Interactive,
     ) -> Result<CommandTemplate> {
+        anyhow::ensure!(
+            port_forward.is_none(),
+            "Port forwarding is not supported by docker exec"
+        );
         let mut parsed_working_dir = None;
 
         let path_style = self.path_style();
@@ -849,10 +870,6 @@ impl RemoteConnection for DockerExecConnection {
         &self,
         mut command: RemoteCommand,
     ) -> Result<(CommandTemplate, Vec<u8>)> {
-        let remote_binary_relpath = self
-            .remote_binary_relpath
-            .as_ref()
-            .context("Remote binary path not set")?;
         let mut env = self
             .connection_options
             .remote_env
@@ -873,11 +890,6 @@ impl RemoteConnection for DockerExecConnection {
                 None => working_dir,
             });
         }
-        let remote_binary_path = format!(
-            "{}/{}",
-            self.remote_dir_for_server.trim_end_matches('/'),
-            remote_binary_relpath.display(PathStyle::Unix),
-        );
         let mut args = vec![
             String::from("exec"),
             String::from("-u"),
@@ -890,7 +902,7 @@ impl RemoteConnection for DockerExecConnection {
         args.extend([
             String::from("-i"),
             self.connection_options.container_id.clone(),
-            remote_binary_path,
+            self.remote_binary_path()?,
             String::from("exec"),
         ]);
         Ok((
@@ -1112,6 +1124,77 @@ mod tests {
     }
 
     #[test]
+    fn tcp_proxy_runs_inside_container() -> Result<()> {
+        let mut connection = connection(&[("PATH", "/custom/bin")]);
+        connection.remote_binary_relpath = Some(RelPath::from_unix_str("remote server")?.into());
+        for use_podman in [false, true] {
+            connection.connection_options.use_podman = use_podman;
+            for address in ["127.0.0.1:4567", "[::1]:4567"] {
+                for program in [Some("/python with spaces"), None] {
+                    let (proxy, attach_proxy) = connection
+                        .tcp_proxy_commands(
+                            address.parse()?,
+                            1234,
+                            program,
+                            &["argument with spaces".to_owned(), "--flag".to_owned()],
+                        )?
+                        .context("Missing proxy")?;
+                    assert_eq!(attach_proxy.program, proxy.program);
+                    assert_eq!(attach_proxy.args, ["tcp", address, "1234"]);
+                    let template = connection.build_command(
+                        Some(proxy.program),
+                        &proxy.args,
+                        &HashMap::default(),
+                        Some("/workspace".to_owned()),
+                        None,
+                        Interactive::No,
+                    )?;
+                    assert_eq!(
+                        template.program,
+                        if use_podman { "podman" } else { "docker" }
+                    );
+                    let mut expected = vec![
+                        "exec",
+                        "-u",
+                        "user",
+                        "-w",
+                        "/workspace",
+                        "-e",
+                        "PATH=/custom/bin",
+                        "-i",
+                        "container_id",
+                        "/tmp/zed/remote server",
+                        "tcp",
+                        address,
+                        "1234",
+                    ];
+                    if let Some(program) = program {
+                        expected.extend(["--", program, "argument with spaces", "--flag"]);
+                    }
+                    assert_eq!(template.args, expected);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_unsupported_port_forwarding() {
+        assert!(
+            connection(&[])
+                .build_command(
+                    None,
+                    &[],
+                    &HashMap::default(),
+                    None,
+                    Some((1234, "localhost".to_owned(), 5678)),
+                    Interactive::No,
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
     fn test_build_stdio_command() -> Result<()> {
         let mut connection = connection(&[("API_KEY", "remote-secret"), ("NAME\0NUL", "dropped")]);
         let command = |env, working_dir: Option<&str>| RemoteCommand {
@@ -1180,7 +1263,6 @@ mod tests {
 
     fn connection(remote_env: &[(&str, &str)]) -> DockerExecConnection {
         DockerExecConnection {
-            proxy_process: Mutex::new(None),
             remote_dir_for_server: "/tmp/zed".to_string(),
             remote_binary_relpath: None,
             connection_options: DockerConnectionOptions {

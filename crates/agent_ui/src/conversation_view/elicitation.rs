@@ -1,5 +1,5 @@
 use acp_thread::{Elicitation, ElicitationEntryId, ElicitationStatus};
-use agent_client_protocol::v2::schema as acp;
+use agent_client_protocol::{schema::IndexMap, v2::schema as acp};
 use collections::{HashMap, HashSet};
 use component::{Component, ComponentScope, example_group_with_title, single_example};
 use editor::Editor;
@@ -7,6 +7,7 @@ use futures::channel::oneshot;
 use gpui::{AnyElement, App, Div, Empty, Entity, Focusable, Role, SharedString, Window, div};
 use std::collections::BTreeMap;
 use std::rc::Rc;
+use std::sync::Arc;
 use ui::{
     Button, Checkbox, ChoiceCard, Color, Icon, IconName, IconSize, Label, LabelSize, ToggleState,
     prelude::*,
@@ -37,16 +38,27 @@ enum ElicitationFieldValue {
 #[derive(PartialEq, Eq)]
 pub(crate) struct ElicitationFormSubmission {
     fields: HashMap<String, ElicitationFieldValue>,
+    v1_string_patterns: Arc<BTreeMap<String, String>>,
 }
 
 pub(crate) struct ElicitationFormState {
     fields: HashMap<String, ElicitationFieldState>,
     field_errors: HashMap<String, SharedString>,
     is_submitting: bool,
+    v1_string_patterns: Arc<BTreeMap<String, String>>,
 }
 
 impl ElicitationFormState {
-    pub(crate) fn new(schema: &acp::ElicitationSchema, window: &mut Window, cx: &mut App) -> Self {
+    fn new(schema: &acp::ElicitationSchema, window: &mut Window, cx: &mut App) -> Self {
+        Self::with_v1_string_patterns(schema, BTreeMap::new(), window, cx)
+    }
+
+    pub(crate) fn with_v1_string_patterns(
+        schema: &acp::ElicitationSchema,
+        v1_string_patterns: BTreeMap<String, String>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
         let required = schema.required.as_deref().unwrap_or_default();
         let mut fields = HashMap::default();
 
@@ -62,8 +74,9 @@ impl ElicitationFormState {
                 acp::ElicitationPropertySchema::String(schema) => {
                     let options = single_select_options(schema);
                     if options.is_empty() {
+                        let pattern = v1_string_patterns.get(name).map(String::as_str);
                         let default = schema.default.as_ref().filter(|default| {
-                            validate_string_value(title.clone(), schema, default).is_ok()
+                            validate_string_value(title.clone(), schema, pattern, default).is_ok()
                         });
                         let editor = cx.new(|cx| {
                             let mut editor = Editor::single_line(window, cx);
@@ -136,11 +149,13 @@ impl ElicitationFormState {
             fields,
             field_errors: HashMap::default(),
             is_submitting: false,
+            v1_string_patterns: Arc::new(v1_string_patterns),
         }
     }
 
     fn snapshot(&self, cx: &App) -> ElicitationFormSubmission {
         ElicitationFormSubmission {
+            v1_string_patterns: self.v1_string_patterns.clone(),
             fields: self
                 .fields
                 .iter()
@@ -192,7 +207,7 @@ impl ElicitationFormState {
         &self,
         schema: &acp::ElicitationSchema,
         cx: &App,
-    ) -> Result<BTreeMap<String, acp::ElicitationContentValue>, HashMap<String, SharedString>> {
+    ) -> Result<IndexMap<String, acp::ElicitationContentValue>, HashMap<String, SharedString>> {
         self.snapshot(cx).validate(schema)
     }
 
@@ -241,9 +256,9 @@ impl ElicitationFormSubmission {
     pub(crate) fn validate(
         &self,
         schema: &acp::ElicitationSchema,
-    ) -> Result<BTreeMap<String, acp::ElicitationContentValue>, HashMap<String, SharedString>> {
+    ) -> Result<IndexMap<String, acp::ElicitationContentValue>, HashMap<String, SharedString>> {
         let required = schema.required.as_deref().unwrap_or_default();
-        let mut content = BTreeMap::new();
+        let mut content = IndexMap::new();
         let mut errors = HashMap::default();
 
         for (name, property) in &schema.properties {
@@ -251,6 +266,7 @@ impl ElicitationFormSubmission {
             let Some(field) = self.fields.get(name) else {
                 continue;
             };
+            let pattern = self.v1_string_patterns.get(name).map(String::as_str);
 
             let field_content = match (property, field) {
                 (
@@ -264,8 +280,13 @@ impl ElicitationFormSubmission {
                             Ok(None)
                         }
                     } else {
-                        validate_string_value(property_title(name, property), schema, value)
-                            .map(|()| Some(value.clone().into()))
+                        validate_string_value(
+                            property_title(name, property),
+                            schema,
+                            pattern,
+                            value,
+                        )
+                        .map(|()| Some(value.clone().into()))
                     }
                 }
                 (
@@ -275,7 +296,12 @@ impl ElicitationFormSubmission {
                     if let Some(value) = value {
                         validate_single_select_value(property_title(name, property), schema, value)
                             .and_then(|()| {
-                                validate_string_value(property_title(name, property), schema, value)
+                                validate_string_value(
+                                    property_title(name, property),
+                                    schema,
+                                    pattern,
+                                    value,
+                                )
                             })
                             .map(|()| Some(value.clone().into()))
                     } else if is_required {
@@ -403,6 +429,7 @@ mod tests {
                         acp::ElicitationFormMode::new(preview_request_scope(0), schema),
                         "Choose an answer.",
                     ),
+                    v1_string_patterns: BTreeMap::new(),
                     status: pending_status(),
                 },
                 events: Rc::default(),
@@ -736,10 +763,10 @@ mod tests {
     fn string_validation_rejects_email_format_mismatch() {
         let schema = acp::StringPropertySchema::email();
 
-        validate_string_value("Email".into(), &schema, "user@example.com")
+        validate_string_value("Email".into(), &schema, None, "user@example.com")
             .expect("valid email should be accepted");
         assert_eq!(
-            validate_string_value("Email".into(), &schema, "not-an-email")
+            validate_string_value("Email".into(), &schema, None, "not-an-email")
                 .expect_err("invalid email should be rejected")
                 .to_string(),
             "Email must be an email address"
@@ -749,14 +776,14 @@ mod tests {
         assert_eq!(string_format_json_name(&format), None);
         assert_eq!(string_format_label(&format), None);
         let schema = acp::StringPropertySchema::new().format(format);
-        validate_string_value("Email".into(), &schema, "not-an-email")
+        validate_string_value("Email".into(), &schema, None, "not-an-email")
             .expect("unknown formats should be annotations");
 
-        let schema = schema.pattern("^prod-[0-9]+$");
-        validate_string_value("Email".into(), &schema, "prod-42")
+        let pattern = Some("^prod-[0-9]+$");
+        validate_string_value("Email".into(), &schema, pattern, "prod-42")
             .expect("known constraints should still apply alongside unknown formats");
         assert_eq!(
-            validate_string_value("Email".into(), &schema, "not-an-email")
+            validate_string_value("Email".into(), &schema, pattern, "not-an-email")
                 .expect_err("unknown formats should not bypass known constraints")
                 .to_string(),
             "Email does not match the requested pattern"
@@ -764,27 +791,56 @@ mod tests {
     }
 
     #[test]
-    fn string_validation_rejects_pattern_mismatch() {
-        let schema = acp::StringPropertySchema::new().pattern("^prod-[0-9]+$");
+    fn string_validation_only_uses_v1_patterns() {
+        use acp_thread::elicitation::{ElicitationRequest, request_from_v1};
 
-        validate_string_value("Environment".into(), &schema, "prod-42")
-            .expect("matching pattern should be accepted");
-        assert_eq!(
-            validate_string_value("Environment".into(), &schema, "dev-42")
-                .expect_err("pattern mismatch should be rejected")
-                .to_string(),
-            "Environment does not match the requested pattern"
+        let request = serde_json::json!({
+            "mode": "form",
+            "sessionId": "session",
+            "message": "Choose an environment",
+            "requestedSchema": {
+                "type": "object",
+                "properties": {
+                    "environment": { "type": "string", "minLength": 3, "pattern": "^prod-[0-9]+$" }
+                }
+            }
+        });
+        let legacy = request_from_v1(serde_json::from_value(request.clone()).expect("v1 request"))
+            .expect("converted v1 request");
+        let current = ElicitationRequest::from(
+            serde_json::from_value::<acp::CreateElicitationRequest>(request).expect("v2 request"),
         );
+        for (request, accepts_other_environment) in [(legacy, false), (current, true)] {
+            let acp::ElicitationMode::Form(mode) = request.request.mode else {
+                panic!("expected form");
+            };
+            let mut submission = ElicitationFormSubmission {
+                fields: HashMap::default(),
+                v1_string_patterns: Arc::new(request.v1_string_patterns),
+            };
+            for (value, valid) in [
+                ("prod-42", true),
+                ("dev-42", accepts_other_environment),
+                ("x", false),
+            ] {
+                submission.fields.insert(
+                    "environment".into(),
+                    ElicitationFieldValue::Text(value.into()),
+                );
+                assert_eq!(submission.validate(&mode.requested_schema).is_ok(), valid);
+            }
+        }
     }
 
     #[test]
     fn string_validation_supports_bounded_advanced_patterns() {
-        let schema = acp::StringPropertySchema::new().pattern(r"^prod-(?=[0-9]+$)([0-9])\1$");
+        let schema = acp::StringPropertySchema::new();
+        let pattern = Some(r"^prod-(?=[0-9]+$)([0-9])\1$");
 
-        validate_string_value("Environment".into(), &schema, "prod-44")
+        validate_string_value("Environment".into(), &schema, pattern, "prod-44")
             .expect("lookahead and backreference should be accepted");
         assert_eq!(
-            validate_string_value("Environment".into(), &schema, "prod-45")
+            validate_string_value("Environment".into(), &schema, pattern, "prod-45")
                 .expect_err("backreference mismatch should be rejected")
                 .to_string(),
             "Environment does not match the requested pattern"
@@ -793,19 +849,18 @@ mod tests {
 
     #[test]
     fn string_validation_rejects_patterns_outside_resource_limits() {
-        let oversized_pattern =
-            acp::StringPropertySchema::new().pattern("a".repeat(MAX_ELICITATION_PATTERN_BYTES + 1));
+        let schema = acp::StringPropertySchema::new();
+        let oversized_pattern = "a".repeat(MAX_ELICITATION_PATTERN_BYTES + 1);
         assert_eq!(
-            validate_string_value("Value".into(), &oversized_pattern, "a")
+            validate_string_value("Value".into(), &schema, Some(&oversized_pattern), "a")
                 .expect_err("oversized pattern should be rejected")
                 .to_string(),
             "Value has an invalid validation pattern"
         );
 
-        let schema = acp::StringPropertySchema::new().pattern(".*");
         let oversized_value = "a".repeat(MAX_ELICITATION_PATTERN_INPUT_BYTES + 1);
         assert_eq!(
-            validate_string_value("Value".into(), &schema, &oversized_value)
+            validate_string_value("Value".into(), &schema, Some(".*"), &oversized_value)
                 .expect_err("oversized pattern input should be rejected")
                 .to_string(),
             "Value is too long to validate safely"
@@ -843,6 +898,7 @@ mod tests {
                 ),
                 "Review this request.",
             ),
+            v1_string_patterns: BTreeMap::new(),
             status: pending_status(),
         };
         assert!(should_render_elicitation(&pending));
@@ -857,6 +913,7 @@ mod tests {
                 ),
                 "Authorize Zed in your browser.",
             ),
+            v1_string_patterns: BTreeMap::new(),
             status: ElicitationStatus::Accepted,
         };
         assert!(should_render_elicitation(&accepted_url));
@@ -870,6 +927,7 @@ mod tests {
                 ),
                 "Review this request.",
             ),
+            v1_string_patterns: BTreeMap::new(),
             status: ElicitationStatus::Accepted,
         };
         assert!(!should_render_elicitation(&accepted_form));
@@ -877,9 +935,10 @@ mod tests {
         let pending_unknown = Elicitation {
             id: ElicitationEntryId("pending-unknown".into()),
             request: acp::CreateElicitationRequest::new(
-                acp::OtherElicitationMode::new("future", preview_request_scope(3), BTreeMap::new()),
+                acp::OtherElicitationMode::new("future", preview_request_scope(3), IndexMap::new()),
                 "Use a future input mode.",
             ),
+            v1_string_patterns: BTreeMap::new(),
             status: pending_status(),
         };
         assert!(!should_render_elicitation(&pending_unknown));
@@ -1044,7 +1103,7 @@ mod tests {
             "Provide a token and access choices",
         )
         .meta(metadata("request"));
-        let expected_content = BTreeMap::from([
+        let expected_content = IndexMap::from([
             (
                 "token".into(),
                 acp::ElicitationContentValue::from("  secret  "),
@@ -1085,6 +1144,10 @@ mod tests {
             let content = submission
                 .validate(&schema)
                 .expect("unknown format annotations should not reject valid existing fields");
+            assert_eq!(
+                content.keys().collect::<Vec<_>>(),
+                ["token", "environment", "scopes"]
+            );
             assert!(form_state.validation_matches_current_values(&submission, cx));
             assert_eq!(content, expected_content);
             store.update(cx, |store, cx| {
@@ -1192,7 +1255,7 @@ mod tests {
                 "properties": {
                     "when": {"type": "_future"},
                     "labels": {"type": "array", "items": {"type": "_future"}},
-                    "code": {"type": "string", "pattern": "^[0-9]+$", "default": "abc"},
+                    "code": {"type": "string", "minLength": 4, "default": "abc"},
                     "count": {"type": "integer", "minimum": 1, "default": 0},
                     "ratio": {"type": "number", "maximum": 1, "default": 2},
                     "tags": {
@@ -1371,7 +1434,6 @@ impl Component for ElicitationCardPreview {
                         .width(px(640.)),
                     ],
                 )
-                .vertical()
                 .into_any_element(),
                 example_group_with_title(
                     "URL Requests",
@@ -1383,7 +1445,6 @@ impl Component for ElicitationCardPreview {
                         .width(px(640.)),
                     ],
                 )
-                .vertical()
                 .into_any_element(),
                 example_group_with_title(
                     "Terminal States",
@@ -1400,7 +1461,6 @@ impl Component for ElicitationCardPreview {
                         .width(px(640.)),
                     ],
                 )
-                .vertical()
                 .into_any_element(),
             ])
             .into_any_element()
@@ -1465,6 +1525,7 @@ fn render_preview_card(
     let elicitation = Elicitation {
         id: ElicitationEntryId(format!("preview-elicitation-{entry_ix}").into()),
         request,
+        v1_string_patterns: BTreeMap::new(),
         status,
     };
 
@@ -1671,6 +1732,7 @@ fn validate_integer_value(
 fn validate_string_value(
     title: SharedString,
     schema: &acp::StringPropertySchema,
+    v1_pattern: Option<&str>,
     value: &str,
 ) -> Result<(), SharedString> {
     let length = value.chars().count();
@@ -1687,7 +1749,7 @@ fn validate_string_value(
         return Err(format!("{title} is too long").into());
     }
 
-    validate_string_pattern_and_format(title, schema, value)
+    validate_string_pattern_and_format(title, schema, v1_pattern, value)
 }
 
 fn validate_single_select_value(
@@ -1712,25 +1774,17 @@ const ELICITATION_PATTERN_DFA_SIZE_LIMIT: usize = 1024 * 1024;
 fn validate_string_pattern_and_format(
     title: SharedString,
     schema: &acp::StringPropertySchema,
+    v1_pattern: Option<&str>,
     value: &str,
 ) -> Result<(), SharedString> {
-    if schema.pattern.is_none()
-        && schema
-            .format
-            .as_ref()
-            .and_then(string_format_json_name)
-            .is_none()
-    {
+    let format = schema.format.as_ref().and_then(string_format_json_name);
+    if v1_pattern.is_none() && format.is_none() {
         return Ok(());
     }
-    if schema
-        .pattern
-        .as_ref()
-        .is_some_and(|pattern| pattern.len() > MAX_ELICITATION_PATTERN_BYTES)
-    {
+    if v1_pattern.is_some_and(|pattern| pattern.len() > MAX_ELICITATION_PATTERN_BYTES) {
         return Err(format!("{title} has an invalid validation pattern").into());
     }
-    if schema.pattern.is_some() && value.len() > MAX_ELICITATION_PATTERN_INPUT_BYTES {
+    if v1_pattern.is_some() && value.len() > MAX_ELICITATION_PATTERN_INPUT_BYTES {
         return Err(format!("{title} is too long to validate safely").into());
     }
 
@@ -1739,13 +1793,13 @@ fn validate_string_pattern_and_format(
         "type".to_string(),
         serde_json::Value::String("string".into()),
     );
-    if let Some(pattern) = &schema.pattern {
+    if let Some(pattern) = v1_pattern {
         validation_schema.insert(
             "pattern".to_string(),
-            serde_json::Value::String(pattern.clone()),
+            serde_json::Value::String(pattern.into()),
         );
     }
-    if let Some(format) = schema.format.as_ref().and_then(string_format_json_name) {
+    if let Some(format) = format {
         validation_schema.insert(
             "format".to_string(),
             serde_json::Value::String(format.into()),
@@ -1763,7 +1817,7 @@ fn validate_string_pattern_and_format(
         )
         .build(&validation_schema)
         .map_err(|_| {
-            if schema.pattern.is_some() {
+            if v1_pattern.is_some() {
                 format!("{title} has an invalid validation pattern")
             } else {
                 format!("{title} has an invalid validation format")
@@ -1782,7 +1836,7 @@ fn validate_string_pattern_and_format(
     }
 
     match (
-        schema.pattern.is_some(),
+        v1_pattern.is_some(),
         schema.format.as_ref().and_then(string_format_label),
     ) {
         (true, Some(_)) => Err(format!("{title} does not match the requested constraints").into()),

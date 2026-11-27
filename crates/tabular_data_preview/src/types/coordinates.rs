@@ -136,9 +136,4 @@ impl DisplayCellId {
             col: col.into(),
         }
     }
-
-    /// Returns (row, column)
-    pub fn to_raw(&self) -> (usize, usize) {
-        (self.row.0, self.col.0)
-    }
 }

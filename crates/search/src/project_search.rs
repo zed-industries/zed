@@ -69,8 +69,6 @@ actions!(
         SearchInNew,
         /// Toggles focus between the search bar and the search results.
         ToggleFocus,
-        /// Moves to the next input field.
-        NextField,
         /// Toggles the search filters panel.
         ToggleFilters,
         /// Toggles collapse/expand state of all search result excerpts.
@@ -1044,9 +1042,7 @@ fn render_landing_action_button<A: Action>(
         .on_click({
             let focus_handle = focus_handle.clone();
             cx.listener(move |this, _: &ClickEvent, window, cx| {
-                if !focus_handle.is_focused(window) {
-                    window.focus(&focus_handle, cx);
-                }
+                window.focus(&focus_handle, cx);
                 handler(this, action, window, cx);
             })
         })
@@ -1543,6 +1539,8 @@ impl ProjectSearchView {
 
         let query_editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(1, 4, window, cx);
+            // Align the query text with the single-line include/exclude inputs.
+            editor.set_offset_content(false, cx);
             editor.set_placeholder_text("Search all files…", window, cx);
             editor.set_use_autoclose(false);
             editor.set_use_selection_highlight(false);
@@ -1604,6 +1602,7 @@ impl ProjectSearchView {
         ));
         let replacement_editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(1, 4, window, cx);
+            editor.set_offset_content(false, cx);
             editor.set_placeholder_text(REPLACE_PLACEHOLDER, window, cx);
             if let Some(text) = replacement_text {
                 editor.set_text(text, window, cx);
@@ -3243,12 +3242,7 @@ impl Render for ProjectSearchBar {
         let expand_button = IconButton::new("project-search-collapse-expand", icon)
             .shape(IconButtonShape::Square)
             .tooltip(move |_, cx| {
-                Tooltip::for_action_in(
-                    tooltip_label,
-                    &ToggleAllSearchResults,
-                    &query_focus.clone(),
-                    cx,
-                )
+                Tooltip::for_action_in(tooltip_label, &ToggleAllSearchResults, &query_focus, cx)
             })
             .on_click(cx.listener(|this, _, window, cx| {
                 if let Some(active_view) = &this.active_project_search {

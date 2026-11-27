@@ -142,7 +142,7 @@ pub fn serialize_undo_map_entry(
 
 /// Splits the given list of operations into chunks.
 pub fn split_operations(
-    mut operations: Vec<proto::Operation>,
+    operations: Vec<proto::Operation>,
 ) -> impl Iterator<Item = Vec<proto::Operation>> {
     #[cfg(any(test, feature = "test-support"))]
     const CHUNK_SIZE: usize = 5;
@@ -150,19 +150,18 @@ pub fn split_operations(
     #[cfg(not(any(test, feature = "test-support")))]
     const CHUNK_SIZE: usize = 100;
 
+    let mut operations = operations.into_iter();
     let mut done = false;
     std::iter::from_fn(move || {
         if done {
             return None;
         }
 
-        let operations = operations
-            .drain(..std::cmp::min(CHUNK_SIZE, operations.len()))
-            .collect::<Vec<_>>();
-        if operations.is_empty() {
+        let chunk = operations.by_ref().take(CHUNK_SIZE).collect::<Vec<_>>();
+        if chunk.is_empty() {
             done = true;
         }
-        Some(operations)
+        Some(chunk)
     })
 }
 
@@ -424,14 +423,6 @@ pub fn deserialize_undo_map_entry(
             })
             .collect(),
     )
-}
-
-/// Deserializes selections from the RPC representation.
-pub fn deserialize_selections(selections: Vec<proto::Selection>) -> Arc<[Selection<Anchor>]> {
-    selections
-        .into_iter()
-        .filter_map(deserialize_selection)
-        .collect()
 }
 
 /// Deserializes a [`Selection`] from the RPC representation.

@@ -69,6 +69,7 @@ pub(crate) struct PlatformHandlers {
     pub(crate) will_open_app_menu: Option<Box<dyn FnMut()>>,
     pub(crate) validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
     pub(crate) keyboard_layout_change: Option<Box<dyn FnMut()>>,
+    pub(crate) text_scale_factor_change: Option<Box<dyn FnMut()>>,
     pub(crate) system_sleep: Option<Box<dyn FnMut()>>,
     pub(crate) system_wake: Option<Box<dyn FnMut()>>,
     pub(crate) power_mode_change: Option<Box<dyn FnMut()>>,
@@ -94,6 +95,7 @@ pub(crate) struct LinuxCommon {
     pub(crate) appearance: WindowAppearance,
     pub(crate) auto_hide_scrollbars: bool,
     pub(crate) button_layout: WindowButtonLayout,
+    pub(crate) text_scale_factor: f32,
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
     pub(crate) menus: Vec<OwnedMenu>,
@@ -144,6 +146,7 @@ impl LinuxCommon {
             appearance: WindowAppearance::Light,
             auto_hide_scrollbars: false,
             button_layout: WindowButtonLayout::linux_default(),
+            text_scale_factor: 1.0,
             callbacks,
             signal,
             menus: Vec::new(),
@@ -1005,8 +1008,9 @@ impl Platform for LinuxPlatform {
         });
     }
 
-    fn dismiss_system_notification(&self, tag: &str) {
+    fn dismiss_system_notification(&self, tag: &str) -> Task<()> {
         self.with_common(|common| common.system_notifications.dismiss(tag));
+        Task::ready(())
     }
 
     fn on_system_notification_response(
@@ -1151,6 +1155,14 @@ impl Platform for LinuxPlatform {
 
     fn button_layout(&self) -> Option<WindowButtonLayout> {
         Some(self.with_common(|common| common.button_layout))
+    }
+
+    fn text_scale_factor(&self) -> f32 {
+        self.with_common(|common| common.text_scale_factor)
+    }
+
+    fn on_text_scale_factor_change(&self, callback: Box<dyn FnMut()>) {
+        self.with_common(|common| common.callbacks.text_scale_factor_change = Some(callback));
     }
 
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {
@@ -1677,7 +1689,7 @@ pub(super) fn compositor_gpu_hint_from_dev_t(dev: u64) -> Option<gpui_wgpu::Comp
 
     fn read_sysfs_hex_id(path: &str) -> Option<u32> {
         let content = std::fs::read_to_string(path).ok()?;
-        let trimmed = content.trim().strip_prefix("0x").unwrap_or(content.trim());
+        let trimmed = content.trim().trim_prefix("0x");
         u32::from_str_radix(trimmed, 16).ok()
     }
 

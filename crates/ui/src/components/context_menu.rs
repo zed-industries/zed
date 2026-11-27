@@ -7,8 +7,8 @@ use crate::{
 use gpui::{
     Action, Anchor, AnchoredPositionMode, AnyElement, AnyView, App, Bounds, DismissEvent, Entity,
     EventEmitter, FocusHandle, Focusable, HoverListenerMode, MouseButton, MouseDownEvent,
-    MouseUpEvent, Pixels, Point, Role, Size, Subscription, TaskExt, anchored, canvas, deferred,
-    point, prelude::*, px, relative,
+    MouseUpEvent, Pixels, Point, Role, Size, Subscription, TaskExt, WeakEntity, anchored, canvas,
+    deferred, point, prelude::*, px, relative,
 };
 use menu::{SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious};
 use std::{
@@ -52,8 +52,6 @@ enum HoverTarget {
 pub enum ContextMenuItem {
     Separator,
     Header(SharedString),
-    /// title, link_label, link_url
-    HeaderWithLink(SharedString, SharedString, SharedString), // This could be folded into header
     Label(SharedString),
     Entry(ContextMenuEntry),
     CustomEntry {
@@ -294,7 +292,9 @@ pub struct ContextMenu {
     rebuild_parent_on_confirm: bool,
     fixed_width: Option<DefiniteLength>,
     spacing: ListItemSpacing,
-    main_menu: Option<Entity<ContextMenu>>,
+    // The parent owns the open submenu. A strong back-reference would keep both alive
+    // when the parent is dismissed without first closing its submenu.
+    main_menu: Option<WeakEntity<ContextMenu>>,
     main_menu_observed_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     // Docs aide-related fields
     documentation_aside: Option<(usize, DocumentationAside)>,
@@ -587,20 +587,6 @@ impl ContextMenu {
         self
     }
 
-    pub fn header_with_link(
-        mut self,
-        title: impl Into<SharedString>,
-        link_label: impl Into<SharedString>,
-        link_url: impl Into<SharedString>,
-    ) -> Self {
-        self.items.push(ContextMenuItem::HeaderWithLink(
-            title.into(),
-            link_label.into(),
-            link_url.into(),
-        ));
-        self
-    }
-
     pub fn separator(mut self) -> Self {
         self.items.push(ContextMenuItem::Separator);
         self
@@ -777,21 +763,6 @@ impl ContextMenu {
             handler: Rc::new(move |_, window, cx| handler(window, cx)),
             selectable: true,
             documentation_aside: None,
-        });
-        self
-    }
-
-    pub fn custom_entry_with_docs(
-        mut self,
-        entry_render: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
-        handler: impl Fn(&mut Window, &mut App) + 'static,
-        documentation_aside: Option<DocumentationAside>,
-    ) -> Self {
-        self.items.push(ContextMenuItem::CustomEntry {
-            entry_render: Box::new(entry_render),
-            handler: Rc::new(move |_, window, cx| handler(window, cx)),
-            selectable: true,
-            documentation_aside,
         });
         self
     }
@@ -974,19 +945,6 @@ impl ContextMenu {
         self
     }
 
-    pub fn trigger_end_slot_handler(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(entry) = self.selected_index.and_then(|ix| self.items.get(ix)) else {
-            return;
-        };
-        let ContextMenuItem::Entry(entry) = entry else {
-            return;
-        };
-        let Some(handler) = entry.end_slot_handler.as_ref() else {
-            return;
-        };
-        handler(None, window, cx);
-    }
-
     pub fn embedded_view(mut self, view: impl Into<AnyView>) -> Self {
         self.items.push(ContextMenuItem::EmbeddedView(view.into()));
         self
@@ -1141,6 +1099,7 @@ impl ContextMenu {
             if let Some(parent) = self
                 .main_menu
                 .as_ref()
+                .and_then(WeakEntity::upgrade)
                 .filter(|parent| parent.read(cx).builder.is_some())
             {
                 let parent = parent.downgrade();
@@ -1167,7 +1126,7 @@ impl ContextMenu {
             cx.emit(DismissEvent);
 
             // Restore keyboard focus to the parent menu so arrow keys / Escape / Enter work again.
-            if let Some(parent) = &self.main_menu {
+            if let Some(parent) = self.main_menu.as_ref().and_then(WeakEntity::upgrade) {
                 let parent_focus = parent.read(cx).focus_handle.clone();
 
                 parent.update(cx, |parent, _cx| {
@@ -1329,7 +1288,7 @@ impl ContextMenu {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(parent) = &self.main_menu {
+        if let Some(parent) = self.main_menu.as_ref().and_then(WeakEntity::upgrade) {
             let entity_id = cx.entity_id();
             parent.update(cx, |parent, cx| {
                 let SubmenuState::Open(open) = &parent.submenu_state else {
@@ -1393,7 +1352,7 @@ impl ContextMenu {
 
     fn create_submenu(
         builder: Rc<dyn Fn(ContextMenu, &mut Window, &mut Context<ContextMenu>) -> ContextMenu>,
-        parent_entity: Entity<ContextMenu>,
+        parent_entity: WeakEntity<ContextMenu>,
         parent_depth: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1415,7 +1374,7 @@ impl ContextMenu {
 
     fn build_submenu(
         builder: Rc<dyn Fn(ContextMenu, &mut Window, &mut Context<ContextMenu>) -> ContextMenu>,
-        parent_entity: Entity<ContextMenu>,
+        parent_entity: WeakEntity<ContextMenu>,
         parent_depth: usize,
         window: &mut Window,
         cx: &mut App,
@@ -1493,7 +1452,7 @@ impl ContextMenu {
         }
 
         let (submenu, dismiss_subscription) =
-            Self::create_submenu(builder, cx.entity(), self.submenu_depth, window, cx);
+            Self::create_submenu(builder, cx.weak_entity(), self.submenu_depth, window, cx);
 
         self.submenu_bounds.set(None);
         self.hover_target = HoverTarget::MainMenu;
@@ -1580,25 +1539,6 @@ impl ContextMenu {
             ContextMenuItem::Header(header) => ListSubHeader::new(header.clone())
                 .inset(true)
                 .into_any_element(),
-            ContextMenuItem::HeaderWithLink(header, label, url) => {
-                let url = url.clone();
-                let link_id = ElementId::Name(format!("link-{}", url).into());
-                ListSubHeader::new(header.clone())
-                    .inset(true)
-                    .end_slot(
-                        Button::new(link_id, label.clone())
-                            .color(Color::Muted)
-                            .label_size(LabelSize::Small)
-                            .size(ButtonSize::None)
-                            .style(ButtonStyle::Transparent)
-                            .on_click(move |_, _, cx| {
-                                let url = url.clone();
-                                cx.open_url(&url);
-                            })
-                            .into_any_element(),
-                    )
-                    .into_any_element()
-            }
             ContextMenuItem::Label(label) => ListItem::new(ix)
                 .inset(true)
                 .spacing(self.spacing)
@@ -1745,7 +1685,7 @@ impl ContextMenu {
                 if *hovered {
                     this.clear_selected();
                     this.suppress_focus_selection = true;
-                    window.focus(&this.focus_handle.clone(), cx);
+                    window.focus(&this.focus_handle, cx);
                     this.hover_target = HoverTarget::MainMenu;
                     if let Some(ContextMenuItem::Submenu(submenu)) = this.items.get(ix) {
                         if !submenu.disabled {
@@ -1781,7 +1721,7 @@ impl ContextMenu {
                         this.close_submenu(false, cx);
                         this.clear_selected();
                         this.suppress_focus_selection = true;
-                        window.focus(&this.focus_handle.clone(), cx);
+                        window.focus(&this.focus_handle, cx);
                         cx.notify();
                     }
                 }
@@ -2113,12 +2053,11 @@ impl ContextMenu {
                             if *hovered {
                                 this.clear_selected();
                                 this.suppress_focus_selection = true;
-                                window.focus(&this.focus_handle.clone(), cx);
+                                window.focus(&this.focus_handle, cx);
 
                                 if let SubmenuState::Open(open_submenu) = &this.submenu_state {
                                     if open_submenu.item_index != ix {
                                         this.close_submenu(false, cx);
-                                        cx.notify();
                                     }
                                 }
                             }
@@ -2150,9 +2089,10 @@ impl ContextMenu {
                                     cx.notify();
                                 }
 
-                                if let Some(parent) = &this.main_menu {
+                                if let Some(parent) =
+                                    this.main_menu.as_ref().and_then(WeakEntity::upgrade)
+                                {
                                     let mouse_pos = window.mouse_position();
-                                    let parent_clone = parent.clone();
 
                                     if *hovered {
                                         parent.update(cx, |parent, _| {
@@ -2160,7 +2100,7 @@ impl ContextMenu {
                                             parent.hover_target = HoverTarget::Submenu;
                                         });
                                     } else {
-                                        parent_clone.update(cx, |parent, cx| {
+                                        parent.update(cx, |parent, cx| {
                                             if matches!(
                                                 &parent.submenu_state,
                                                 SubmenuState::Open(_)
@@ -2369,7 +2309,6 @@ impl ContextMenuItem {
     fn is_selectable(&self) -> bool {
         match self {
             ContextMenuItem::Header(_)
-            | ContextMenuItem::HeaderWithLink(_, _, _)
             | ContextMenuItem::Separator
             | ContextMenuItem::Label { .. }
             | ContextMenuItem::EmbeddedView(_) => false,
@@ -2472,7 +2411,9 @@ impl Render for ContextMenu {
                         .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
                             if *hovered {
                                 this.hover_target = HoverTarget::MainMenu;
-                                if let Some(parent) = &this.main_menu {
+                                if let Some(parent) =
+                                    this.main_menu.as_ref().and_then(WeakEntity::upgrade)
+                                {
                                     parent.update(cx, |parent, _| {
                                         parent.hover_target = HoverTarget::Submenu;
                                     });
@@ -2489,7 +2430,9 @@ impl Render for ContextMenu {
                                     }
                                 }
 
-                                if let Some(parent) = &this.main_menu {
+                                if let Some(parent) =
+                                    this.main_menu.as_ref().and_then(WeakEntity::upgrade)
+                                {
                                     let parent = parent.read(cx);
                                     let overridden_by_parent_trigger = match &parent.submenu_state {
                                         SubmenuState::Open(open_submenu) => parent

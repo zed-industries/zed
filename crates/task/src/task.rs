@@ -3,7 +3,6 @@
 mod adapter_schema;
 mod debug_format;
 mod serde_helpers;
-pub mod static_source;
 mod task_template;
 mod vscode_debug_format;
 mod vscode_format;
@@ -460,11 +459,7 @@ impl EnvVariableReplacer {
             }
 
             let (variable_name, default) = (left, right);
-            let append_previous_default = |ret: &mut String| {
-                if !default.is_empty() {
-                    ret.push_str(default);
-                }
-            };
+            let append_previous_default = |ret: &mut String| ret.push_str(default);
             if let Some(substitution) = self.variables.get(variable_name) {
                 // Got a VSCode->Zed hit, perform a substitution
                 let mut name = format!("${{{substitution}");

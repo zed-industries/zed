@@ -273,12 +273,8 @@ async fn setup_worktree(example: &Example, step_progress: &StepProgress) -> Resu
     for lock_file in &["index.lock", "HEAD.lock", "config.lock"] {
         let worktree_lock_path = worktree_git_dir.join(lock_file);
         let repo_lock_path = repo_dir.join(".git").join(lock_file);
-        if worktree_lock_path.exists() {
-            fs::remove_file(&worktree_lock_path).ok();
-        }
-        if repo_lock_path.exists() {
-            fs::remove_file(&repo_lock_path).ok();
-        }
+        fs::remove_file(&worktree_lock_path).ok();
+        fs::remove_file(&repo_lock_path).ok();
     }
 
     let mut git_repo_exists = false;
@@ -328,9 +324,7 @@ async fn setup_worktree(example: &Example, step_progress: &StepProgress) -> Resu
         let worktree_path_string = worktree_path.to_string_lossy();
 
         // Clean up invalid worktree directory and registration if they exist.
-        if worktree_path.exists() {
-            fs::remove_dir_all(&worktree_path).ok();
-        }
+        fs::remove_dir_all(&worktree_path).ok();
         git::run_git(
             &repo_dir,
             &["worktree", "remove", "--force", &worktree_path_string],

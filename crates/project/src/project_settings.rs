@@ -1238,9 +1238,14 @@ impl SettingsObserver {
                 })
                 .detach(),
             WorktreeStoreEvent::WorktreeRemoved(_, worktree_id) => {
-                cx.update_global::<SettingsStore, _>(|store, cx| {
-                    store.clear_local_settings(*worktree_id, cx).log_err();
-                });
+                if cx
+                    .global::<SettingsStore>()
+                    .has_local_settings(*worktree_id, cx)
+                {
+                    cx.update_global::<SettingsStore, _>(|store, cx| {
+                        store.clear_local_settings(*worktree_id, cx).log_err();
+                    });
+                }
             }
             _ => {}
         }
@@ -1351,6 +1356,10 @@ impl SettingsObserver {
                     } else {
                         Some(
                             async move {
+                                anyhow::ensure!(
+                                    fs.is_file(&abs_path).await,
+                                    "{abs_path:?} is not a file"
+                                );
                                 let content = fs.load(&abs_path).await?;
                                 if abs_path.ends_with(local_vscode_tasks_file_relative_path().as_std_path()) {
                                     let vscode_tasks =

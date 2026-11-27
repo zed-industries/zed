@@ -1003,7 +1003,6 @@ enum QueryOperationSerializationVersion {
 }
 
 mod storage {
-    #![allow(non_snake_case)]
     use prost::Message;
     pub const SERIALIZATION_VERSION: i32 = 1;
 
