@@ -1529,6 +1529,44 @@ async fn test_remote_local_settings_survive_new_worktree(
 }
 
 #[gpui::test]
+async fn test_remote_lsp_data_dropped_with_buffer(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(path!("/code"), json!({ "lib.rs": "fn one() {}" }))
+        .await;
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code"), true, cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("lib.rs")), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store.latest_lsp_data(&buffer, cx);
+        assert!(lsp_store.current_lsp_data(buffer_id).is_some());
+    });
+
+    drop(buffer);
+    cx.update(|_| {});
+    cx.executor().run_until_parked();
+    lsp_store.update(cx, |lsp_store, _| {
+        assert!(lsp_store.current_lsp_data(buffer_id).is_none());
+    });
+}
+
+#[gpui::test]
 async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(

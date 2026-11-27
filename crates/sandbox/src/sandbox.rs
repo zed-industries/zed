@@ -1308,6 +1308,8 @@ pub fn run_sandbox_launcher_if_invoked() {
 #[cfg(target_os = "windows")]
 #[doc(hidden)]
 pub use windows_psec::run_launcher_if_invoked as run_windows_sandbox_launcher_if_invoked;
+#[cfg(target_os = "windows")]
+pub use windows_psec::set_launcher_path as set_windows_sandbox_launcher_path;
 
 // The createability probe only needs to know whether a sandbox *can* be built
 // (namespaces, `bwrap` availability); it does not enforce any grant, so it runs

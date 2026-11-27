@@ -1143,6 +1143,24 @@ async fn test_slow_adapter_startup_retries(
     server_cx: &mut TestAppContext,
     executor: BackgroundExecutor,
 ) {
+    test_remote_debug_session(cx_a, server_cx, executor, false).await;
+}
+
+#[gpui::test]
+async fn test_remote_debug_session_uses_tcp_proxy(
+    cx_a: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+    executor: BackgroundExecutor,
+) {
+    test_remote_debug_session(cx_a, server_cx, executor, true).await;
+}
+
+async fn test_remote_debug_session(
+    cx_a: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+    executor: BackgroundExecutor,
+    tcp_proxy: bool,
+) {
     cx_a.update(|cx| {
         release_channel::init(semver::Version::new(0, 0, 0), cx);
         command_palette_hooks::init(cx);
@@ -1154,6 +1172,16 @@ async fn test_slow_adapter_startup_retries(
         dap_adapters::init(cx);
     });
     let (opts, server_ssh, _) = RemoteClient::fake_server(cx_a, server_cx);
+    if tcp_proxy {
+        let remote::RemoteConnectionOptions::Mock(options) = &opts else {
+            panic!("Expected a mock connection");
+        };
+        cx_a.update(|cx| {
+            remote::MockConnectionRegistry::update_global(cx, |registry, _| {
+                registry.enable_tcp_proxy(options).unwrap();
+            });
+        });
+    }
     let remote_fs = FakeFs::new(server_cx.executor());
     remote_fs
         .insert_tree(
@@ -1196,6 +1224,25 @@ async fn test_slow_adapter_startup_retries(
         .build_ssh_project(path!("/code"), client_ssh.clone(), false, cx_a)
         .await;
 
+    if tcp_proxy {
+        server_cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .project
+                        .dap
+                        .entry("fake-adapter".into())
+                        .or_default()
+                        .env = Some(HashMap::from_iter([(
+                        "ADAPTER_TEST".into(),
+                        "wrapped".into(),
+                    )]));
+                });
+            });
+        });
+    }
+
+    let mut async_cx = cx_a.to_async();
     let (workspace, cx_a) = client_a.build_workspace(&project_a, cx_a);
 
     let debugger_panel = workspace
@@ -1227,18 +1274,19 @@ async fn test_slow_adapter_startup_retries(
             adapter: "fake-adapter".into(),
             label: "test".into(),
             config: json!({
-                "request": "launch"
+                "request": "launch",
+                "cwd": "/code/project with spaces"
             }),
             tcp_connection: Some(TcpArgumentsTemplate {
-                port: None,
+                port: tcp_proxy.then_some(4567),
                 host: None,
-                timeout: None,
+                timeout: tcp_proxy.then_some(1234),
             }),
         },
         move |client| {
             let count = count.clone();
             client.on_request_ext::<dap::requests::Initialize, _>(move |_seq, _request| {
-                if count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 5 {
+                if !tcp_proxy && count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 5 {
                     return RequestHandling::Exit;
                 }
                 RequestHandling::Respond(Ok(Capabilities::default()))
@@ -1252,6 +1300,48 @@ async fn test_slow_adapter_startup_retries(
         cx_a,
         |session: &mut project::debugger::session::Session, _| session.adapter_client().unwrap(),
     );
+    if tcp_proxy {
+        let expected = [
+            "-T",
+            "-w",
+            "/code/project with spaces",
+            "mock-remote-server",
+            "tcp",
+            "127.0.0.1:4567",
+            "1234",
+        ];
+        let binary = client.binary();
+        assert_eq!(binary.command.as_deref(), Some("mock"));
+        assert_eq!(
+            binary.arguments,
+            expected
+                .into_iter()
+                .chain(["--", "command"])
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            binary.envs.get("ADAPTER_TEST").map(String::as_str),
+            Some("wrapped")
+        );
+        assert_eq!(binary.cwd, None);
+        assert!(!client.should_reconnect_for_ssh());
+
+        let child = client
+            .create_child_connection(
+                dap::client::SessionId(u32::MAX),
+                binary.clone(),
+                Box::new(|_| {}),
+                &mut async_cx,
+            )
+            .await
+            .unwrap();
+        assert_eq!(child.binary().command.as_deref(), Some("mock"));
+        assert_eq!(child.binary().arguments, expected);
+        assert_eq!(child.binary().envs, binary.envs);
+        assert_eq!(child.binary().cwd, None);
+        assert!(!child.should_reconnect_for_ssh());
+    }
+
     client
         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
             reason: dap::StoppedEventReason::Pause,

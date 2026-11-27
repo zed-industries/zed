@@ -570,24 +570,28 @@ async-task = "4.7"
 async-trait = "0.1"
 async-tungstenite = "0.33"
 async_zip = { version = "0.0.18", features = ["deflate", "deflate64"] }
-aws-config = { version = "1.8.10", default-features = false, features = [
+aws-config = { version = "1.13.3", default-features = false, features = [
     "behavior-version-latest",
     "credentials-process",
     "rt-tokio",
     "sso",
 ] }
-aws-credential-types = { version = "1.2.8", features = [
+aws-credential-types = { version = "1.3.1", features = [
     "hardcoded-credentials",
 ] }
-aws-sdk-bedrockruntime = { version = "1.112.0", default-features = false, features = [
+aws-sdk-bedrock = { version = "1.169.0", default-features = false, features = [
+    "behavior-version-latest",
+    "rt-tokio",
+] }
+aws-sdk-bedrockruntime = { version = "1.156.0", default-features = false, features = [
     "behavior-version-latest",
     "rt-tokio",
 ] }
 aws-sdk-kinesis = { version = "1.51", default-features = false }
 aws-sdk-s3 = { version = "1.15", default-features = false }
-aws-sigv4 = { version = "1.4.0", features = ["http1"] }
-aws-smithy-runtime-api = { version = "1.9.2", features = ["http-1x", "client"] }
-aws-smithy-types = { version = "1.3.4", features = ["http-body-1-x"] }
+aws-sigv4 = { version = "1.6.6", features = ["http1"] }
+aws-smithy-runtime-api = { version = "1.22.0", features = ["http-1x", "client"] }
+aws-smithy-types = { version = "1.9.4", features = ["http-body-1-x"] }
 backtrace = "0.3"
 base64 = "0.22"
 betlang = "0.1.1"
@@ -810,7 +814,7 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = [
     "std",
 ] }
 objc2-security = { version = "0.3.2", default-features = false, features = ["std", "SecBase", "SecItem"] }
-objc2-quartz-core = { version = "=0.3.2", default-features = false, features = ["std", "CALayer", "CAMetalDisplayLink", "CAMetalLayer", "objc2-metal"] }
+objc2-quartz-core = { version = "=0.3.2", default-features = false, features = ["std", "CALayer", "CAMetalLayer", "objc2-metal"] }
 objc2-screen-capture-kit = { version = "=0.3.2", default-features = false, features = [
     "block2",
     "dispatch2",
@@ -880,7 +884,7 @@ reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "33bc76
     "socks",
     "stream",
 ], package = "zed-reqwest", version = "0.12.15-zed" }
-resvg = { version = "0.46.0", default-features = false, features = [
+resvg = { version = "0.49", default-features = false, features = [
     "text",
     "system-fonts",
     "memmap-fonts",
@@ -983,7 +987,7 @@ unicode-width = "0.2"
 unindent = "0.2.0"
 url = "2.2"
 urlencoding = "2.1.2"
-usvg = { version = "0.46.0", default-features = false }
+usvg = { version = "0.49", default-features = false, features = ["svgz"] }
 uuid = { version = "1.1", features = ["serde"] }
 vte = { version = "0.15.0", features = ["ansi"] }
 walkdir = "2.5"

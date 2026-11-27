@@ -3870,6 +3870,7 @@ async fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
 }
 
 async fn build_gitignore_with_root(abs_path: &Path, root: &Path, fs: &dyn Fs) -> Result<Gitignore> {
+    anyhow::ensure!(fs.is_file(abs_path).await, "{abs_path:?} is not a file");
     let contents = fs
         .load(abs_path)
         .await
@@ -7714,10 +7715,12 @@ async fn discover_git_paths(dot_git_abs_path: &Arc<Path>, fs: &dyn Fs) -> (Arc<P
     let mut repository_dir_abs_path = dot_git_abs_path.clone();
     let mut common_dir_abs_path = dot_git_abs_path.clone();
 
-    if let Some(path) = fs
-        .load(dot_git_abs_path)
-        .await
-        .ok()
+    let gitfile = if fs.is_file(dot_git_abs_path).await {
+        fs.load(dot_git_abs_path).await.ok()
+    } else {
+        None
+    };
+    if let Some(path) = gitfile
         .as_ref()
         .and_then(|contents| parse_gitfile(contents).log_err())
     {
@@ -7726,7 +7729,9 @@ async fn discover_git_paths(dot_git_abs_path: &Arc<Path>, fs: &dyn Fs) -> (Arc<P
             repository_dir_abs_path = Path::new(&path).into();
             common_dir_abs_path = repository_dir_abs_path.clone();
 
-            if let Some(commondir_contents) = fs.load(&path.join("commondir")).await.ok()
+            let commondir_abs_path = path.join("commondir");
+            if fs.is_file(&commondir_abs_path).await
+                && let Some(commondir_contents) = fs.load(&commondir_abs_path).await.ok()
                 && let Some(commondir_path) = fs
                     .canonicalize(&resolve_commondir_path(&path, &commondir_contents))
                     .await

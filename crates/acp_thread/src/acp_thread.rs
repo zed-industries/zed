@@ -4589,6 +4589,21 @@ impl AcpThread {
             .map(|(_, state)| state)
     }
 
+    /// The last idle state this subagent reported for the run covering entries `start..=end`:
+    /// after the entry at `start` arrived and before any entry after `end`. A retry reports
+    /// again within the same run, so its outcome replaces the one it retried.
+    pub fn subagent_outcome_between(
+        &self,
+        start: usize,
+        end: usize,
+    ) -> Option<&acp_v2::StateUpdate> {
+        self.subagent_outcomes
+            .iter()
+            .rev()
+            .find(|(entry_count, _)| *entry_count > start && *entry_count <= end + 1)
+            .map(|(_, state)| state)
+    }
+
     pub fn foreground_activity(&self) -> ForegroundActivity {
         self.activity.phase()
     }
