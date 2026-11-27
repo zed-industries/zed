@@ -134,6 +134,7 @@ pub fn run(command: Commands) -> anyhow::Result<()> {
             smol::net::TcpStream::connect,
             smol::Unblock::new(std::io::stdin()),
             smol::Unblock::new(std::io::stdout()),
+            tcp::stdin_closed(),
         )),
         Commands::Version => {
             let release_channel = *RELEASE_CHANNEL;

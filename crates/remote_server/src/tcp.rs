@@ -3,6 +3,8 @@ use futures::{
     AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, FutureExt as _, select_biased,
 };
 use smol::net::TcpStream;
+#[cfg(unix)]
+use std::os::fd::{AsFd as _, AsRawFd as _, BorrowedFd};
 use std::{future::Future, io, io::Write as _, net::SocketAddr, process::Stdio, time::Duration};
 use util::{ResultExt as _, process::Child};
 
@@ -17,6 +19,7 @@ pub(crate) async fn proxy<Connect>(
     connect: impl Fn(SocketAddr) -> Connect,
     mut input: impl AsyncRead + Unpin,
     mut output: impl AsyncWrite + Unpin,
+    disconnected: impl Future<Output = io::Result<()>>,
 ) -> Result<()>
 where
     Connect: Future<Output = io::Result<TcpStream>>,
@@ -99,6 +102,9 @@ where
             result = forward(&mut reader, &mut output).fuse() => {
                 result.context("Forwarding DAP output")?;
             }
+            result = disconnected.fuse() => {
+                result.context("Watching DAP client disconnect")?;
+            }
         }
         Ok(())
     }
@@ -109,6 +115,41 @@ where
         child.status().await.context("Waiting for debug adapter")?;
     }
     result
+}
+
+pub(crate) async fn stdin_closed() -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        input_closed(io::stdin().as_fd()).await
+    }
+    #[cfg(not(unix))]
+    futures::future::pending().await
+}
+
+#[cfg(unix)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "This stdio helper runs without a GPUI app or dispatcher"
+)]
+async fn input_closed(input: BorrowedFd<'_>) -> io::Result<()> {
+    let mut descriptor = libc::pollfd {
+        fd: input.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    loop {
+        if unsafe { libc::poll(&mut descriptor, 1, 0) } < 0 {
+            let error = io::Error::last_os_error();
+            if error.kind() != io::ErrorKind::Interrupted {
+                return Err(error);
+            }
+        } else if descriptor.revents & (libc::POLLERR | libc::POLLNVAL) != 0 {
+            return Err(io::Error::other("DAP input pipe failed"));
+        } else if descriptor.revents & libc::POLLHUP != 0 {
+            return Ok(());
+        }
+        smol::Timer::after(Duration::from_millis(100)).await;
+    }
 }
 
 async fn forward(
@@ -145,6 +186,8 @@ mod tests {
     use super::*;
     use futures::{StreamExt as _, TryStreamExt as _, future};
     use smol::net::TcpListener;
+    #[cfg(unix)]
+    use std::io::Read as _;
 
     #[test]
     fn attach_forwards_dap_in_both_directions() -> Result<()> {
@@ -192,6 +235,7 @@ mod tests {
                     },
                     input,
                     &mut output,
+                    future::pending(),
                 ),
             );
             select_biased! {
@@ -220,7 +264,7 @@ mod tests {
             .into_async_read();
             let address = SocketAddr::from(([127, 0, 0, 1], 0));
             select_biased! {
-                result = proxy(address, Duration::from_secs(60), &command, |_| future::pending(), input, smol::io::sink()).fuse() => result?,
+                result = proxy(address, Duration::from_secs(60), &command, |_| future::pending(), input, smol::io::sink(), future::pending()).fuse() => result?,
                 _ = futures::FutureExt::fuse(smol::Timer::after(Duration::from_secs(5))) => bail!("Proxy did not exit after startup stdin EOF"),
             }
             assert_adapter_reaped(&marker).await
@@ -238,6 +282,7 @@ mod tests {
                 |_| future::pending(),
                 futures::stream::pending::<io::Result<&[u8]>>().into_async_read(),
                 smol::io::sink(),
+                future::pending(),
             )
             .await
             .expect_err("There is no TCP server");
@@ -277,10 +322,53 @@ mod tests {
             .boxed_local()
             .into_async_read();
             select_biased! {
-                result = proxy(address, Duration::from_secs(2), &command, connect, input, smol::io::sink()).fuse() => result?,
+                result = proxy(address, Duration::from_secs(2), &command, connect, input, smol::io::sink(), future::pending()).fuse() => result?,
                 _ = futures::FutureExt::fuse(smol::Timer::after(Duration::from_secs(5))) => bail!("Adapter was not terminated"),
             }
             assert_adapter_reaped(&marker).await
+        })
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pipe_disconnect_terminates_adapter_with_pending_input() -> Result<()> {
+        smol::block_on(async {
+            let listener = TcpListener::bind("127.0.0.1:0").await?;
+            let address = listener.local_addr()?;
+            let (stream, (_peer, _)) =
+                future::try_join(TcpStream::connect(address), listener.accept()).await?;
+            let directory = tempfile::tempdir()?;
+            let marker = directory.path().join("adapter-pid");
+            let command = disconnect_test_adapter(&marker);
+            let (mut input, mut writer) = io::pipe()?;
+            writer.write_all(b"unread DAP input")?;
+            let exchange = future::try_join(
+                proxy(
+                    address,
+                    Duration::from_secs(2),
+                    &command,
+                    |_| future::ready(Ok(stream.clone())),
+                    smol::io::repeat(0),
+                    smol::io::sink(),
+                    input_closed(input.as_fd()),
+                ),
+                async {
+                    while !std::fs::metadata(&marker).is_ok_and(|metadata| metadata.len() > 0) {
+                        smol::Timer::after(Duration::from_millis(10)).await;
+                    }
+                    drop(writer);
+                    anyhow::Ok(())
+                },
+            );
+            select_biased! {
+                result = exchange.fuse() => { result?; }
+                _ = futures::FutureExt::fuse(smol::Timer::after(Duration::from_secs(5))) => bail!("Proxy did not exit while the adapter stopped reading"),
+            }
+            assert_adapter_reaped(&marker).await?;
+            let mut remaining = Vec::new();
+            input.read_to_end(&mut remaining)?;
+            assert_eq!(remaining, b"unread DAP input");
+            Ok(())
         })
     }
 
@@ -322,6 +410,7 @@ mod tests {
                 |_| future::pending(),
                 futures::stream::pending::<io::Result<&[u8]>>().into_async_read(),
                 smol::io::sink(),
+                future::pending(),
             )
             .await
             .expect_err("The adapter exits");
