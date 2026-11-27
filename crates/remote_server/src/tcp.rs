@@ -23,6 +23,7 @@ where
 {
     let mut process = AdapterProcess(None);
     let result = async {
+        let mut startup_input = Vec::new();
         let startup = async {
             if let Some((program, arguments)) = command.split_first() {
                 let mut command = util::command::new_std_command(program);
@@ -50,18 +51,35 @@ where
                     None => futures::future::pending().await,
                 }
             };
-            select_biased! {
-                status = exited.fuse() => {
-                    let status = status?;
-                    bail!("Debug adapter exited before connecting to {address}: {status}")
-                }
-                stream = connect.fuse() => Ok(stream),
-                _ = smol::Timer::after(timeout).fuse() => {
-                    bail!("Connection to TCP DAP timeout {address}")
+            let exited = exited.fuse();
+            let connect = connect.fuse();
+            let deadline = smol::Timer::after(timeout).fuse();
+            futures::pin_mut!(exited, connect, deadline);
+            let mut buffer = [0; 8192];
+            loop {
+                select_biased! {
+                    status = exited => {
+                        let status = status?;
+                        bail!("Debug adapter exited before connecting to {address}: {status}")
+                    }
+                    stream = connect => break Ok(Some(stream)),
+                    _ = deadline => bail!("Connection to TCP DAP timeout {address}"),
+                    length = input.read(&mut buffer).fuse() => {
+                        let length = length.context("Reading DAP input during startup")?;
+                        if length == 0 {
+                            break Ok(None);
+                        }
+                        startup_input.extend_from_slice(&buffer[..length]);
+                    }
                 }
             }
         }
         .await;
+        let startup = match startup {
+            Ok(Some(stream)) => Ok(stream),
+            Ok(None) => return Ok(()),
+            Err(error) => Err(error),
+        };
 
         // A leading newline separates the status even if adapter logs lack a newline.
         let error = startup.as_ref().err().map(|error| format!("{error:#}"));
@@ -75,7 +93,7 @@ where
         let stream = startup?;
         let (mut reader, mut writer) = stream.split();
         select_biased! {
-            result = forward(&mut input, &mut writer).fuse() => {
+            result = forward(startup_input.as_slice().chain(input), &mut writer).fuse() => {
                 result.context("Forwarding DAP input")?;
             }
             result = forward(&mut reader, &mut output).fuse() => {
@@ -135,32 +153,77 @@ mod tests {
             let address = listener.local_addr()?;
             let request = b"Content-Length: 2\r\n\r\n{}";
             let response = b"Content-Length: 16\r\n\r\n{\"success\":true}";
-            let input = futures::stream::once(future::ready(Ok::<_, std::io::Error>(request)))
+            let (allow_connect, wait_to_connect) = smol::channel::bounded(1);
+            let (send_body, wait_for_body) = smol::channel::bounded(1);
+            let (header, body) = request.split_at(request.len() - 2);
+            let input = futures::stream::once(future::ready(Ok::<_, io::Error>(header)))
+                .chain(futures::stream::once(async {
+                    allow_connect.send(()).await.map_err(io::Error::other)?;
+                    wait_for_body.recv().await.map_err(io::Error::other)?;
+                    Ok(body)
+                }))
                 .chain(futures::stream::pending())
+                .boxed()
                 .into_async_read();
             let mut output = Vec::new();
             let server = async {
                 let (mut stream, _) = listener.accept().await?;
                 let mut received = vec![0; request.len()];
-                stream.read_exact(&mut received).await?;
+                let (received_header, received_body) = received.split_at_mut(header.len());
+                stream.read_exact(received_header).await?;
+                send_body.send(()).await?;
+                stream.read_exact(received_body).await?;
                 assert_eq!(received, request);
                 stream.write_all(response).await?;
                 anyhow::Ok(())
             };
-            future::try_join(
+            let exchange = future::try_join(
                 server,
                 proxy(
                     address,
                     Duration::from_secs(2),
                     &[],
-                    TcpStream::connect,
+                    |address| {
+                        let wait_to_connect = &wait_to_connect;
+                        async move {
+                            wait_to_connect.recv().await.map_err(io::Error::other)?;
+                            TcpStream::connect(address).await
+                        }
+                    },
                     input,
                     &mut output,
                 ),
-            )
-            .await?;
+            );
+            select_biased! {
+                result = exchange.fuse() => { result?; }
+                _ = futures::FutureExt::fuse(smol::Timer::after(Duration::from_secs(5))) => bail!("DAP messages were not forwarded"),
+            }
             assert_eq!(output, response);
             Ok(())
+        })
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stdin_eof_during_startup_terminates_adapter() -> Result<()> {
+        smol::block_on(async {
+            let directory = tempfile::tempdir()?;
+            let marker = directory.path().join("adapter-pid");
+            let command = disconnect_test_adapter(&marker);
+            let input = futures::stream::once(async {
+                while !std::fs::metadata(&marker).is_ok_and(|metadata| metadata.len() > 0) {
+                    smol::Timer::after(Duration::from_millis(10)).await;
+                }
+                Ok::<_, io::Error>(&b"early DAP input"[..])
+            })
+            .boxed()
+            .into_async_read();
+            let address = SocketAddr::from(([127, 0, 0, 1], 0));
+            select_biased! {
+                result = proxy(address, Duration::from_secs(60), &command, |_| future::pending(), input, smol::io::sink()).fuse() => result?,
+                _ = futures::FutureExt::fuse(smol::Timer::after(Duration::from_secs(5))) => bail!("Proxy did not exit after startup stdin EOF"),
+            }
+            assert_adapter_reaped(&marker).await
         })
     }
 
@@ -173,7 +236,7 @@ mod tests {
                 Duration::from_millis(20),
                 &[],
                 |_| future::pending(),
-                smol::io::empty(),
+                futures::stream::pending::<io::Result<&[u8]>>().into_async_read(),
                 smol::io::sink(),
             )
             .await
@@ -194,39 +257,57 @@ mod tests {
             let address = listener.local_addr()?;
             let directory = tempfile::tempdir()?;
             let marker = directory.path().join("adapter-pid");
-            let command = vec![
-                "sh".to_owned(),
-                "-c".to_owned(),
-                "echo $$ > \"$1\"; exec sleep 60".to_owned(),
-                "adapter".to_owned(),
-                marker.to_string_lossy().into_owned(),
-            ];
+            let command = disconnect_test_adapter(&marker);
+            let connected = &std::cell::Cell::new(false);
+            let connect = move |address| async move {
+                let stream = TcpStream::connect(address).await?;
+                connected.set(true);
+                Ok(stream)
+            };
             let input = futures::stream::once(async {
                 loop {
-                    if std::fs::metadata(&marker).is_ok_and(|metadata| metadata.len() > 0) {
+                    if connected.get()
+                        && std::fs::metadata(&marker).is_ok_and(|metadata| metadata.len() > 0)
+                    {
                         return Ok::<_, std::io::Error>(Vec::<u8>::new());
                     }
                     smol::Timer::after(Duration::from_millis(10)).await;
                 }
             })
-            .boxed()
+            .boxed_local()
             .into_async_read();
             select_biased! {
-                result = proxy(address, Duration::from_secs(2), &command, TcpStream::connect, input, smol::io::sink()).fuse() => result?,
+                result = proxy(address, Duration::from_secs(2), &command, connect, input, smol::io::sink()).fuse() => result?,
                 _ = futures::FutureExt::fuse(smol::Timer::after(Duration::from_secs(5))) => bail!("Adapter was not terminated"),
             }
-            let process_id = std::fs::read_to_string(marker)?;
-            let status = smol::process::Command::new("sh")
-                .args(["-c", "kill -0 \"$1\"", "check", process_id.trim()])
-                .stderr(Stdio::null())
-                .status()
-                .await?;
-            assert!(
-                !status.success(),
-                "The adapter must be reaped after stdin closes"
-            );
-            Ok(())
+            assert_adapter_reaped(&marker).await
         })
+    }
+
+    #[cfg(unix)]
+    fn disconnect_test_adapter(marker: &std::path::Path) -> Vec<String> {
+        vec![
+            "sh".to_owned(),
+            "-c".to_owned(),
+            "echo $$ > \"$1\"; exec sleep 60".to_owned(),
+            "adapter".to_owned(),
+            marker.to_string_lossy().into_owned(),
+        ]
+    }
+
+    #[cfg(unix)]
+    async fn assert_adapter_reaped(marker: &std::path::Path) -> Result<()> {
+        let process_id = std::fs::read_to_string(marker)?;
+        let status = smol::process::Command::new("sh")
+            .args(["-c", "kill -0 \"$1\"", "check", process_id.trim()])
+            .stderr(Stdio::null())
+            .status()
+            .await?;
+        assert!(
+            !status.success(),
+            "The adapter must be reaped after stdin closes"
+        );
+        Ok(())
     }
 
     #[cfg(unix)]
@@ -239,7 +320,7 @@ mod tests {
                 Duration::from_secs(2),
                 &["sh".to_owned(), "-c".to_owned(), "exit 7".to_owned()],
                 |_| future::pending(),
-                smol::io::empty(),
+                futures::stream::pending::<io::Result<&[u8]>>().into_async_read(),
                 smol::io::sink(),
             )
             .await
