@@ -11,6 +11,7 @@ mod buffer;
 mod diagnostic;
 mod diagnostic_set;
 mod language_registry;
+mod lsp_installation;
 
 pub mod language_settings;
 mod manifest;
@@ -36,9 +37,8 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
 use futures::Future;
-use futures::future::LocalBoxFuture;
-use futures::lock::OwnedMutexGuard;
-use gpui::{App, AsyncApp, BackgroundExecutor, Entity, EntityId, SharedString};
+use futures::future::{LocalBoxFuture, Shared};
+use gpui::{App, AsyncApp, BackgroundExecutor, Entity, EntityId, SharedString, Task};
 use http_client::HttpClient;
 
 pub use language_core::{
@@ -85,6 +85,7 @@ use std::{
     path::{Path, PathBuf},
     str,
     sync::{Arc, LazyLock},
+    time::{Duration, Instant},
 };
 use streaming_iterator::StreamingIterator as _;
 use syntax_map::{QueryCursorHandle, TextProvider, flatten_capture_regions};
@@ -324,12 +325,54 @@ pub struct PromptResponseContext {
     pub selected_action: lsp::MessageActionItem,
 }
 
-type ServerBinaryCache = futures::lock::Mutex<Option<(bool, LanguageServerBinary)>>;
-type DownloadableLanguageServerBinary = LocalBoxFuture<'static, Result<LanguageServerBinary>>;
+#[derive(Clone)]
+pub struct ResolvedLanguageServerBinary {
+    pub binary: LanguageServerBinary,
+    pub installation_lease: Option<Arc<fs::FileLock>>,
+    pub previous: Option<Box<ResolvedLanguageServerBinary>>,
+}
+
+impl From<LanguageServerBinary> for ResolvedLanguageServerBinary {
+    fn from(binary: LanguageServerBinary) -> Self {
+        Self {
+            binary,
+            installation_lease: None,
+            previous: None,
+        }
+    }
+}
+
+impl std::ops::Deref for ResolvedLanguageServerBinary {
+    type Target = LanguageServerBinary;
+
+    fn deref(&self) -> &Self::Target {
+        &self.binary
+    }
+}
+
+type ServerBinaryDownload = Shared<Task<Result<ResolvedLanguageServerBinary, Arc<anyhow::Error>>>>;
+
+#[derive(Default)]
+pub struct CachedServerBinary {
+    binary: Option<ResolvedLanguageServerBinary>,
+    download: Option<ServerBinaryDownload>,
+    next_update_check: Option<Instant>,
+    last_error: Option<Arc<anyhow::Error>>,
+    last_update_finished: Option<Instant>,
+}
+
+pub type ServerBinaryCache = Arc<futures::lock::Mutex<HashMap<bool, CachedServerBinary>>>;
+pub type DownloadableLanguageServerBinary =
+    LocalBoxFuture<'static, Result<ResolvedLanguageServerBinary>>;
+
+fn download_result(download: ServerBinaryDownload) -> DownloadableLanguageServerBinary {
+    async move { download.await.map_err(|error| anyhow::anyhow!("{error:#}")) }.boxed_local()
+}
+
 pub type LanguageServerBinaryLocations = LocalBoxFuture<
     'static,
     (
-        Result<LanguageServerBinary>,
+        Result<ResolvedLanguageServerBinary>,
         Option<DownloadableLanguageServerBinary>,
     ),
 >;
@@ -342,7 +385,7 @@ pub struct CachedLspAdapter {
     pub disk_based_diagnostics_progress_token: Option<String>,
     language_ids: HashMap<LanguageName, String>,
     pub adapter: Arc<dyn LspAdapter>,
-    cached_binary: Arc<ServerBinaryCache>,
+    cached_binary: ServerBinaryCache,
 }
 
 impl Debug for CachedLspAdapter {
@@ -396,7 +439,7 @@ impl CachedLspAdapter {
         binary_options: LanguageServerBinaryOptions,
         cx: &mut AsyncApp,
     ) -> LanguageServerBinaryLocations {
-        let cached_binary = self.cached_binary.clone().lock_owned().await;
+        let cached_binary = self.cached_binary.clone();
         self.adapter.clone().get_language_server_command(
             delegate,
             toolchains,
@@ -470,11 +513,7 @@ impl CachedLspAdapter {
     ) -> Option<serde_json::Value> {
         self.adapter
             .clone()
-            .initialization_options_schema(
-                delegate,
-                self.cached_binary.clone().lock_owned().await,
-                cx,
-            )
+            .initialization_options_schema(delegate, self.cached_binary.clone(), cx)
             .await
     }
 
@@ -485,7 +524,7 @@ impl CachedLspAdapter {
     ) -> Option<serde_json::Value> {
         self.adapter
             .clone()
-            .settings_schema(delegate, self.cached_binary.clone().lock_owned().await, cx)
+            .settings_schema(delegate, self.cached_binary.clone(), cx)
             .await
     }
 
@@ -499,6 +538,7 @@ impl CachedLspAdapter {
 #[async_trait]
 pub trait LspAdapterDelegate: Send + Sync {
     fn show_notification(&self, message: &str, cx: &mut App);
+    fn fs(&self) -> Arc<dyn fs::Fs>;
     fn http_client(&self) -> Arc<dyn HttpClient>;
     fn background_executor(&self) -> &BackgroundExecutor;
     fn worktree_id(&self) -> WorktreeId;
@@ -522,6 +562,11 @@ pub trait LspAdapterDelegate: Send + Sync {
 #[async_trait(?Send)]
 pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
     fn name(&self) -> LanguageServerName;
+
+    /// Whether installing an update leaves existing installations intact.
+    fn supports_background_updates(&self) -> bool {
+        false
+    }
 
     fn process_diagnostics(&self, _: &mut lsp::PublishDiagnosticsParams, _: LanguageServerId) {}
 
@@ -608,7 +653,7 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
     async fn initialization_options_schema(
         self: Arc<Self>,
         _delegate: &Arc<dyn LspAdapterDelegate>,
-        _cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        _cached_binary: ServerBinaryCache,
         _cx: &mut AsyncApp,
     ) -> Option<serde_json::Value> {
         None
@@ -620,7 +665,7 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
     async fn settings_schema(
         self: Arc<Self>,
         _delegate: &Arc<dyn LspAdapterDelegate>,
-        _cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        _cached_binary: ServerBinaryCache,
         _cx: &mut AsyncApp,
     ) -> Option<serde_json::Value> {
         None
@@ -716,6 +761,12 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
 
 pub trait LspInstaller {
     type BinaryVersion;
+
+    /// For installers whose release identity is not available from an installed package manifest.
+    fn version_key(&self, _version: &Self::BinaryVersion) -> Option<String> {
+        None
+    }
+
     fn check_if_user_installed(
         &self,
         _: &Arc<dyn LspAdapterDelegate>,
@@ -770,7 +821,7 @@ pub trait DynLspInstaller {
         delegate: Arc<dyn LspAdapterDelegate>,
         toolchains: Option<Toolchain>,
         binary_options: LanguageServerBinaryOptions,
-        cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        cached_binary: ServerBinaryCache,
         cx: AsyncApp,
     ) -> LanguageServerBinaryLocations;
 }
@@ -822,11 +873,10 @@ where
         delegate: Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
         binary_options: LanguageServerBinaryOptions,
-        mut cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        cached_binary: ServerBinaryCache,
         mut cx: AsyncApp,
     ) -> LanguageServerBinaryLocations {
         async move {
-            let cached_binary_deref = cached_binary.deref_mut();
             // First we check whether the adapter can give us a user-installed binary.
             // If so, we do *not* want to cache that, because each worktree might give us a different
             // binary:
@@ -849,77 +899,143 @@ where
                     binary.path,
                     binary.arguments
                 );
-                return (Ok(binary), None);
+                return (Ok(binary.into()), None);
             }
 
-            if let Some((pre_release, cached_binary)) = cached_binary_deref
-                && *pre_release == binary_options.pre_release
-            {
-                return (Ok(cached_binary.clone()), None);
-            }
-
-            if !binary_options.allow_binary_download {
-                return (
-                    Err(anyhow::anyhow!("downloading language servers disabled")),
-                    None,
-                );
-            }
-
+            let pre_release = binary_options.pre_release;
+            let managed = self.supports_background_updates();
+            let lookup_started = Instant::now();
             let Some(container_dir) = delegate.language_server_download_dir(&self.name()).await
             else {
-                return (
-                    Err(anyhow::anyhow!("no language server download dir defined")),
-                    None,
-                );
+                return (Err(anyhow::anyhow!("no language server download dir defined")), None);
             };
-
-            let last_downloaded_binary = self
-                .cached_server_binary(container_dir.to_path_buf(), delegate.as_ref())
-                .await
-                .context(
-                    "did not find existing language server binary, falling back to downloading",
-                );
-            let download_binary = async move {
-                let mut binary = self
-                    .try_fetch_server_binary(
-                        &delegate,
-                        container_dir.to_path_buf(),
-                        binary_options.pre_release,
-                        &mut cx,
-                    )
-                    .await;
-
-                if let Err(error) = binary.as_ref() {
-                    if let Some(prev_downloaded_binary) = self
-                        .cached_server_binary(container_dir.to_path_buf(), delegate.as_ref())
-                        .await
-                    {
-                        log::info!(
-                            "failed to fetch newest version of language server {:?}. \
-                            error: {:?}, falling back to using {:?}",
-                            self.name(),
-                            error,
-                            prev_downloaded_binary.path
-                        );
-                        binary = Ok(prev_downloaded_binary);
-                    } else {
-                        delegate.update_status(
-                            self.name(),
-                            BinaryStatus::Failed {
-                                error: format!("{error:?}"),
-                            },
-                        );
+            let local_binary = if managed {
+                lsp_installation::cached_binary(self.as_ref(), &delegate, &container_dir, pre_release)
+                    .await
+            } else {
+                None
+            };
+            let mut cache = cached_binary.lock().await;
+            // Legacy installers share a mutable directory between release channels.
+            // Do not run two installs into that directory concurrently.
+            if !self.supports_background_updates() {
+                while let Some(download) = cache
+                    .get(&!pre_release)
+                    .and_then(|entry| entry.download.clone())
+                {
+                    drop(cache);
+                    if let Err(error) = download.await {
+                        log::info!("language server installation failed: {error:#}");
+                    }
+                    cache = cached_binary.lock().await;
+                }
+                cache.remove(&!pre_release);
+                if !binary_options.allow_binary_download {
+                    if let Some(download) = cache.get(&pre_release).and_then(|entry| entry.download.clone()) {
+                        drop(cache);
+                        if let Err(error) = download.await {
+                            log::info!("language server installation failed: {error:#}");
+                        }
+                        cache = cached_binary.lock().await;
                     }
                 }
-
-                if let Ok(binary) = &binary {
-                    *cached_binary = Some((binary_options.pre_release, binary.clone()));
-                }
-
-                binary
             }
-            .boxed_local();
-            (last_downloaded_binary, Some(download_binary))
+            let entry = cache.entry(pre_release).or_default();
+            // A download may have completed while the disk lookup was in progress.
+            // Do not overwrite that result with the earlier snapshot.
+            if managed && entry.last_update_finished.is_none_or(|finished| finished <= lookup_started) {
+                entry.binary = local_binary;
+            } else if !managed && entry.binary.is_none() && entry.download.is_none() {
+                entry.binary = self.cached_server_binary(container_dir.to_path_buf(), delegate.as_ref())
+                    .await.map(Into::into);
+            }
+            if !binary_options.allow_binary_download {
+                return (
+                    entry.binary.clone().context("downloading language servers disabled"),
+                    None,
+                );
+            }
+            if let Some(download) = &entry.download {
+                return (
+                    entry.binary.clone().context("language server is being installed"),
+                    Some(download_result(download.clone())),
+                );
+            }
+            if entry.next_update_check.is_some_and(|next| next > Instant::now())
+                && (entry.binary.is_some() || entry.last_error.is_some())
+            {
+                let binary = entry.binary.clone().ok_or_else(|| {
+                    entry.last_error.as_ref().map_or_else(
+                        || anyhow::anyhow!("no cached language server binary"),
+                        |error| anyhow::anyhow!("{error:#}"),
+                    )
+                });
+                return (binary, None);
+            }
+            let previous_binary = entry.binary.clone();
+            let last_downloaded_binary = previous_binary.clone().context(
+                "did not find existing language server binary, falling back to downloading",
+            );
+            let weak_cache = Arc::downgrade(&cached_binary);
+            let download = cx
+                .spawn(async move |cx| {
+                    let mut result = if self.supports_background_updates() {
+                        lsp_installation::update(self.as_ref(), &delegate, &container_dir, pre_release, cx).await
+                    } else {
+                        self.try_fetch_server_binary(&delegate, container_dir.to_path_buf(), pre_release, cx)
+                            .await
+                            .map(Into::into)
+                    };
+                    if let Err(error) = &result {
+                        if previous_binary.is_some() {
+                            log::info!(
+                                "failed to update language server {:?}: {error:#}",
+                                self.name()
+                            );
+                            delegate.update_status(self.name(), BinaryStatus::None);
+                            if !self.supports_background_updates() {
+                                // Preserve the existing fallback for installers that have not
+                                // migrated to side-by-side installations yet.
+                                result = self
+                                    .cached_server_binary(
+                                        container_dir.to_path_buf(),
+                                        delegate.as_ref(),
+                                    )
+                                    .await
+                                    .context("failed to locate the previous language server installation")
+                                    .map(Into::into);
+                            }
+                        } else {
+                            delegate.update_status(
+                                self.name(),
+                                BinaryStatus::Failed {
+                                    error: format!("{error:#}"),
+                                },
+                            );
+                        }
+                    }
+                    let result = result.map_err(Arc::new);
+                    if let Some(cache) = weak_cache.upgrade() {
+                        let mut cache = cache.lock().await;
+                        let entry = cache.entry(pre_release).or_default();
+                        if let Ok(binary) = &result {
+                            entry.binary = Some(binary.clone());
+                        }
+                        let finished = Instant::now();
+                        entry.last_error = result.as_ref().err().cloned();
+                        entry.last_update_finished = Some(finished);
+                        entry.next_update_check = Some(finished + if result.is_ok() {
+                            Duration::from_secs(15 * 60)
+                        } else {
+                            Duration::from_secs(60)
+                        });
+                        entry.download = None;
+                    }
+                    result
+                })
+                .shared();
+            entry.download = Some(download.clone());
+            (last_downloaded_binary, Some(download_result(download)))
         }
         .boxed_local()
     }
@@ -1824,6 +1940,268 @@ mod tests {
     use super::*;
     use gpui::{TestAppContext, rgba};
     use pretty_assertions::assert_matches;
+
+    struct TestInstallerDelegate {
+        fs: Arc<fs::FakeFs>,
+        executor: BackgroundExecutor,
+        directory: PathBuf,
+    }
+
+    #[async_trait]
+    impl LspAdapterDelegate for TestInstallerDelegate {
+        fn show_notification(&self, _: &str, _: &mut App) {}
+
+        fn fs(&self) -> Arc<dyn fs::Fs> {
+            self.fs.clone()
+        }
+
+        fn http_client(&self) -> Arc<dyn HttpClient> {
+            Arc::new(http_client::BlockedHttpClient)
+        }
+
+        fn background_executor(&self) -> &BackgroundExecutor {
+            &self.executor
+        }
+
+        fn worktree_id(&self) -> WorktreeId {
+            WorktreeId::from_usize(1)
+        }
+
+        fn worktree_root_path(&self) -> &Path {
+            &self.directory
+        }
+
+        fn resolve_relative_path(&self, path: PathBuf) -> PathBuf {
+            self.directory.join(path)
+        }
+
+        fn status_source_id(&self) -> EntityId {
+            EntityId::from(1_u64)
+        }
+
+        fn update_status(&self, _: LanguageServerName, _: BinaryStatus) {}
+
+        fn registered_lsp_adapters(&self) -> Vec<Arc<dyn LspAdapter>> {
+            Vec::new()
+        }
+
+        async fn language_server_download_dir(&self, _: &LanguageServerName) -> Option<Arc<Path>> {
+            Some(Arc::from(self.directory.clone()))
+        }
+
+        async fn npm_package_installed_version(
+            &self,
+            _: &str,
+        ) -> Result<Option<(PathBuf, Version)>> {
+            Ok(None)
+        }
+
+        async fn which(&self, _: &OsStr) -> Option<PathBuf> {
+            None
+        }
+
+        async fn shell_env(&self) -> HashMap<String, String> {
+            HashMap::default()
+        }
+
+        async fn read_text_file(&self, _: &RelPath) -> Result<String> {
+            anyhow::bail!("unexpected worktree lookup")
+        }
+
+        async fn try_exec(&self, _: LanguageServerBinary) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct TestInstaller {
+        gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
+        fail: std::sync::atomic::AtomicBool,
+        checks: std::sync::atomic::AtomicUsize,
+        installs: std::sync::atomic::AtomicUsize,
+    }
+
+    impl LspInstaller for TestInstaller {
+        type BinaryVersion = ();
+
+        fn version_key(&self, _: &()) -> Option<String> {
+            Some("2".to_owned())
+        }
+
+        async fn fetch_latest_server_version(
+            &self,
+            _: &Arc<dyn LspAdapterDelegate>,
+            _: bool,
+            _: &mut AsyncApp,
+        ) -> Result<()> {
+            use std::sync::atomic::Ordering::Relaxed;
+            self.checks.fetch_add(1, Relaxed);
+            let gate = self.gate.lock().take();
+            if let Some(gate) = gate {
+                gate.await?;
+            }
+            anyhow::ensure!(!self.fail.load(Relaxed), "offline");
+            Ok(())
+        }
+
+        fn fetch_server_binary(
+            &self,
+            _: (),
+            directory: PathBuf,
+            delegate: &Arc<dyn LspAdapterDelegate>,
+        ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+            self.installs
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let fs = delegate.fs();
+            async move {
+                let path = directory.join("server");
+                fs.atomic_write(path.clone(), "new".into()).await?;
+                Ok(LanguageServerBinary {
+                    path,
+                    arguments: Vec::new(),
+                    env: None,
+                })
+            }
+        }
+
+        async fn cached_server_binary(
+            &self,
+            directory: PathBuf,
+            delegate: &dyn LspAdapterDelegate,
+        ) -> Option<LanguageServerBinary> {
+            let path = directory.join("server");
+            delegate
+                .fs()
+                .is_file(&path)
+                .await
+                .then_some(LanguageServerBinary {
+                    path,
+                    arguments: Vec::new(),
+                    env: None,
+                })
+        }
+    }
+
+    #[async_trait(?Send)]
+    impl LspAdapter for TestInstaller {
+        fn name(&self) -> LanguageServerName {
+            LanguageServerName("test-installer".into())
+        }
+
+        fn supports_background_updates(&self) -> bool {
+            true
+        }
+    }
+
+    async fn test_installer_delegate(
+        cx: &TestAppContext,
+        with_cache: bool,
+    ) -> Arc<TestInstallerDelegate> {
+        use fs::Fs as _;
+        let fs = fs::FakeFs::new(cx.executor());
+        let directory = PathBuf::from(util::path!("/lsp/test-installer"));
+        fs.create_dir(&directory).await.unwrap();
+        if with_cache {
+            fs.atomic_write(directory.join("server"), "old".into())
+                .await
+                .unwrap();
+        }
+        Arc::new(TestInstallerDelegate {
+            fs,
+            executor: cx.executor(),
+            directory,
+        })
+    }
+
+    async fn test_installer_command(
+        adapter: Arc<CachedLspAdapter>,
+        delegate: Arc<TestInstallerDelegate>,
+        cx: &mut AsyncApp,
+    ) -> (
+        Result<ResolvedLanguageServerBinary>,
+        Option<DownloadableLanguageServerBinary>,
+    ) {
+        adapter
+            .get_language_server_command(
+                delegate,
+                None,
+                LanguageServerBinaryOptions {
+                    allow_path_lookup: false,
+                    allow_binary_download: true,
+                    pre_release: false,
+                },
+                cx,
+            )
+            .await
+            .await
+    }
+
+    #[gpui::test]
+    async fn test_cached_language_server_starts_while_update_is_pending(cx: &mut TestAppContext) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let delegate = test_installer_delegate(cx, true).await;
+        let installer = Arc::new(TestInstaller::default());
+        let (send, receive) = futures::channel::oneshot::channel();
+        *installer.gate.lock() = Some(receive);
+        let adapter = CachedLspAdapter::new(installer.clone());
+        let mut app = cx.to_async();
+        let (first, first_update) =
+            test_installer_command(adapter.clone(), delegate.clone(), &mut app).await;
+        let (second, second_update) =
+            test_installer_command(adapter.clone(), delegate.clone(), &mut app).await;
+        let old_path = delegate.directory.join("server");
+        assert_eq!(first.unwrap().path, old_path);
+        assert_eq!(second.unwrap().path, old_path);
+        assert_eq!(installer.installs.load(Relaxed), 0);
+        send.send(()).unwrap();
+        let (first, second) = futures::join!(first_update.unwrap(), second_update.unwrap());
+        let first = first.unwrap();
+        let second = second.unwrap();
+        assert_ne!(first.path, old_path);
+        assert_eq!(first.path, second.path);
+        assert_eq!(installer.checks.load(Relaxed), 1);
+        assert_eq!(installer.installs.load(Relaxed), 1);
+        let (cached, update) = test_installer_command(adapter, delegate, &mut app).await;
+        assert_eq!(cached.unwrap().path, first.path);
+        assert!(update.is_none());
+    }
+
+    #[gpui::test]
+    async fn test_language_server_update_failure_keeps_cache(cx: &mut TestAppContext) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let delegate = test_installer_delegate(cx, true).await;
+        let installer = Arc::new(TestInstaller::default());
+        installer.fail.store(true, Relaxed);
+        let adapter = CachedLspAdapter::new(installer.clone());
+        let mut app = cx.to_async();
+        let (cached, update) =
+            test_installer_command(adapter.clone(), delegate.clone(), &mut app).await;
+        assert_eq!(cached.unwrap().path, delegate.directory.join("server"));
+        assert!(update.unwrap().await.is_err());
+        let (cached, update) = test_installer_command(adapter, delegate.clone(), &mut app).await;
+        assert_eq!(cached.unwrap().path, delegate.directory.join("server"));
+        assert!(update.is_none());
+        assert_eq!(installer.checks.load(Relaxed), 1);
+        assert_eq!(installer.installs.load(Relaxed), 0);
+    }
+
+    #[gpui::test]
+    async fn test_first_language_server_install_failure_is_throttled(cx: &mut TestAppContext) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let delegate = test_installer_delegate(cx, false).await;
+        let installer = Arc::new(TestInstaller::default());
+        installer.fail.store(true, Relaxed);
+        let adapter = CachedLspAdapter::new(installer.clone());
+        let mut app = cx.to_async();
+        let (cached, update) =
+            test_installer_command(adapter.clone(), delegate.clone(), &mut app).await;
+        assert!(cached.is_err());
+        assert!(update.unwrap().await.is_err());
+        let (cached, update) = test_installer_command(adapter, delegate, &mut app).await;
+        assert!(cached.err().unwrap().to_string().contains("offline"));
+        assert!(update.is_none());
+        assert_eq!(installer.checks.load(Relaxed), 1);
+    }
 
     #[test]
     fn test_highlight_map() {

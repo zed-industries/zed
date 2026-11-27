@@ -10521,6 +10521,7 @@ dependencies = [
  "async-pipe",
  "collections",
  "ctor",
+ "fs",
  "futures 0.3.34",
  "futures-lite 2.6.1",
  "gpui",

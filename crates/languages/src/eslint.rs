@@ -78,6 +78,14 @@ impl EsLintLspAdapter {
 impl LspInstaller for EsLintLspAdapter {
     type BinaryVersion = GitHubLspBinaryVersion;
 
+    fn version_key(&self, version: &Self::BinaryVersion) -> Option<String> {
+        Some(format!(
+            "{}:{}",
+            version.name,
+            version.digest.as_deref().unwrap_or_default()
+        ))
+    }
+
     async fn fetch_latest_server_version(
         &self,
         _delegate: &Arc<dyn LspAdapterDelegate>,
@@ -166,7 +174,7 @@ impl LspInstaller for EsLintLspAdapter {
             Self::build_destination_path(&container_dir).join(EsLintLspAdapter::SERVER_PATH);
         fs::metadata(&server_path).await.ok()?;
         Some(LanguageServerBinary {
-            path: self.node.binary_path().await.ok()?,
+            path: self.node.local_binary_path().await.ok()?,
             env: None,
             arguments: eslint_server_binary_arguments(&server_path),
         })
@@ -211,6 +219,10 @@ impl EslintSettingsOverrides {
 
 #[async_trait(?Send)]
 impl LspAdapter for EsLintLspAdapter {
+    fn supports_background_updates(&self) -> bool {
+        true
+    }
+
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
         Some(vec![
             CodeActionKind::QUICKFIX,

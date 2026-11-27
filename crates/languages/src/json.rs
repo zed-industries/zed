@@ -249,6 +249,10 @@ impl LspInstaller for JsonLspAdapter {
 
 #[async_trait(?Send)]
 impl LspAdapter for JsonLspAdapter {
+    fn supports_background_updates(&self) -> bool {
+        true
+    }
+
     fn name(&self) -> LanguageServerName {
         LanguageServerName("json-language-server".into())
     }
@@ -412,7 +416,7 @@ async fn get_cached_server_binary(
             "missing executable in directory {server_path:?}"
         );
         Ok(LanguageServerBinary {
-            path: node.binary_path().await?,
+            path: node.local_binary_path().await?,
             env: None,
             arguments: server_binary_arguments(&server_path),
         })
@@ -528,6 +532,14 @@ impl NodeVersionAdapter {
 impl LspInstaller for NodeVersionAdapter {
     type BinaryVersion = GitHubLspBinaryVersion;
 
+    fn version_key(&self, version: &Self::BinaryVersion) -> Option<String> {
+        Some(format!(
+            "{}:{}",
+            version.name,
+            version.digest.as_deref().unwrap_or_default()
+        ))
+    }
+
     async fn fetch_latest_server_version(
         &self,
         delegate: &Arc<dyn LspAdapterDelegate>,
@@ -641,6 +653,10 @@ impl LspInstaller for NodeVersionAdapter {
 
 #[async_trait(?Send)]
 impl LspAdapter for NodeVersionAdapter {
+    fn supports_background_updates(&self) -> bool {
+        true
+    }
+
     fn name(&self) -> LanguageServerName {
         Self::SERVER_NAME
     }
@@ -651,7 +667,15 @@ async fn get_cached_version_server_binary(container_dir: PathBuf) -> Option<Lang
         let mut last = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {
-            last = Some(entry?.path());
+            let entry = entry?;
+            if entry.file_type().await?.is_file()
+                && entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("package-version-server-")
+            {
+                last = Some(entry.path());
+            }
         }
 
         anyhow::Ok(LanguageServerBinary {

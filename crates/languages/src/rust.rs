@@ -2,7 +2,6 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
-use futures::lock::OwnedMutexGuard;
 use github_releases::{
     AssetKind, GitHubLspBinaryVersion, GithubBinaryMetadata, download_server_binary,
     latest_github_release,
@@ -29,7 +28,7 @@ use std::{
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
 use util::command::{Stdio, new_command};
-use util::fs::{make_file_executable, remove_matching};
+use util::fs::make_file_executable;
 use util::merge_json_value_into;
 use util::paths::PathStyle;
 use util::rel_path::RelPath;
@@ -248,6 +247,10 @@ impl ManifestProvider for CargoManifestProvider {
 
 #[async_trait(?Send)]
 impl LspAdapter for RustLspAdapter {
+    fn supports_background_updates(&self) -> bool {
+        true
+    }
+
     fn name(&self) -> LanguageServerName {
         SERVER_NAME
     }
@@ -545,7 +548,7 @@ impl LspAdapter for RustLspAdapter {
     async fn initialization_options_schema(
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
-        cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        cached_binary: ServerBinaryCache,
         cx: &mut AsyncApp,
     ) -> Option<serde_json::Value> {
         let binary = self
@@ -694,6 +697,15 @@ impl LspAdapter for RustLspAdapter {
 
 impl LspInstaller for RustLspAdapter {
     type BinaryVersion = GitHubLspBinaryVersion;
+
+    fn version_key(&self, version: &Self::BinaryVersion) -> Option<String> {
+        Some(format!(
+            "{}:{}",
+            version.name,
+            version.digest.as_deref().unwrap_or_default()
+        ))
+    }
+
     async fn check_if_user_installed(
         &self,
         delegate: &Arc<dyn LspAdapterDelegate>,
@@ -791,54 +803,46 @@ impl LspInstaller for RustLspAdapter {
                 url,
                 digest: expected_digest,
             } = version;
-            let destination_path = container_dir.join(format!("rust-analyzer-{name}"));
-            let server_path = match Self::GITHUB_ASSET_KIND {
-                AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
-                AssetKind::Zip => destination_path.clone().join("rust-analyzer.exe"), // zip contains a .exe
-            };
-
-            let binary = LanguageServerBinary {
-                path: server_path.clone(),
-                env: None,
-                arguments: Default::default(),
-            };
-
-            let metadata_path = destination_path.with_extension("metadata");
-            let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
-                .await
-                .ok();
-            if let Some(metadata) = metadata {
-                let validity_check = async || {
-                    delegate
-                        .try_exec(LanguageServerBinary {
-                            path: server_path.clone(),
-                            arguments: vec!["--version".into()],
-                            env: None,
-                        })
-                        .await
-                        .inspect_err(|err| {
-                            log::warn!(
-                                "Unable to run {server_path:?} asset, redownloading: {err:#}",
-                            )
-                        })
-                };
-                if let (Some(actual_digest), Some(expected_digest)) =
-                    (&metadata.digest, &expected_digest)
+            let filename = format!("rust-analyzer-{name}");
+            for (destination, _) in rust_analyzer_installations(&container_dir).await? {
+                if destination.file_name().and_then(|name| name.to_str()) != Some(filename.as_str())
                 {
-                    if actual_digest == expected_digest {
-                        if validity_check().await.is_ok() {
-                            return Ok(binary);
-                        }
-                    } else {
-                        log::info!(
-                            "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
-                        );
-                    }
-                } else if validity_check().await.is_ok() {
-                    return Ok(binary);
+                    continue;
+                }
+                let Ok(metadata) =
+                    GithubBinaryMetadata::read_from_file(&destination.with_extension("metadata"))
+                        .await
+                else {
+                    continue;
+                };
+                if expected_digest.is_some() && metadata.digest != expected_digest {
+                    continue;
+                }
+                let server_path = rust_analyzer_executable(&destination);
+                if delegate
+                    .try_exec(LanguageServerBinary {
+                        path: server_path.clone(),
+                        arguments: vec!["--version".into()],
+                        env: None,
+                    })
+                    .await
+                    .is_ok()
+                {
+                    return Ok(LanguageServerBinary {
+                        path: server_path,
+                        env: None,
+                        arguments: Default::default(),
+                    });
                 }
             }
 
+            // A running rust-analyzer may still load files from its installation.
+            // Never replace or remove an installation while another process can use it.
+            let installation = tempfile::Builder::new()
+                .prefix("installation-")
+                .tempdir_in(&container_dir)?;
+            let destination_path = installation.path().join(filename);
+            let server_path = rust_analyzer_executable(&destination_path);
             download_server_binary(
                 delegate.background_executor(),
                 delegate.http_client(),
@@ -849,15 +853,22 @@ impl LspInstaller for RustLspAdapter {
             )
             .await?;
             make_file_executable(&server_path).await?;
-            remove_matching(&container_dir, |path| path != destination_path).await;
+            delegate
+                .try_exec(LanguageServerBinary {
+                    path: server_path.clone(),
+                    arguments: vec!["--version".into()],
+                    env: None,
+                })
+                .await?;
             GithubBinaryMetadata::write_to_file(
                 &GithubBinaryMetadata {
                     metadata_version: 1,
                     digest: expected_digest,
                 },
-                &metadata_path,
+                &destination_path.with_extension("metadata"),
             )
             .await?;
+            let _installation_path = installation.keep();
 
             Ok(LanguageServerBinary {
                 path: server_path,
@@ -1367,48 +1378,76 @@ fn package_name_from_pkgid(pkgid: &str) -> Option<&str> {
     Some(package_name)
 }
 
-async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
-    let binary_result = maybe!(async {
-        let mut last = None;
-        let mut entries = fs::read_dir(&container_dir)
-            .await
-            .with_context(|| format!("listing {container_dir:?}"))?;
+fn rust_analyzer_executable(destination: &Path) -> PathBuf {
+    match RustLspAdapter::GITHUB_ASSET_KIND {
+        AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => destination.to_path_buf(),
+        AssetKind::Zip => destination.join("rust-analyzer.exe"),
+    }
+}
+
+async fn rust_analyzer_installations(
+    container_dir: &Path,
+) -> Result<Vec<(PathBuf, std::time::SystemTime)>> {
+    let mut installations = Vec::new();
+    let mut directories = vec![container_dir.to_path_buf()];
+    while let Some(directory) = directories.pop() {
+        let mut entries = match fs::read_dir(&directory).await {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
         while let Some(entry) = entries.next().await {
-            let path = entry?.path();
-            if path.extension().is_some_and(|ext| ext == "metadata") {
+            let entry = entry?;
+            let path = entry.path();
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if directory == container_dir
+                && name.starts_with("installation-")
+                && entry.file_type().await.is_ok_and(|kind| kind.is_dir())
+            {
+                directories.push(path);
                 continue;
             }
-            last = Some(path);
-        }
-
-        let path = match last {
-            Some(last) => last,
-            None => return Ok(None),
-        };
-        let path = match RustLspAdapter::GITHUB_ASSET_KIND {
-            AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => path, // Tar and gzip extract in place.
-            AssetKind::Zip => path.join("rust-analyzer.exe"),             // zip contains a .exe
-        };
-
-        anyhow::Ok(Some(LanguageServerBinary {
-            path,
-            env: None,
-            arguments: Vec::new(),
-        }))
-    })
-    .await;
-
-    match binary_result {
-        Ok(Some(binary)) => Some(binary),
-        Ok(None) => {
-            log::info!("No cached rust-analyzer binary found");
-            None
-        }
-        Err(e) => {
-            log::error!("Failed to look up cached rust-analyzer binary: {e:#}");
-            None
+            if !name.starts_with("rust-analyzer-") || name.ends_with(".metadata") {
+                continue;
+            }
+            let metadata_path = path.with_extension("metadata");
+            if directory != container_dir
+                && GithubBinaryMetadata::read_from_file(&metadata_path)
+                    .await
+                    .is_err()
+            {
+                // An installation without metadata has not completed yet.
+                continue;
+            }
+            if let Ok(metadata) = fs::metadata(rust_analyzer_executable(&path)).await
+                && metadata.is_file()
+            {
+                if let Ok(modified) = fs::metadata(&metadata_path)
+                    .await
+                    .and_then(|metadata| metadata.modified())
+                    .or_else(|_| metadata.modified())
+                {
+                    installations.push((path, modified));
+                }
+            }
         }
     }
+    installations.sort_by_key(|(_, modified)| Reverse(*modified));
+    Ok(installations)
+}
+
+async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
+    let (destination, _) = rust_analyzer_installations(&container_dir)
+        .await
+        .log_err()?
+        .into_iter()
+        .next()?;
+    Some(LanguageServerBinary {
+        path: rust_analyzer_executable(&destination),
+        env: None,
+        arguments: Vec::new(),
+    })
 }
 
 fn test_fragment(variables: &TaskVariables, path: &Path, stem: &str) -> String {
@@ -1446,6 +1485,59 @@ mod tests {
     use settings::SettingsStore;
     use theme::SyntaxTheme;
     use util::{path, paths::SanitizedPath};
+
+    #[test]
+    fn test_rust_analyzer_ignores_incomplete_installations() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let previous = directory.path().join("rust-analyzer-previous");
+        let previous_binary = rust_analyzer_executable(&previous);
+        std::fs::create_dir_all(previous_binary.parent().context("missing parent")?)?;
+        std::fs::write(&previous_binary, b"previous")?;
+
+        let incomplete = directory
+            .path()
+            .join("installation-incomplete")
+            .join("rust-analyzer-next");
+        let incomplete_binary = rust_analyzer_executable(&incomplete);
+        std::fs::create_dir_all(incomplete_binary.parent().context("missing parent")?)?;
+        std::fs::write(&incomplete_binary, b"incomplete")?;
+
+        let cached = smol::block_on(get_cached_server_binary(directory.path().to_path_buf()))
+            .context("missing cached installation")?;
+        assert_eq!(cached.path, previous_binary);
+        assert!(incomplete_binary.is_file());
+        Ok(())
+    }
+
+    #[test]
+    fn test_rust_analyzer_keeps_previous_installation() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let previous = directory.path().join("rust-analyzer-previous");
+        let previous_binary = rust_analyzer_executable(&previous);
+        std::fs::create_dir_all(previous_binary.parent().context("missing parent")?)?;
+        std::fs::write(&previous_binary, b"previous")?;
+
+        let next = directory
+            .path()
+            .join("installation-complete")
+            .join("rust-analyzer-next");
+        let next_binary = rust_analyzer_executable(&next);
+        std::fs::create_dir_all(next_binary.parent().context("missing parent")?)?;
+        std::fs::write(&next_binary, b"next")?;
+        smol::block_on(
+            GithubBinaryMetadata {
+                metadata_version: 1,
+                digest: None,
+            }
+            .write_to_file(&next.with_extension("metadata")),
+        )?;
+
+        let installations = smol::block_on(rust_analyzer_installations(directory.path()))?;
+        assert_eq!(installations.len(), 2);
+        assert!(installations.iter().any(|(path, _)| *path == next));
+        assert!(previous_binary.is_file());
+        Ok(())
+    }
 
     #[gpui::test]
     async fn test_process_rust_diagnostics() {

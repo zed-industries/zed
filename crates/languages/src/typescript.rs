@@ -772,6 +772,10 @@ impl LspInstaller for TypeScriptLspAdapter {
 
 #[async_trait(?Send)]
 impl LspAdapter for TypeScriptLspAdapter {
+    fn supports_background_updates(&self) -> bool {
+        true
+    }
+
     fn name(&self) -> LanguageServerName {
         Self::SERVER_NAME
     }
@@ -890,13 +894,13 @@ async fn get_cached_ts_server_binary(
         let new_server_path = container_dir.join(TypeScriptLspAdapter::NEW_SERVER_PATH);
         if new_server_path.exists() {
             Ok(LanguageServerBinary {
-                path: node.binary_path().await?,
+                path: node.local_binary_path().await?,
                 env: None,
                 arguments: typescript_server_binary_arguments(&new_server_path),
             })
         } else if old_server_path.exists() {
             Ok(LanguageServerBinary {
-                path: node.binary_path().await?,
+                path: node.local_binary_path().await?,
                 env: None,
                 arguments: typescript_server_binary_arguments(&old_server_path),
             })

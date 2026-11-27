@@ -186,6 +186,10 @@ impl LspInstaller for VtslsLspAdapter {
 
 #[async_trait(?Send)]
 impl LspAdapter for VtslsLspAdapter {
+    fn supports_background_updates(&self) -> bool {
+        true
+    }
+
     fn name(&self) -> LanguageServerName {
         SERVER_NAME
     }
@@ -382,7 +386,7 @@ async fn get_cached_ts_server_binary(
             "missing executable in directory {container_dir:?}"
         );
         Ok(LanguageServerBinary {
-            path: node.binary_path().await?,
+            path: node.local_binary_path().await?,
             env: None,
             arguments: typescript_server_binary_arguments(&server_path),
         })

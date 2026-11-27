@@ -23,6 +23,14 @@ impl CLspAdapter {
 impl LspInstaller for CLspAdapter {
     type BinaryVersion = GitHubLspBinaryVersion;
 
+    fn version_key(&self, version: &Self::BinaryVersion) -> Option<String> {
+        Some(format!(
+            "{}:{}",
+            version.name,
+            version.digest.as_deref().unwrap_or_default()
+        ))
+    }
+
     async fn fetch_latest_server_version(
         &self,
         delegate: &Arc<dyn LspAdapterDelegate>,
@@ -174,6 +182,10 @@ fn ensure_arch_compatibility() -> Result<()> {
 
 #[async_trait(?Send)]
 impl super::LspAdapter for CLspAdapter {
+    fn supports_background_updates(&self) -> bool {
+        true
+    }
+
     fn name(&self) -> LanguageServerName {
         Self::SERVER_NAME
     }

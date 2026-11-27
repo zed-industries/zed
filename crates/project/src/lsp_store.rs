@@ -78,11 +78,12 @@ use itertools::Itertools as _;
 use language::{
     Bias, BinaryStatus, Buffer, BufferRow, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
     CodeLabelExt, Diagnostic, DiagnosticEntry, DiagnosticMessage, DiagnosticSet,
-    DiagnosticSourceKind, Diff, File as _, Language, LanguageAwareStyling, LanguageName,
-    LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, LspInstaller, ManifestDelegate,
-    ManifestName, ModelineSettings, OffsetUtf16, Patch, PointUtf16, RelatedInformation,
-    RelatedLocation, TextBufferSnapshot, ToOffset, ToOffsetUtf16, ToPointUtf16, Toolchain,
-    Transaction, Unclipped,
+    DiagnosticSourceKind, Diff, DownloadableLanguageServerBinary, File as _, Language,
+    LanguageAwareStyling, LanguageName, LanguageRegistry, LocalFile, LspAdapter,
+    LspAdapterDelegate, LspInstaller, ManifestDelegate, ManifestName, ModelineSettings,
+    OffsetUtf16, Patch, PointUtf16, RelatedInformation, RelatedLocation,
+    ResolvedLanguageServerBinary, TextBufferSnapshot, ToOffset, ToOffsetUtf16, ToPointUtf16,
+    Toolchain, Transaction, Unclipped,
     language_settings::{
         AllLanguageSettings, FormatOnSave, Formatter, LanguageSettings, LineEndingSetting,
         all_language_settings,
@@ -288,6 +289,19 @@ struct LanguageServerSeed {
     settings: LanguageServerSeedSettings,
 }
 
+#[derive(Clone)]
+struct RejectedLanguageServerBinary {
+    path: PathBuf,
+    arguments: Vec<std::ffi::OsString>,
+    fallback: ResolvedLanguageServerBinary,
+}
+
+impl RejectedLanguageServerBinary {
+    fn matches(&self, binary: &ResolvedLanguageServerBinary) -> bool {
+        self.path == binary.path && self.arguments == binary.arguments
+    }
+}
+
 #[derive(Debug)]
 pub struct DocumentDiagnosticsUpdate<'a, D> {
     pub diagnostics: D,
@@ -397,6 +411,8 @@ pub struct LocalLspStore {
     auto_start_language_servers: bool,
     language_server_start_overrides: HashMap<LanguageServerName, bool>,
     language_server_restart_tasks: Vec<Task<()>>,
+    language_server_start_binaries: HashMap<LanguageServerSeed, ResolvedLanguageServerBinary>,
+    rejected_language_server_binaries: HashMap<LanguageServerSeed, RejectedLanguageServerBinary>,
 
     buffers_to_refresh_hash_set: HashSet<BufferId>,
     buffers_to_refresh_queue: VecDeque<BufferId>,
@@ -464,6 +480,7 @@ impl LocalLspStore {
             toolchain: disposition.toolchain.clone(),
         };
         if start_mode == LanguageServerStartMode::Explicit {
+            self.rejected_language_server_binaries.remove(&key);
             self.language_server_start_overrides
                 .insert(key.name.clone(), true);
         }
@@ -575,6 +592,10 @@ impl LocalLspStore {
                 }
             });
         let update_binary_status = wait_until_worktree_trust.is_none();
+        let (update_tx, update_rx) = oneshot::channel();
+        let start_binary = self.language_server_start_binaries.remove(&key);
+        let rejected_binary = self.rejected_language_server_binaries.get(&key).cloned();
+        let startup_fallback = Arc::new(Mutex::new(None));
 
         let binary = self.get_language_server_binary(
             worktree_abs_path.clone(),
@@ -584,6 +605,10 @@ impl LocalLspStore {
             delegate.clone(),
             true,
             wait_until_worktree_trust,
+            update_tx,
+            start_binary,
+            rejected_binary.clone(),
+            startup_fallback.clone(),
             cx,
         );
         let pending_workspace_folders = Arc::<Mutex<BTreeSet<Uri>>>::default();
@@ -597,6 +622,8 @@ impl LocalLspStore {
             let pending_workspace_folders = pending_workspace_folders.clone();
             async move |cx| {
                 let binary = binary.await?;
+                let installation_lease = binary.installation_lease;
+                let binary = binary.binary;
                 #[cfg(any(test, feature = "test-support"))]
                 if let Some(server) = lsp_store
                     .update(&mut cx.clone(), |this, cx| {
@@ -610,7 +637,7 @@ impl LocalLspStore {
                     .ok()
                     .flatten()
                 {
-                    return Ok(server);
+                    return Ok(server.with_installation_lease(installation_lease));
                 }
 
                 let code_action_kinds = adapter.code_action_kinds();
@@ -624,6 +651,7 @@ impl LocalLspStore {
                     Some(pending_workspace_folders),
                     cx,
                 )
+                .map(|server| server.with_installation_lease(installation_lease))
             }
         });
 
@@ -727,10 +755,26 @@ impl LocalLspStore {
 
                 match result {
                     Ok(server) => {
+                        let selected = startup_fallback.lock().take();
                         lsp_store
                             .update(cx, |lsp_store, cx| {
+                                if let Some(local) = lsp_store.as_local_mut()
+                                    && let Some(selected) = &selected
+                                    && let Some(rejected) =
+                                        local.rejected_language_server_binaries.get(&key)
+                                    && (selected.path != rejected.path
+                                        || selected.arguments != rejected.arguments)
+                                    && (selected.path != rejected.fallback.path
+                                        || selected.arguments != rejected.fallback.arguments)
+                                    && local
+                                        .language_server_ids
+                                        .get(&key)
+                                        .is_some_and(|state| state.id == server_id)
+                                {
+                                    local.rejected_language_server_binaries.remove(&key);
+                                }
                                 lsp_store.insert_newly_running_language_server(
-                                    adapter,
+                                    adapter.clone(),
                                     server.clone(),
                                     server_id,
                                     key,
@@ -740,7 +784,42 @@ impl LocalLspStore {
                                 );
                             })
                             .ok();
+                        drop(selected);
                         stderr_capture.lock().take();
+                        let server_name = adapter.name();
+                        cx.spawn(async move |cx| {
+                            if let Ok((previous, download)) = update_rx.await {
+                                match download.await {
+                                    Ok(mut binary)
+                                        if (binary.path != previous.path
+                                            || binary.arguments != previous.arguments)
+                                            && rejected_binary.as_ref().is_none_or(
+                                                |rejected| !rejected.matches(&binary),
+                                            ) =>
+                                    {
+                                        let mut previous = previous;
+                                        previous.previous = None;
+                                        binary.previous = Some(Box::new(previous));
+                                        lsp_store
+                                            .update(cx, |store, cx| {
+                                                store.restart_updated_language_server(
+                                                    server_id,
+                                                    server_name,
+                                                    binary,
+                                                    None,
+                                                    cx,
+                                                );
+                                            })
+                                            .ok();
+                                    }
+                                    Ok(_) => {}
+                                    Err(error) => {
+                                        log::info!("language server update failed: {error:#}")
+                                    }
+                                }
+                            }
+                        })
+                        .detach();
                         Some(server)
                     }
 
@@ -762,6 +841,24 @@ impl LocalLspStore {
                         );
                         if !log.is_empty() {
                             log::error!("server stderr: {}", redact_command(&log));
+                        }
+                        let fallback = startup_fallback.lock().take();
+                        if let Some(rejected) = fallback {
+                            let server_name = adapter.name();
+                            cx.spawn(async move |cx| {
+                                lsp_store
+                                    .update(cx, |store, cx| {
+                                        store.restart_updated_language_server(
+                                            server_id,
+                                            server_name,
+                                            rejected.fallback.clone(),
+                                            Some(rejected),
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                            })
+                            .detach();
                         }
                         None
                     }
@@ -796,8 +893,15 @@ impl LocalLspStore {
         delegate: Arc<dyn LspAdapterDelegate>,
         allow_binary_download: bool,
         wait_until_worktree_trust: Option<watch::Receiver<bool>>,
+        update_tx: oneshot::Sender<(
+            ResolvedLanguageServerBinary,
+            DownloadableLanguageServerBinary,
+        )>,
+        start_binary: Option<ResolvedLanguageServerBinary>,
+        rejected_binary: Option<RejectedLanguageServerBinary>,
+        startup_fallback: Arc<Mutex<Option<RejectedLanguageServerBinary>>>,
         cx: &mut App,
-    ) -> Task<Result<LanguageServerBinary>> {
+    ) -> Task<Result<ResolvedLanguageServerBinary>> {
         if let Some(settings) = &settings.binary
             && let Some(path) = settings.path.as_ref().map(PathBuf::from)
         {
@@ -834,7 +938,7 @@ impl LocalLspStore {
                         .iter()
                         .map(Into::into)
                         .collect(),
-                })
+                }.into())
             });
         }
 
@@ -867,7 +971,7 @@ impl LocalLspStore {
                     path: PathBuf::from(format!("/fake/lsp/{language_server_name}")),
                     arguments: Vec::new(),
                     env: None,
-                })
+                }.into())
             });
         }
 
@@ -913,50 +1017,76 @@ impl LocalLspStore {
                 }
             }
 
-            let (existing_binary, maybe_download_binary) = adapter
-                .clone()
-                .get_language_server_command(delegate.clone(), toolchain, lsp_binary_options, cx)
-                .await
-                .await;
+            let mut binary = if let Some(binary) = start_binary {
+                binary
+            } else {
+                let (existing_binary, maybe_download_binary) = adapter
+                    .clone()
+                    .get_language_server_command(delegate.clone(), toolchain, lsp_binary_options, cx)
+                    .await
+                    .await;
 
-            delegate.update_status(adapter.name.clone(), BinaryStatus::None);
+                delegate.update_status(adapter.name.clone(), BinaryStatus::None);
 
-            let mut binary = match (existing_binary, maybe_download_binary) {
-                (binary, None) => binary?,
-                (Err(_), Some(downloader)) => downloader.await?,
-                (Ok(existing_binary), Some(downloader)) => {
-                    let mut download_timeout = cx
-                        .background_executor()
-                        .timer(SERVER_DOWNLOAD_TIMEOUT)
-                        .fuse();
-                    let mut downloader = downloader.fuse();
-                    futures::select! {
-                        _ = download_timeout => {
-                            // Return existing binary and kick the existing work to the background.
-                            cx.spawn(async move |_| downloader.await).detach();
-                            Ok(existing_binary)
-                        },
-                        downloaded_or_existing_binary = downloader => {
-                            // If download fails, this results in the existing binary.
-                            downloaded_or_existing_binary
+                let select_binary = |binary: ResolvedLanguageServerBinary| {
+                    if let Some(rejected) = &rejected_binary
+                        && rejected.matches(&binary)
+                    {
+                        rejected.fallback.clone()
+                    } else {
+                        binary
+                    }
+                };
+                match (existing_binary, maybe_download_binary) {
+                    (binary, None) => select_binary(binary?),
+                    (Err(_), Some(downloader)) => select_binary(downloader.await?),
+                    (Ok(existing_binary), Some(downloader))
+                        if adapter.adapter.supports_background_updates() =>
+                    {
+                        let existing_binary = select_binary(existing_binary);
+                        if update_tx.send((existing_binary.clone(), downloader)).is_err() {
+                            log::debug!("language server startup was cancelled");
                         }
-                    }?
+                        existing_binary
+                    }
+                    (Ok(existing_binary), Some(downloader)) => {
+                        let mut download_timeout = cx
+                            .background_executor()
+                            .timer(SERVER_DOWNLOAD_TIMEOUT)
+                            .fuse();
+                        let mut downloader = downloader.fuse();
+                        futures::select! {
+                            _ = download_timeout => {
+                                cx.spawn(async move |_| downloader.await).detach();
+                                Ok(existing_binary)
+                            },
+                            downloaded_or_existing_binary = downloader => downloaded_or_existing_binary
+                        }?
+                    }
                 }
             };
-            let mut shell_env = delegate.shell_env().await;
-
-            shell_env.extend(binary.env.unwrap_or_default());
-
-            if let Some(settings) = settings.binary.as_ref() {
-                if let Some(arguments) = &settings.arguments {
-                    binary.arguments = arguments.iter().map(Into::into).collect();
-                }
-                if let Some(env) = &settings.env {
-                    shell_env.extend(env.iter().map(|(k, v)| (k.clone(), v.clone())));
-                }
+            if let Some(previous) = binary.previous.take() {
+                *startup_fallback.lock() = Some(RejectedLanguageServerBinary {
+                    path: binary.path.clone(),
+                    arguments: binary.arguments.clone(),
+                    fallback: *previous,
+                });
             }
-
-            binary.env = Some(shell_env);
+            let shell_env = delegate.shell_env().await;
+            let configure = |binary: &mut LanguageServerBinary| {
+                let mut env = shell_env.clone();
+                env.extend(binary.env.take().unwrap_or_default());
+                if let Some(settings) = settings.binary.as_ref() {
+                    if let Some(arguments) = &settings.arguments {
+                        binary.arguments = arguments.iter().map(Into::into).collect();
+                    }
+                    if let Some(settings_env) = &settings.env {
+                        env.extend(settings_env.iter().map(|(k, v)| (k.clone(), v.clone())));
+                    }
+                }
+                binary.env = Some(env);
+            };
+            configure(&mut binary.binary);
             Ok(binary)
         })
     }
@@ -4103,6 +4233,10 @@ impl LocalLspStore {
         cx: &mut Context<LspStore>,
     ) -> Vec<LanguageServerId> {
         self.restricted_worktrees_tasks.remove(&id_to_remove);
+        self.language_server_start_binaries
+            .retain(|seed, _| seed.worktree_id != id_to_remove);
+        self.rejected_language_server_binaries
+            .retain(|seed, _| seed.worktree_id != id_to_remove);
         self.diagnostics.remove(&id_to_remove);
         self.prettier_store.update(cx, |prettier_store, cx| {
             prettier_store.remove_worktree(id_to_remove, cx);
@@ -5020,6 +5154,8 @@ impl LspStore {
                 auto_start_language_servers: true,
                 language_server_start_overrides: HashMap::default(),
                 language_server_restart_tasks: Vec::new(),
+                language_server_start_binaries: HashMap::default(),
+                rejected_language_server_binaries: HashMap::default(),
                 watched_manifest_filenames: ManifestProvidersStore::global(cx)
                     .manifest_file_names(),
             }),
@@ -13169,6 +13305,105 @@ impl LspStore {
         }
     }
 
+    fn restart_updated_language_server(
+        &mut self,
+        server_id: LanguageServerId,
+        server_name: LanguageServerName,
+        start_binary: ResolvedLanguageServerBinary,
+        rejected_binary: Option<RejectedLanguageServerBinary>,
+        cx: &mut Context<Self>,
+    ) {
+        let buffers: Vec<_> = self.buffer_store.read(cx).buffers().collect();
+        let Some(local) = self.as_local_mut() else {
+            return;
+        };
+        if !local.language_servers.contains_key(&server_id)
+            || (rejected_binary.is_none()
+                && local.running_language_server_for_id(server_id).is_none())
+            || !local.can_start_language_server(&server_name)
+        {
+            return;
+        }
+        let seeds: Vec<_> = local
+            .language_server_ids
+            .iter()
+            .filter_map(|(seed, state)| (state.id == server_id).then(|| seed.clone()))
+            .collect();
+        let buffers: Vec<_> = buffers
+            .into_iter()
+            .filter(|buffer| {
+                buffer.update(cx, |buffer, cx| {
+                    local.registered_buffers.contains_key(&buffer.remote_id())
+                        && local
+                            .language_server_ids_for_buffer(buffer, cx)
+                            .contains(&server_id)
+                })
+            })
+            .collect();
+        if buffers.is_empty() {
+            return;
+        }
+        let (_, stop_task) = self.stop_local_language_servers_for_buffers(
+            &[],
+            [LanguageServerSelector::Id(server_id)]
+                .into_iter()
+                .collect(),
+            cx,
+        );
+        let task = cx.spawn(async move |store, cx| {
+            stop_task.await;
+            store
+                .update(cx, |store, cx| {
+                    let Some(local) = store.as_local_mut() else {
+                        return;
+                    };
+                    if !local.can_start_language_server(&server_name) {
+                        return;
+                    }
+                    for seed in &seeds {
+                        // A user action or settings change may have started another server
+                        // while the old process was shutting down.
+                        if local.language_server_ids.contains_key(seed) {
+                            continue;
+                        }
+                        if let Some(rejected) = &rejected_binary {
+                            local
+                                .rejected_language_server_binaries
+                                .insert(seed.clone(), rejected.clone());
+                        }
+                        local
+                            .language_server_start_binaries
+                            .insert(seed.clone(), start_binary.clone());
+                    }
+                    for buffer in buffers {
+                        if local
+                            .registered_buffers
+                            .contains_key(&buffer.read(cx).remote_id())
+                        {
+                            local.register_buffer_with_language_servers(
+                                &buffer,
+                                [LanguageServerSelector::Name(server_name.clone())]
+                                    .into_iter()
+                                    .collect(),
+                                LanguageServerStartMode::Automatic,
+                                cx,
+                            );
+                        }
+                    }
+                    for seed in seeds {
+                        local.language_server_start_binaries.remove(&seed);
+                    }
+                })
+                .ok();
+        });
+        if let Some(local) = self.as_local_mut() {
+            local
+                .language_server_restart_tasks
+                .retain(|task| !task.is_ready());
+            local.language_server_restart_tasks.push(task);
+        }
+    }
+
     pub fn restart_all_language_servers(&mut self, cx: &mut Context<Self>) {
         if let Some(local) = self.as_local_mut() {
             local.auto_start_language_servers = true;
@@ -13642,8 +13877,7 @@ impl LspStore {
         if local
             .language_server_ids
             .get(&key)
-            .map(|state| state.id != server_id)
-            .unwrap_or(false)
+            .is_none_or(|state| state.id != server_id)
         {
             return;
         }
@@ -17112,6 +17346,10 @@ impl LocalLspAdapterDelegate {
 
 #[async_trait]
 impl LspAdapterDelegate for LocalLspAdapterDelegate {
+    fn fs(&self) -> Arc<dyn Fs> {
+        self.fs.clone()
+    }
+
     fn show_notification(&self, message: &str, cx: &mut App) {
         self.lsp_store
             .update(cx, |_, cx| {
