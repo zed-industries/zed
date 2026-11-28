@@ -38,6 +38,7 @@ mod executor;
 mod geometry;
 mod gestures;
 mod global;
+mod ime_commit;
 mod input;
 mod inspector;
 mod interactive;
@@ -130,6 +131,7 @@ pub use gpui_macros::{
 };
 pub use gpui_shared_string::*;
 pub use gpui_util::arc_cow::ArcCow;
+pub use ime_commit::*;
 pub use input::*;
 pub use inspector::*;
 pub use interactive::*;

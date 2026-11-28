@@ -9,12 +9,13 @@ use block2::RcBlock;
 use dispatch2::DispatchQueue;
 use gpui::{
     AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, CursorStyle, ExternalDragPayload,
-    ExternalPaths, FileDropEvent, ForegroundExecutor, FrameRequestSource, KeyDownEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformFrameSignal, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    SharedString, Size, SystemWindowTab, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControlArea, WindowKind, WindowParams, WindowVisibility, point, px, size,
+    ExternalPaths, FileDropEvent, ForegroundExecutor, FrameRequestSource, ImeCommitState,
+    ImeCommitVerdict, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformFrameSignal, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton,
+    PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind, WindowParams,
+    WindowVisibility, point, px, size,
 };
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
@@ -70,7 +71,7 @@ use std::{
         Arc, Once,
         atomic::{AtomicBool, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 mod native_views;
@@ -691,6 +692,15 @@ struct MacWindowState {
     transparent_titlebar: bool,
     previous_modifiers_changed_event: Option<PlatformInput>,
     keystroke_for_do_command: Option<Keystroke>,
+    /// Decides what to do with a printable character that the active input source commits as raw
+    /// text instead of composing. Sogou's English mode does that for every letter, which would
+    /// otherwise swallow the first stroke of a multi-stroke binding such as `j k`
+    /// (<https://github.com/zed-industries/zed/issues/53630>).
+    ///
+    /// The "does this key begin or extend a chord" question is answered before `handleEvent:`, the
+    /// same place as the other input-handler queries, because the answer cannot be computed from
+    /// inside the input context's callback without re-entering the application.
+    ime_commit: ImeCommitState,
     do_command_handled: Option<bool>,
     external_files_dragged: bool,
     // Whether the next left-mouse click is also the focusing click.
@@ -1210,6 +1220,7 @@ impl MacWindow {
                         .is_none_or(|titlebar| titlebar.appears_transparent),
                     previous_modifiers_changed_event: None,
                     keystroke_for_do_command: None,
+                    ime_commit: ImeCommitState::default(),
                     do_command_handled: None,
                     external_files_dragged: false,
                     first_mouse: false,
@@ -3001,6 +3012,32 @@ extern "C" fn handle_key_event(
                     && !key_down_event.keystroke.modifiers.function
                     && !key_down_event.keystroke.modifiers.platform)
             {
+                // Ask the application, before handing the key to the input context, whether this
+                // printable key would begin or extend a multi-stroke binding. An input source may
+                // answer by committing the character as raw text (`insertText:`) instead of
+                // composing it — Sogou's English mode does exactly that — and that commit would
+                // swallow the first stroke of `j k`. The answer is computed here, outside the
+                // input context's callback, so `insert_text` never has to re-enter the application
+                // to make the decision.
+                //
+                // Only a printable key installs an entry: a composing input source reports its
+                // characters through `setMarkedText`, which clears the entry and must never be
+                // diverted.
+                if is_ime_printable_key {
+                    let begins_binding = with_input_handler(this, |input_handler| {
+                        input_handler
+                            .query_keystroke_begins_pending_binding(&key_down_event.keystroke)
+                    })
+                    .unwrap_or(false);
+                    window_state.as_ref().lock().ime_commit.begin_key_event(
+                        key_down_event.keystroke.clone(),
+                        begins_binding,
+                        Instant::now(),
+                    );
+                } else {
+                    window_state.as_ref().lock().ime_commit.clear();
+                }
+
                 {
                     let mut lock = window_state.as_ref().lock();
                     lock.keystroke_for_do_command = Some(key_down_event.keystroke.clone());
@@ -3016,9 +3053,29 @@ extern "C" fn handle_key_event(
                         msg_send![input_context, handleEvent: native_event]
                     }
                 };
-                window_state.as_ref().lock().keystroke_for_do_command.take();
-                if let Some(handled) = window_state.as_ref().lock().do_command_handled.take() {
+                let (do_command_handled, suppressed_commit, entry_installed) = {
+                    let mut lock = window_state.as_ref().lock();
+                    lock.keystroke_for_do_command.take();
+                    let do_command_handled = lock.do_command_handled.take();
+                    let suppressed_commit = lock.ime_commit.end_key_event();
+                    let entry_installed = lock.ime_commit.has_pending_entry(Instant::now());
+                    (do_command_handled, suppressed_commit, entry_installed)
+                };
+                log::debug!(
+                    "handleEvent -> handled={} do_command={do_command_handled:?} suppressed={:?} entry_installed={entry_installed}",
+                    handled == Bool::YES,
+                    suppressed_commit.as_ref().and_then(|k| k.key_char.clone()),
+                );
+
+                if let Some(handled) = do_command_handled {
                     return handled.to_objc();
+                } else if let Some(keystroke) = suppressed_commit {
+                    // `insert_text` dropped this key's raw-text commit from inside `handleEvent:`,
+                    // where re-entering the application is not safe. Dispatch it now that the
+                    // input context has returned: key-binding matching gets first refusal and the
+                    // character is re-committed if nothing consumes the key.
+                    dispatch_diverted_ime_commit(this, &keystroke);
+                    return Bool::YES;
                 } else if handled == Bool::YES {
                     return Bool::YES;
                 }
@@ -3786,8 +3843,96 @@ extern "C" fn insert_text(
 
         let text = text.to_str();
         let replacement_range = replacement_range.to_range();
+
+        // Some input sources commit a printable key as raw text instead of composing it (Sogou's
+        // English mode sends `insertText:` for `j`). If that key starts or extends a multi-stroke
+        // binding, the commit must be dropped so the key-binding matcher sees the keystroke, and
+        // the character only lands if nothing consumes the key.
+        // See https://github.com/zed-industries/zed/issues/53630.
+        //
+        // The decision is made here rather than in `handle_key_event` because commits can arrive
+        // either synchronously, from inside `handleEvent:`, or a few hundred milliseconds later
+        // when the input source finishes a composition. Both find the pending entry installed;
+        // only a same-shaped commit is diverted, and an unconsumed key is always re-committed so no
+        // timing can lose a character.
+        let (verdict, keystroke, in_key_event) = {
+            let window_state = get_window_state(this);
+            let mut lock = window_state.as_ref().lock();
+            let verdict = lock
+                .ime_commit
+                .commit(text, replacement_range.is_none(), Instant::now());
+            let keystroke = lock.ime_commit.pending_keystroke().cloned();
+            let in_key_event = lock.ime_commit.is_in_key_event();
+            (verdict, keystroke, in_key_event)
+        };
+
+        log::debug!(
+            "insert_text text={text:?} repl={replacement_range:?} verdict={verdict:?} in_key_event={in_key_event}"
+        );
+
+        if verdict == ImeCommitVerdict::Duplicate {
+            log::debug!("dropping duplicate commit of {text:?}: same key press, already diverted");
+            return;
+        }
+
+        if verdict == ImeCommitVerdict::Passthrough {
+            with_input_handler(this, |input_handler| {
+                input_handler.replace_text_in_range(replacement_range, text)
+            });
+            return;
+        }
+
+        let Some(keystroke) = keystroke else {
+            return;
+        };
+
+        log::debug!(
+            "suppressing commit of {:?}: it begins/extends a multi-stroke binding",
+            keystroke.key_char
+        );
+
+        if in_key_event {
+            // The commit came from inside `handleEvent:`, which is still on the stack, so the
+            // application must not be re-entered from here. The state machine holds the diverted
+            // keystroke and `handle_key_event` dispatches it once the input context returns.
+            return;
+        }
+
+        // The commit is late: `handleEvent:` already returned, so there is nothing on the stack to
+        // protect and the key must be dispatched from here. Binding matching sees the key first and
+        // the character only lands if nothing consumes it.
+        dispatch_diverted_ime_commit(this, &keystroke);
+    }
+}
+
+/// Dispatch a printable key whose raw-text commit was dropped, so key-binding matching can see it.
+///
+/// The character is re-committed whenever no binding consumes the keystroke, which keeps ordinary
+/// typing intact: only a key that begins or extends a chord is ever diverted, and a key that both
+/// looks like one and turns out not to be still types its character.
+fn dispatch_diverted_ime_commit(this: &AnyObject, keystroke: &Keystroke) {
+    let window_state = unsafe { get_window_state(this) };
+    let mut callback = window_state.as_ref().lock().event_callback.take();
+    let handled = if let Some(callback) = callback.as_mut() {
+        !(callback)(PlatformInput::KeyDown(KeyDownEvent {
+            keystroke: keystroke.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        }))
+        .propagate
+    } else {
+        false
+    };
+    window_state.as_ref().lock().event_callback = callback;
+
+    log::debug!(
+        "re-dispatching {:?} as keydown -> handled={handled}",
+        keystroke.key_char
+    );
+
+    if !handled && let Some(key_char) = keystroke.key_char.clone() {
         with_input_handler(this, |input_handler| {
-            input_handler.replace_text_in_range(replacement_range, text)
+            input_handler.replace_text_in_range(None, &key_char)
         });
     }
 }
@@ -3809,12 +3954,25 @@ extern "C" fn set_marked_text(
         let selected_range = selected_range.to_range();
         let replacement_range = replacement_range.to_range();
         let text = text.to_str();
+        // Composing input reports characters here, never through `insertText:`, so a raw-text
+        // commit can no longer be pending for the key that started this composition. A keystroke
+        // already diverted for this key press is kept: it still has to reach the bindings.
+        get_window_state(this)
+            .as_ref()
+            .lock()
+            .ime_commit
+            .clear_pending();
         with_input_handler(this, |input_handler| {
             input_handler.replace_and_mark_text_in_range(replacement_range, text, selected_range)
         });
     }
 }
 extern "C" fn unmark_text(this: &AnyObject, _: Sel) {
+    unsafe { get_window_state(this) }
+        .as_ref()
+        .lock()
+        .ime_commit
+        .clear_pending();
     with_input_handler(this, |input_handler| input_handler.unmark_text());
 }
 
@@ -3854,6 +4012,8 @@ extern "C" fn do_command_by_selector(this: &AnyObject, _: Sel, _: Sel) {
     let state = unsafe { get_window_state(this) };
     let mut lock = state.as_ref().lock();
     let keystroke = lock.keystroke_for_do_command.take();
+    // The input source declined this key, so it will not commit it as text either.
+    lock.ime_commit.clear();
     let mut event_callback = lock.event_callback.take();
     drop(lock);
 
