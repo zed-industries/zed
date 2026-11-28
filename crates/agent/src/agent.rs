@@ -2688,7 +2688,15 @@ impl NativeAgentConnection {
                     let model_started = !thread.read_with(cx, |thread, _cx| thread.is_turn_complete());
                     // Tools may ignore cancellation. Their native cleanup must not
                     // delay the bridge's Stop event or the next accepted prompt.
-                    thread.update(cx, |thread, cx| thread.cancel(cx)).detach();
+                    let cleanup = thread.update(cx, |thread, cx| thread.cancel(cx));
+                    // Closing the view must not release the session before cleanup
+                    // records tool results, including the links to canceled subagents
+                    let retained_acp_thread = acp_thread.upgrade();
+                    cx.spawn(async move |_| {
+                        cleanup.await;
+                        drop(retained_acp_thread);
+                    })
+                    .detach();
                     if model_started {
                         // Drain cancellation updates (including compaction terminalization)
                         // before publishing Idle or allowing another submission to insert.
