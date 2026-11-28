@@ -1,6 +1,7 @@
 name = "Proto"
 grammar = "proto"
 path_suffixes = ["proto"]
+code_fence_block_names = ["proto", "protobuf"]
 line_comments = ["// "]
 autoclose_before = ";:.,=}])>"
 brackets = [

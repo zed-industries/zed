@@ -238,6 +238,33 @@ impl AvailableLanguages {
         })
     }
 
+    pub(super) fn find_by_code_fence_name(&self, string: &str) -> Option<LanguageId> {
+        let string = UniCase::new(string);
+        self.find_best_match(|name, matcher, current_best_match| {
+            let name_matches = || {
+                UniCase::new(&name.0) == string
+                    || matcher
+                        .path_suffixes
+                        .iter()
+                        .any(|suffix| UniCase::new(suffix) == string)
+                    || matcher
+                        .code_fence_block_names
+                        .iter()
+                        .any(|fence_name| UniCase::new(fence_name) == string)
+            };
+
+            match current_best_match {
+                LanguageMatchPrecedence::Undetermined => {
+                    name_matches().then_some(LanguageMatchPrecedence::PathOrContent(string.len()))
+                }
+                LanguageMatchPrecedence::PathOrContent(len) => (string.len() > len
+                    && name_matches())
+                .then_some(LanguageMatchPrecedence::PathOrContent(string.len())),
+                LanguageMatchPrecedence::UserConfigured(_) => None,
+            }
+        })
+    }
+
     pub(super) fn find_for_file(
         &self,
         filename: Option<&str>,
