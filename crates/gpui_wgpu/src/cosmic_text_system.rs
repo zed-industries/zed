@@ -28,6 +28,17 @@ struct FontKey {
     family: SharedString,
     features: FontFeatures,
     fallbacks: Option<FontFallbacks>,
+    role: FaceRole,
+}
+
+/// What a family is loaded for. A face can be a primary font only when it
+/// has a Latin `m`, which layout measures; a fallback face needs no Latin
+/// glyph at all, as an Arabic or an emoji family has none. The role is part
+/// of the key, so a face loaded as a fallback never becomes a primary font.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum FaceRole {
+    Primary,
+    Fallback,
 }
 
 impl FontKey {
@@ -36,6 +47,16 @@ impl FontKey {
             family,
             features,
             fallbacks,
+            role: FaceRole::Primary,
+        }
+    }
+
+    fn fallback(family: SharedString, features: FontFeatures) -> Self {
+        Self {
+            family,
+            features,
+            fallbacks: None,
+            role: FaceRole::Fallback,
         }
     }
 }
@@ -197,8 +218,12 @@ impl PlatformTextSystem for CosmicTextSystem {
         let candidates = if let Some(font_ids) = state.font_ids_by_family_cache.get(&key) {
             font_ids.as_slice()
         } else {
-            let font_ids =
-                state.load_family(&font.family, &font.features, font.fallbacks.as_ref())?;
+            let font_ids = state.load_family(
+                &font.family,
+                &font.features,
+                font.fallbacks.as_ref(),
+                FaceRole::Primary,
+            )?;
             state.font_ids_by_family_cache.insert(key.clone(), font_ids);
             state.font_ids_by_family_cache[&key].as_ref()
         };
@@ -341,12 +366,18 @@ impl CosmicTextSystemState {
         name: &str,
         features: &FontFeatures,
         fallbacks: Option<&FontFallbacks>,
+        role: FaceRole,
     ) -> Result<SmallVec<[FontId; 4]>> {
-        let loaded_font_key = FontKey::new(
-            SharedString::from(name.to_owned()),
-            features.clone(),
-            fallbacks.cloned(),
-        );
+        let loaded_font_key = match role {
+            FaceRole::Primary => FontKey::new(
+                SharedString::from(name.to_owned()),
+                features.clone(),
+                fallbacks.cloned(),
+            ),
+            FaceRole::Fallback => {
+                FontKey::fallback(SharedString::from(name.to_owned()), features.clone())
+            }
+        };
 
         // recurse with `fallbacks = None` so a fallback family cannot pull in
         // another chain. missing fallback families are dropped so a typo in
@@ -355,15 +386,15 @@ impl CosmicTextSystemState {
             Some(fallbacks) if !fallbacks.fallback_list().is_empty() => {
                 let mut chain: Vec<(FontId, SharedString)> = Vec::new();
                 for fallback_name in fallbacks.fallback_list() {
-                    let fb_key = FontKey::new(
+                    let fb_key = FontKey::fallback(
                         SharedString::from(fallback_name.clone()),
                         features.clone(),
-                        None,
                     );
                     let fb_ids = if let Some(cached) = self.font_ids_by_family_cache.get(&fb_key) {
                         cached.clone()
                     } else {
-                        let loaded = self.load_family(fallback_name, features, None)?;
+                        let loaded =
+                            self.load_family(fallback_name, features, None, FaceRole::Fallback)?;
                         self.font_ids_by_family_cache.insert(fb_key, loaded.clone());
                         loaded
                     };
@@ -424,8 +455,10 @@ impl CosmicTextSystemState {
             // Don't remove the face from the font database. Arabic, Devanagari
             // and emoji fonts often have no Latin glyphs, and they are exactly
             // what cosmic-text falls back to when the primary font lacks a
-            // glyph.
-            if font.as_swash().charmap().map('m') == 0
+            // glyph. A family named as a fallback keeps such faces, so the
+            // chain is used in the order it names.
+            if role == FaceRole::Primary
+                && font.as_swash().charmap().map('m') == 0
                 && !allowed_bad_font_names.contains(&postscript_name.as_str())
             {
                 continue;
@@ -1896,5 +1929,71 @@ mod tests {
         let covers = |_: FontId, _: char| true;
         let spans = compute_run_spans("anything", 3, 0, primary, &fb, &covers);
         assert!(spans.is_empty());
+    }
+
+    const ARABIC: &[u8] = include_bytes!("../test_fonts/GpuiTestArabic.ttf");
+    const LATIN_ARABIC: &[u8] = include_bytes!("../test_fonts/GpuiTestLatinArabic.ttf");
+
+    /// IBM Plex Sans, then `fallbacks` in that order.
+    fn plex_then(fallbacks: &[&str]) -> Font {
+        let mut font = gpui::font("IBM Plex Sans");
+        font.fallbacks = Some(FontFallbacks::from_fonts(
+            fallbacks.iter().map(|family| family.to_string()).collect(),
+        ));
+        font
+    }
+
+    /// The fonts the glyphs of `text` came from.
+    fn glyph_fonts(text_system: &CosmicTextSystem, text: &str, font: &Font) -> Result<Vec<FontId>> {
+        let font_id = text_system.font_id(font)?;
+        let layout = text_system.layout_line(
+            text,
+            gpui::px(16.),
+            &[FontRun {
+                len: text.len(),
+                font_id,
+            }],
+        );
+        Ok(layout
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|_| run.font_id))
+            .collect())
+    }
+
+    #[test]
+    fn fallback_families_without_a_latin_glyph_keep_their_place() -> Result<()> {
+        let text_system = text_system()?;
+        text_system.add_fonts(vec![Cow::Borrowed(ARABIC), Cow::Borrowed(LATIN_ARABIC)])?;
+        let latin_arabic = text_system
+            .font_metrics(text_system.font_id(&gpui::font("GPUI Test Latin Arabic"))?)
+            .units_per_em;
+        let units_per_em = |chain: [&str; 2]| -> Result<Vec<u32>> {
+            Ok(glyph_fonts(&text_system, "مرحبا", &plex_then(&chain))?
+                .into_iter()
+                .map(|font_id| text_system.font_metrics(font_id).units_per_em)
+                .collect())
+        };
+        // GPUI Test Arabic has no Latin glyph and 1000 units per em; GPUI
+        // Test Latin Arabic has an `m` and 2048. The family named first draws.
+        let first = units_per_em(["GPUI Test Arabic", "GPUI Test Latin Arabic"])?;
+        assert!(!first.is_empty());
+        assert!(first.iter().all(|em| *em != latin_arabic), "{first:?}");
+        let second = units_per_em(["GPUI Test Latin Arabic", "GPUI Test Arabic"])?;
+        assert!(second.iter().all(|em| *em == latin_arabic), "{second:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn a_fallback_family_without_a_latin_glyph_is_never_a_primary_font() -> Result<()> {
+        let text_system = text_system()?;
+        text_system.add_fonts(vec![Cow::Borrowed(ARABIC)])?;
+        glyph_fonts(&text_system, "مرحبا", &plex_then(&["GPUI Test Arabic"]))?;
+        assert!(
+            text_system
+                .font_id(&gpui::font("GPUI Test Arabic"))
+                .is_err()
+        );
+        Ok(())
     }
 }
