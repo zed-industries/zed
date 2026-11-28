@@ -383,11 +383,26 @@ pub fn into_deepseek(
                                 );
                             }
                             Role::Assistant => {
-                                messages.push(deepseek::RequestMessage::Assistant {
-                                    content: Some(text),
-                                    tool_calls: Vec::new(),
-                                    reasoning_content: current_reasoning.take(),
-                                });
+                                if let Some(deepseek::RequestMessage::Assistant {
+                                    content,
+                                    tool_calls,
+                                    reasoning_content,
+                                }) = messages.last_mut()
+                                    && !tool_calls.is_empty()
+                                {
+                                    content.get_or_insert_default().push_str(&text);
+                                    if let Some(reasoning) = current_reasoning.take() {
+                                        reasoning_content
+                                            .get_or_insert_default()
+                                            .push_str(&reasoning);
+                                    }
+                                } else {
+                                    messages.push(deepseek::RequestMessage::Assistant {
+                                        content: Some(text),
+                                        tool_calls: Vec::new(),
+                                        reasoning_content: current_reasoning.take(),
+                                    });
+                                }
                             }
                             Role::System => {
                                 messages.push(deepseek::RequestMessage::System { content: text });
@@ -755,6 +770,60 @@ mod tests {
             )?;
             assert_eq!(serde_json::to_value(request)?["max_tokens"], expected);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn text_after_a_tool_call_stays_in_its_message() -> Result<()> {
+        let message = |role, content| LanguageModelRequestMessage {
+            role,
+            content,
+            cache: false,
+            reasoning_details: None,
+        };
+        let thinking = |text: &str| MessageContent::Thinking {
+            text: text.to_string(),
+            signature: None,
+        };
+        let tool_use = LanguageModelToolUse {
+            id: "call".into(),
+            name: "tool".into(),
+            raw_input: "{}".to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(json!({})),
+            is_input_complete: true,
+            thought_signature: None,
+        };
+        let tool_result = language_model::LanguageModelToolResult {
+            tool_use_id: "call".into(),
+            tool_name: "tool".into(),
+            is_error: false,
+            content: vec![LanguageModelToolResultContent::Text("ok".into())],
+            output: None,
+        };
+        let assistant_content = vec![
+            thinking("first"),
+            MessageContent::ToolUse(tool_use),
+            thinking(" second"),
+            MessageContent::Text("after the call".to_string()),
+        ];
+        let request = into_deepseek(
+            LanguageModelRequest {
+                messages: vec![
+                    message(Role::Assistant, assistant_content),
+                    message(Role::User, vec![MessageContent::ToolResult(tool_result)]),
+                ],
+                ..Default::default()
+            },
+            &deepseek::Model::V4_1Flash,
+            Some(1024),
+        )?;
+
+        let messages = serde_json::to_value(&request.messages)?;
+        assert_eq!(messages.as_array().map(Vec::len), Some(2));
+        assert_eq!(messages[0]["content"], "after the call");
+        assert_eq!(messages[0]["reasoning_content"], "first second");
+        assert_eq!(messages[0]["tool_calls"][0]["id"], "call");
+        assert_eq!(messages[1]["role"], "tool");
         Ok(())
     }
 }
