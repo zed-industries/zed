@@ -26,7 +26,10 @@ use crate::MermaidTheme;
 pub(super) fn postprocess(svg: &str, theme: &MermaidTheme) -> Result<String> {
     // merman 0.6 already applies the generic resvg-safe cleanup before this point.
     // The remaining passes are Zed-specific theme and accent adjustments.
-    let svg_id = extract_svg_id(svg);
+    let svg_id = extract_svg_attribute(svg, "id");
+    let is_flowchart = extract_svg_attribute(svg, "class")
+        .split_whitespace()
+        .any(|class| class == "flowchart");
 
     let mut reader = Reader::from_str(svg);
     reader.config_mut().check_end_names = false;
@@ -39,7 +42,7 @@ pub(super) fn postprocess(svg: &str, theme: &MermaidTheme) -> Result<String> {
     let events = element_fixup::process(events, theme);
 
     let events = accent_colors::process(events, theme);
-    let events = inject_css::process(events, theme, &svg_id);
+    let events = inject_css::process(events, theme, &svg_id, is_flowchart);
 
     let mut writer = quick_xml::Writer::new(Vec::with_capacity(svg.len()));
     for event in events {
@@ -48,7 +51,7 @@ pub(super) fn postprocess(svg: &str, theme: &MermaidTheme) -> Result<String> {
     String::from_utf8(writer.into_inner()).context("SVG output is not valid UTF-8")
 }
 
-fn extract_svg_id(svg: &str) -> String {
+fn extract_svg_attribute(svg: &str, name: &str) -> String {
     let mut reader = Reader::from_str(svg);
     reader.config_mut().check_end_names = false;
     for event in ReaderIter::new(reader) {
@@ -57,7 +60,7 @@ fn extract_svg_id(svg: &str) -> String {
         };
         if e.name().as_ref() == b"svg" {
             return e
-                .try_get_attribute("id")
+                .try_get_attribute(name)
                 .ok()
                 .flatten()
                 .and_then(|a| a.normalized_value(XmlVersion::Implicit1_0).ok())
