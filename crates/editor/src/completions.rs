@@ -126,6 +126,8 @@ impl Editor {
                     cx,
                 );
             }
+            // IBus and other IMEs can send empty text without the user typing.
+            None if text.is_empty() => {}
             _ => self.open_or_update_completions_menu(
                 None,
                 Some(text.to_owned()).filter(|x| !x.is_empty()),
