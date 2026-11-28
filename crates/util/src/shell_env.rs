@@ -104,13 +104,7 @@ async fn capture_unix(
         }
     }
 
-    match shell_kind {
-        // Nushell does not allow non-interactive login shells.
-        // Instead of doing "-l -i -c '<command>'"
-        // use "-l -e '<command>; exit'" instead
-        ShellKind::Nushell => command.arg("-e"),
-        _ => command.args(["-i", "-c"]),
-    };
+    command.args(command_flags(shell_kind));
 
     // Prefix with "./" if the path starts with "-" to prevent cd from interpreting it as a flag
     let dir_str = directory.to_string_lossy();
@@ -129,10 +123,6 @@ async fn capture_unix(
         command_string.push(prefix);
     }
     command_string.push_str(&format!("{} --printenv {}", quoted_zed_path, redir));
-
-    if let ShellKind::Nushell = shell_kind {
-        command_string.push_str("; exit");
-    }
 
     command.arg(&command_string);
 
@@ -160,6 +150,16 @@ async fn capture_unix(
             )
         },
     )
+}
+
+#[cfg(unix)]
+fn command_flags(shell_kind: ShellKind) -> &'static [&'static str] {
+    match shell_kind {
+        // Nushell crashes on `-l -i -c` without a terminal, and `-e` would start an
+        // interactive REPL. `-l -c` already loads the user's config non-interactively.
+        ShellKind::Nushell => &["-c"],
+        _ => &["-i", "-c"],
+    }
 }
 
 #[cfg(unix)]
@@ -352,6 +352,42 @@ mod tests {
             }
             assert_eq!((descriptor, redirection), (0, String::from("> /dev/fd/0")));
         }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nushell_uses_non_interactive_command_flags() {
+        assert_eq!(command_flags(ShellKind::Nushell), ["-c"]);
+        assert_eq!(command_flags(ShellKind::Posix), ["-i", "-c"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn capture_nushell_environment_without_interactive_startup_output() -> Result<()> {
+        let Ok(nu_path) = which::which("nu") else {
+            return Ok(());
+        };
+        let directory = tempfile::tempdir()?;
+        let config_dir = directory.path().join("nushell");
+        std::fs::create_dir_all(&config_dir)?;
+        std::fs::write(
+            config_dir.join("config.nu"),
+            "if $nu.is-interactive { print \"banner\" }\n",
+        )?;
+        std::fs::write(config_dir.join("env.nu"), "")?;
+
+        let (descriptor, redirection) = capture_output_redirection(ShellKind::Nushell);
+        let mut command = crate::command::new_std_command(nu_path);
+        command
+            .arg("-l")
+            .args(command_flags(ShellKind::Nushell))
+            .arg(format!("print $nu.is-interactive{redirection}"))
+            .env("HOME", directory.path())
+            .env("XDG_CONFIG_HOME", directory.path());
+        let (output, process_output) = smol::block_on(spawn_and_read_fd(command, descriptor))?;
+        assert!(process_output.status.success(), "{process_output:?}");
+        assert_eq!(String::from_utf8_lossy(&output).trim(), "false");
         Ok(())
     }
 
