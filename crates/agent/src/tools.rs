@@ -39,6 +39,8 @@ use serde::{
     Deserialize, Deserializer,
     de::{DeserializeOwned, Error as _},
 };
+use agent_settings::ToolPermissions;
+use settings::ToolPermissionMode;
 
 /// Deserialize a value that may have been provided as a JSON-encoded string
 /// instead of the structured value. Some models occasionally stringify nested
@@ -242,6 +244,26 @@ pub fn tool_feature_flag_enabled(tool_name: &str, cx: &App) -> bool {
     }
 }
 
+/// Some built-in tools have been denied by the user in the configuration
+/// so return that status. The effective default is allow, so explicitly
+/// verify that the rules are defined AND that the specific tool is set to:
+/// `Deny` and not `always_allow`/`always_confirm`.
+pub fn tool_is_fully_denied(tool_name: &str, tool_permissions: &ToolPermissions) -> bool {
+    let permissions = &tool_permissions;
+    let rules = permissions.tools.get(tool_name);
+
+    if rules.is_some_and(|rules| {
+        !rules.always_allow.is_empty() || !rules.always_confirm.is_empty()
+    }) {
+        return false;
+    }
+
+    rules
+        .and_then(|rules| rules.default)
+        .unwrap_or(permissions.default)
+        == ToolPermissionMode::Deny
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,5 +310,89 @@ mod tests {
             );
         }
         assert!(tool_allowed_in_restricted_mode("some_mcp_tool"));
+    }
+
+    fn tool_rules(
+        default: Option<ToolPermissionMode>,
+        always_allow: bool,
+        always_confirm: bool,
+    ) -> agent_settings::ToolRules {
+        let mut rules = agent_settings::ToolRules { default, ..Default::default() };
+        if always_allow {
+            rules.always_allow.push(
+                agent_settings::CompiledRegex::new(".*", false)
+                    .expect("test regex should compile"),
+            );
+        }
+        if always_confirm {
+            rules.always_confirm.push(
+                agent_settings::CompiledRegex::new(".*", false)
+                    .expect("test regex should compile"),
+            );
+        }
+        rules
+    }
+
+    #[test]
+    fn tool_is_fully_denied_depends_on_effective_default_mode() {
+        let mut permissions = ToolPermissions::default();
+
+        // Without a per-tool rule, the global default decides.
+        for (global, expected) in [
+            (ToolPermissionMode::Allow, false),
+            (ToolPermissionMode::Confirm, false),
+            (ToolPermissionMode::Deny, true),
+        ] {
+            permissions.default = global;
+            assert_eq!(
+                tool_is_fully_denied("echo", &permissions),
+                expected,
+                "global default {global:?}"
+            );
+        }
+
+        // A per-tool default overrides the global default.
+        for (tool_default, expected) in [
+            (ToolPermissionMode::Allow, false),
+            (ToolPermissionMode::Confirm, false),
+            (ToolPermissionMode::Deny, true),
+        ] {
+            permissions.tools.insert("echo".into(), tool_rules(Some(tool_default), false, false));
+            assert_eq!(
+                tool_is_fully_denied("echo", &permissions),
+                expected,
+                "per-tool default {tool_default:?}"
+            );
+        }
+
+        // A per-tool rule without a default still inherits the global one.
+        permissions.tools.insert("echo".into(), tool_rules(None, false, false));
+        permissions.default = ToolPermissionMode::Deny;
+        assert!(tool_is_fully_denied("echo", &permissions));
+        permissions.default = ToolPermissionMode::Confirm;
+        assert!(!tool_is_fully_denied("echo", &permissions));
+
+        // always_allow or always_confirm patterns keep the tool available even
+        // when its effective default is deny.
+        permissions.default = ToolPermissionMode::Deny;
+        for (always_allow, always_confirm) in [(true, false), (false, true)] {
+            permissions.tools.insert(
+                "echo".into(),
+                tool_rules(Some(ToolPermissionMode::Deny), always_allow, always_confirm),
+            );
+            assert!(
+                !tool_is_fully_denied("echo", &permissions),
+                "always_allow/always_confirm patterns should keep the tool available"
+            );
+        }
+
+        // An always_deny pattern does not prevent the tool being fully denied.
+        let mut rules = tool_rules(Some(ToolPermissionMode::Deny), false, false);
+        rules.always_deny.push(
+            agent_settings::CompiledRegex::new(".*", false)
+                .expect("test regex should compile"),
+        );
+        permissions.tools.insert("echo".into(), rules);
+        assert!(tool_is_fully_denied("echo", &permissions));
     }
 }
