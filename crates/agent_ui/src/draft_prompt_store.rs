@@ -4,6 +4,10 @@
 //! but their unsent prompt text is kept separately here so we don't have to
 //! plumb draft-prompt storage through the native agent's thread database.
 //!
+//! Messages queued while the agent is generating are also unsent user input,
+//! so they live here too, under their own namespace. Unlike draft prompts they
+//! outlive draft promotion, since queueing requires a turn to already be running.
+//!
 //! The display-label helpers ([`display_label_for_draft`] and friends) live
 //! alongside the storage so the sidebar's preview rendering can't drift from
 //! the format we persist.
@@ -23,6 +27,7 @@ use crate::AgentPanel;
 use crate::thread_metadata_store::ThreadId;
 
 const NAMESPACE: &str = "agent_draft_prompts";
+const QUEUED_MESSAGES_NAMESPACE: &str = "agent_queued_messages";
 
 /// Maximum length (in characters) of a draft label rendered in the sidebar.
 const MAX_LABEL_CHARS: usize = 250;
@@ -55,6 +60,43 @@ pub fn delete(thread_id: ThreadId, cx: &App) -> Task<anyhow::Result<()>> {
     let kvp = KeyValueStore::global(cx);
     let key = thread_id.to_key_string();
     cx.background_spawn(async move { kvp.scoped(NAMESPACE).delete(key).await })
+}
+
+pub fn read_queued_messages(
+    thread_id: ThreadId,
+    cx: &App,
+) -> Option<Vec<Vec<acp_v2::ContentBlock>>> {
+    let kvp = KeyValueStore::global(cx);
+    let raw = kvp
+        .scoped(QUEUED_MESSAGES_NAMESPACE)
+        .read(&thread_id.to_key_string())
+        .log_err()
+        .flatten()?;
+    serde_json::from_str(&raw).log_err()
+}
+
+pub fn write_queued_messages(
+    thread_id: ThreadId,
+    messages: &[Vec<acp_v2::ContentBlock>],
+    cx: &App,
+) -> Task<anyhow::Result<()>> {
+    let kvp = KeyValueStore::global(cx);
+    let key = thread_id.to_key_string();
+    let payload = match serde_json::to_string(messages).context("serializing queued messages") {
+        Ok(payload) => payload,
+        Err(err) => return Task::ready(Err(err)),
+    };
+    cx.background_spawn(async move {
+        kvp.scoped(QUEUED_MESSAGES_NAMESPACE)
+            .write(key, payload)
+            .await
+    })
+}
+
+pub fn delete_queued_messages(thread_id: ThreadId, cx: &App) -> Task<anyhow::Result<()>> {
+    let kvp = KeyValueStore::global(cx);
+    let key = thread_id.to_key_string();
+    cx.background_spawn(async move { kvp.scoped(QUEUED_MESSAGES_NAMESPACE).delete(key).await })
 }
 
 pub fn draft_has_user_content<'a>(
