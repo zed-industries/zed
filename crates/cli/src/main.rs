@@ -330,6 +330,57 @@ mod tests {
         assert_path_eq!(result, expected);
     }
 
+    // `std::fs::canonicalize` resolves `subst` drives to their target directory, the same
+    // way it resolves mapped network drives to UNC paths, so a `subst` drive can stand in
+    // for a network share.
+    #[cfg(windows)]
+    #[test]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "blocking on `subst` is fine in a test"
+    )]
+    fn test_parse_path_preserves_drive_letter() {
+        use util::ResultExt as _;
+
+        struct SubstDrive(String);
+
+        impl Drop for SubstDrive {
+            fn drop(&mut self) {
+                std::process::Command::new("subst")
+                    .arg(&self.0)
+                    .arg("/d")
+                    .status()
+                    .log_err();
+            }
+        }
+
+        let temp_tree = TempTree::new(json!({
+            "project": {
+                "file.txt": "",
+            },
+        }));
+
+        let letter = ('D'..='Z')
+            .rev()
+            .find(|letter| !Path::new(&format!("{letter}:\\")).exists())
+            .expect("no free drive letter");
+        let drive = SubstDrive(format!("{letter}:"));
+        let status = std::process::Command::new("subst")
+            .arg(&drive.0)
+            .arg(temp_tree.path())
+            .status()
+            .unwrap();
+        assert!(status.success(), "failed to create subst drive {}", drive.0);
+
+        let project_path = format!("{}\\project", drive.0);
+        let result = parse_path_with_position(&project_path).unwrap();
+        assert_path_eq!(result, project_path);
+
+        let file_path = format!("{}\\project\\file.txt:3", drive.0);
+        let result = parse_path_with_position(&file_path).unwrap();
+        assert_path_eq!(result, file_path);
+    }
+
     // NOTE:
     // While POSIX symbolic links are somewhat supported on Windows, they are an opt in by the user, and thus
     // we assume that they are not supported out of the box.

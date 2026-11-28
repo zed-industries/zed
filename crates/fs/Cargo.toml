@@ -51,7 +51,6 @@ rustix.workspace = true
 [target.'cfg(target_os = "windows")'.dependencies]
 is_executable.workspace = true
 windows.workspace = true
-dunce.workspace = true
 async-std.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
