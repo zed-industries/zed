@@ -1,6 +1,7 @@
 #![allow(clippy::disallowed_methods, reason = "tooling is exempt")]
 
 pub mod crate_graph;
+mod manifest;
 pub mod publish_plan;
 pub mod registry;
 mod release;
@@ -19,6 +20,15 @@ use crate::tasks::workflows::GitSha;
 pub enum GpuiCommand {
     /// Print the publish plan in dependency-first order
     Plan(GpuiArgs),
+    /// Apply the manifest edits for one repository in a release plan
+    Prepare {
+        #[arg(long)]
+        plan: std::path::PathBuf,
+        #[arg(long)]
+        repository: String,
+        #[arg(long)]
+        checkout: std::path::PathBuf,
+    },
     /// Show the dependency paths that put a crate in the publish list
     Why {
         /// Original Cargo package name
@@ -111,6 +121,13 @@ pub fn run_gpui(command: GpuiCommand) -> Result<()> {
                 let release = release::build(&graph, &plan, &checked, &args.sha, version)?;
                 release.write_workflow_output(output)?;
             }
+        }
+        GpuiCommand::Prepare {
+            plan,
+            repository,
+            checkout,
+        } => {
+            manifest::prepare(&plan, &repository, &checkout)?;
         }
         GpuiCommand::Why { crate_name } => {
             let graph = crate_graph::load_workspace_graph()?;
