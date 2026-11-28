@@ -499,9 +499,12 @@ By default, OpenAI-compatible models inherit these capabilities:
 - `images`: `false`
 - `parallel_tool_calls`: `false`
 - `prompt_cache_key`: `false`
+- `prompt_caching`: `false`
 - `chat_completions`: `true`
 - `interleaved_reasoning`: `false`
 - `max_tokens_parameter`: `false`
+
+Enable `capabilities.prompt_caching` only for Chat Completions endpoints that accept Anthropic-style `cache_control` content blocks (for example, compatible gateways serving Claude). Zed sends ephemeral cache breakpoints on the system prompt and the last cacheable message. This is a provider extension, not part of the standard OpenAI API, and is separate from `prompt_cache_key`. It has no effect on Responses API requests.
 
 If a model only works with the Responses API, set `capabilities.chat_completions` to `false`. Zed will use the Responses endpoint for that model.
 

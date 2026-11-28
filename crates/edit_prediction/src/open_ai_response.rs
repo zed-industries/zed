@@ -15,7 +15,7 @@ pub fn text_from_response(mut res: open_ai::Response) -> Option<String> {
             }
 
             match content.remove(0) {
-                open_ai::MessagePart::Text { text } => text,
+                open_ai::MessagePart::Text { text, .. } => text,
                 open_ai::MessagePart::Image { .. } => {
                     log::error!("Expected text, got an image");
                     return None;

@@ -289,6 +289,7 @@ impl LanguageModelClient for XAiLanguageModelProvider {
             crate::provider::open_ai::ChatCompletionMaxTokensParameter::MaxCompletionTokens,
             reasoning_effort,
             false,
+            false,
         ) {
             Ok(request) => request,
             Err(error) => return async move { Err(error.into()) }.boxed(),
