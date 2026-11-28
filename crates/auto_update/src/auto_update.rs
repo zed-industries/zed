@@ -952,6 +952,7 @@ impl AutoUpdater {
             "linux" => {
                 install_release_linux(&installer_dir, &target_path, channel, running_app_path).await
             }
+            #[cfg(target_os = "windows")]
             "windows" => install_release_windows(&target_path).await,
             unsupported_os => anyhow::bail!("not supported: {unsupported_os}"),
         }
@@ -1310,17 +1311,25 @@ async fn cleanup_windows() -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "windows")]
+const WINDOWS_INSTALLER_ARGUMENTS: &str = "/verysilent /update=true /MERGETASKS=!desktopicon";
+
+#[cfg(target_os = "windows")]
 async fn install_release_windows(downloaded_installer: &Path) -> Result<Option<PathBuf>> {
-    let mut cmd = new_command(downloaded_installer);
-    cmd.arg("/verysilent")
-        .arg("/update=true")
-        .arg("/MERGETASKS=!desktopicon");
-    let output = cmd.output().await?;
-    anyhow::ensure!(
-        output.status.success(),
-        "failed to start installer: {:?}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    // Antivirus can hold the launch of a freshly downloaded installer for many
+    // seconds. A regular spawn would keep every other process spawn in Zed
+    // waiting on std's process creation lock for that long.
+    let exit_code = smol::unblock({
+        let downloaded_installer = downloaded_installer.to_path_buf();
+        move || {
+            util::command::run_without_inheriting_handles(
+                &downloaded_installer,
+                WINDOWS_INSTALLER_ARGUMENTS,
+            )
+        }
+    })
+    .await?;
+    anyhow::ensure!(exit_code == 0, "installer exited with code {exit_code}");
     // We return the path to the update helper program, because it will
     // perform the final steps of the update process, copying the new binary,
     // deleting the old one, and launching the new binary.
