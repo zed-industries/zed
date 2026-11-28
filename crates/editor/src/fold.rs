@@ -53,7 +53,9 @@ impl EditorSnapshot {
             }
         }
 
-        is_foldable |= !self.use_lsp_folding_ranges && self.starts_indent(buffer_row);
+        is_foldable |= !self.use_lsp_folding_ranges
+            && (self.starts_indent(buffer_row)
+                || self.markdown_section_fold_end(buffer_row).is_some());
 
         if folded || (is_foldable && (row_contains_cursor || self.gutter_hovered)) {
             Some(
