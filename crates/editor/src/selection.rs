@@ -1918,7 +1918,9 @@ impl Editor {
         }
 
         let ranges = match columnar_state {
-            ColumnarSelectionState::FromMouse { .. } => {
+            ColumnarSelectionState::FromMouse { .. }
+                if tail.column() < display_map.line_len(tail.row()) =>
+            {
                 let mut non_empty_ranges = selection_ranges
                     .iter()
                     .filter(|selection_range| selection_range.start != selection_range.end)
