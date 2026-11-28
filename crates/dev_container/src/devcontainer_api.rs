@@ -86,6 +86,10 @@ pub enum DevContainerError {
     /// expects those labels to be unique per project, so Zed can't choose
     /// which one to connect to. The user must remove the duplicate(s).
     MultipleMatchingContainers(Vec<String>),
+    RemoteUserIdsUnresolved {
+        image: String,
+        user: String,
+    },
 }
 
 impl Display for DevContainerError {
@@ -124,6 +128,10 @@ impl Display for DevContainerError {
                      Zed can't decide which to connect to. Stop and remove the stale one(s) with \
                      `docker stop <id>` and `docker rm <id>`, then try again.",
                     ids.join(", ")
+                ),
+                DevContainerError::RemoteUserIdsUnresolved { image, user } => format!(
+                    "Could not determine the UID/GID of user '{user}' in image '{image}'. \
+                     Add a `--userns` option to `runArgs` to configure the user mapping manually."
                 ),
             }
         )

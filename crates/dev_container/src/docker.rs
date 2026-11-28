@@ -271,6 +271,24 @@ impl Docker {
         command
     }
 
+    fn create_resolve_user_ids_command(&self, image: &str, user: &str) -> Command {
+        let mut command = Command::new(&self.docker_cli);
+        command.args(&[
+            "run",
+            "--rm",
+            "--user",
+            user,
+            "--workdir",
+            "/",
+            "--entrypoint",
+            "/bin/sh",
+            image,
+            "-c",
+            PRINT_USER_IDS_SCRIPT,
+        ]);
+        command
+    }
+
     fn create_docker_compose_config_command(&self, config_files: &Vec<PathBuf>) -> Command {
         let mut command = Command::new(&self.docker_cli);
         command.arg("compose");
@@ -448,6 +466,31 @@ impl DockerClient for Docker {
         })
     }
 
+    async fn resolve_user_ids(
+        &self,
+        image: &str,
+        user: &str,
+    ) -> Result<UserIds, DevContainerError> {
+        // Skip container spawn for root, which should always be id 0
+        if user == "root" || user == "root:root" {
+            return Ok(UserIds { uid: 0, gid: 0 });
+        }
+
+        // Skip potentially expensive container spawn if `user` is already in `uid:gid` form
+        if let Some((uid, gid)) = user.split_once(':')
+            && let Ok(uid) = if uid == "root" { Ok(0) } else { uid.parse() }
+            && let Ok(gid) = if gid == "root" { Ok(0) } else { gid.parse() }
+        {
+            return Ok(UserIds { uid, gid });
+        }
+
+        let command = self.create_resolve_user_ids_command(image, user);
+        evaluate_json_command(command).await?.ok_or_else(|| {
+            log::error!("Resolving IDs for user {user} in image {image} produced no output");
+            DevContainerError::CommandFailed(self.docker_cli.clone())
+        })
+    }
+
     fn docker_cli(&self) -> String {
         self.docker_cli.clone()
     }
@@ -484,6 +527,15 @@ fn parse_find_process_output(raw: &str) -> Result<Option<DockerPs>, DevContainer
     }
 }
 
+const PRINT_USER_IDS_SCRIPT: &str =
+    r#"uid=$(id -u) && gid=$(id -g) && echo "{\"uid\": $uid, \"gid\": $gid}""#;
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+pub(crate) struct UserIds {
+    pub(crate) uid: u32,
+    pub(crate) gid: u32,
+}
+
 #[async_trait]
 pub(crate) trait DockerClient {
     async fn inspect(&self, id: &String) -> Result<DockerInspect, DevContainerError>;
@@ -510,6 +562,9 @@ pub(crate) trait DockerClient {
         &self,
         filters: Vec<String>,
     ) -> Result<Option<DockerPs>, DevContainerError>;
+    /// Look up the numeric UID and GID when running as `user` inside of an `image`.
+    async fn resolve_user_ids(&self, image: &str, user: &str)
+    -> Result<UserIds, DevContainerError>;
     fn supports_compose_buildkit(&self) -> bool;
     /// This operates as an escape hatch for more custom uses of the docker API.
     /// See DevContainerManifest::create_docker_build as an example
@@ -766,7 +821,7 @@ mod test {
         devcontainer_json::MountDefinition,
         docker::{
             Docker, DockerClient, DockerComposeConfig, DockerComposeService,
-            DockerComposeServicePort, DockerComposeVolume, DockerInspect, DockerPs,
+            DockerComposeServicePort, DockerComposeVolume, DockerInspect, DockerPs, UserIds,
             parse_find_process_output,
         },
     };
@@ -890,6 +945,69 @@ mod test {
                 OsStr::new(given_id)
             ]
         )
+    }
+
+    #[test]
+    fn should_create_resolve_user_ids_command() {
+        let docker = Docker {
+            docker_cli: "podman".to_string(),
+            has_buildx: false,
+        };
+
+        let command = docker.create_resolve_user_ids_command("image", "user:group");
+
+        assert_eq!(
+            command.get_args().collect::<Vec<&OsStr>>(),
+            vec![
+                OsStr::new("run"),
+                OsStr::new("--rm"),
+                OsStr::new("--user"),
+                OsStr::new("user:group"),
+                OsStr::new("--workdir"),
+                OsStr::new("/"),
+                OsStr::new("--entrypoint"),
+                OsStr::new("/bin/sh"),
+                OsStr::new("image"),
+                OsStr::new("-c"),
+                OsStr::new(super::PRINT_USER_IDS_SCRIPT),
+            ]
+        )
+    }
+
+    #[test]
+    fn resolve_user_ids_short_circuits() {
+        let docker = Docker {
+            docker_cli: "false".to_string(),
+            has_buildx: false,
+        };
+        for (user, expected) in [
+            ("root", UserIds { uid: 0, gid: 0 }),
+            ("root:root", UserIds { uid: 0, gid: 0 }),
+            ("0:0", UserIds { uid: 0, gid: 0 }),
+            ("root:1000", UserIds { uid: 0, gid: 1000 }),
+            ("1000:root", UserIds { uid: 1000, gid: 0 }),
+            (
+                "1000:1000",
+                UserIds {
+                    uid: 1000,
+                    gid: 1000,
+                },
+            ),
+            ("12:34", UserIds { uid: 12, gid: 34 }),
+        ] {
+            assert_eq!(
+                gpui::block_on(docker.resolve_user_ids("image", user))
+                    .unwrap_or_else(|err| panic!("{user}: {err:?}")),
+                expected,
+                "{user}"
+            );
+        }
+        for user in ["user", "1000", "user:1000", "1000:users"] {
+            assert!(
+                gpui::block_on(docker.resolve_user_ids("image", user)).is_err(),
+                "{user} should require container spawn"
+            );
+        }
     }
 
     #[cfg(not(target_os = "windows"))]
