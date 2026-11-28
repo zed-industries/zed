@@ -20,6 +20,14 @@ pub fn is_gpui_root(package: PackageMetadata<'_>) -> bool {
 
 /// Returns all GPUI crates in the current workspace
 pub fn gpui_crates(graph: &PackageGraph) -> Result<PackageSet<'_>> {
+    Ok(
+        release_dependencies(graph)?.filter(DependencyDirection::Reverse, |package| {
+            package.in_workspace() || is_zed_fork(package.source())
+        }),
+    )
+}
+
+pub(super) fn release_dependencies(graph: &PackageGraph) -> Result<PackageSet<'_>> {
     let roots = graph
         .workspace()
         .iter_by_name()
@@ -28,17 +36,10 @@ pub fn gpui_crates(graph: &PackageGraph) -> Result<PackageSet<'_>> {
         .collect::<Vec<_>>();
     ensure!(!roots.is_empty(), "no GPUI crates found in the workspace");
 
-    let dependencies = graph
+    Ok(graph
         .query_forward(roots)?
         // we do not need dev dependencies for releases
-        .resolve_with_fn(|_, link| !link.dev_only());
-
-    // Keep all workspace crates and Zed forks
-    Ok(
-        dependencies.filter(DependencyDirection::Reverse, |package| {
-            package.in_workspace() || is_zed_fork(package.source())
-        }),
-    )
+        .resolve_with_fn(|_, link| !link.dev_only()))
 }
 
 pub fn explain_crate<'graph>(
@@ -64,7 +65,7 @@ pub fn explain_crate<'graph>(
     Ok(dependents.intersection(&dependencies))
 }
 
-fn is_zed_fork(source: PackageSource<'_>) -> bool {
+pub(super) fn is_zed_fork(source: PackageSource<'_>) -> bool {
     let Some(ExternalSource::Git { repository, .. }) = source.parse_external() else {
         return false;
     };

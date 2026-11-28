@@ -9,7 +9,7 @@ use crates_io_client::{
     Owner, OwnerLogin, TeamId,
 };
 
-use super::publish_plan::PublishPlanEntry;
+use super::{ReleaseBump, publish_plan::PublishPlanEntry};
 
 const TEAM_ID: TeamId = TeamId(12586);
 const WORKFLOW: &str = "publish_gpui.yml";
@@ -53,6 +53,26 @@ pub enum PublishState {
 pub struct CheckedCrate {
     pub name: CrateName,
     pub state: PublishState,
+}
+
+pub(super) async fn next_version(
+    client: &dyn CratesIoClient,
+    bump: ReleaseBump,
+) -> Result<semver::Version> {
+    let current = client
+        .get_crate(&CrateName::new("gpui"))
+        .await
+        .context("failed to fetch the current GPUI version")?
+        .krate
+        .default_version
+        .context("gpui has no default version on crates.io")?;
+    let increment = |component: u64| component.checked_add(1).context("GPUI version overflow");
+    let (major, minor, patch) = match bump {
+        ReleaseBump::Major => (increment(current.major)?, 0, 0),
+        ReleaseBump::Minor => (current.major, increment(current.minor)?, 0),
+        ReleaseBump::Patch => (current.major, current.minor, increment(current.patch)?),
+    };
+    Ok(semver::Version::new(major, minor, patch))
 }
 
 fn expected_workflow(name: &CrateName) -> NewGitHubConfig {

@@ -19,7 +19,11 @@ impl Rule for ApacheLicensed {
         "workspace crates are Apache-2.0 licensed"
     }
 
-    fn check(&self, plan: &[PublishPlanEntry<'_>]) -> Vec<Violation> {
+    fn check(
+        &self,
+        plan: &[PublishPlanEntry<'_>],
+        _: &[guppy::graph::PackageMetadata<'_>],
+    ) -> Vec<Violation> {
         plan.iter()
             .filter(|entry| entry.package.in_workspace())
             .filter_map(|entry| {
