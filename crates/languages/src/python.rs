@@ -2820,18 +2820,26 @@ impl LspAdapter for PyreflyLspAdapter {
             .unwrap_or_default();
 
         if let Some(toolchain) = toolchain
-            && let Ok(env) = serde_json::from_value::<PythonToolchainData>(toolchain.as_json)
+            && serde_json::from_value::<PythonToolchainData>(toolchain.as_json.clone()).is_ok()
         {
             if !user_settings.is_object() {
                 user_settings = Value::Object(serde_json::Map::default());
             }
-            let object = user_settings.as_object_mut().unwrap();
+            if let Some(object) = user_settings.as_object_mut() {
+                let python = object
+                    .entry("python")
+                    .and_modify(|value| {
+                        if !value.is_object() {
+                            *value = Value::Object(serde_json::Map::default());
+                        }
+                    })
+                    .or_insert_with(|| Value::Object(serde_json::Map::default()));
 
-            if let Some(interpreter_path) = &env.environment.executable {
-                object.insert(
-                    "pythonPath".to_owned(),
-                    Value::String(interpreter_path.to_string_lossy().into_owned()),
-                );
+                if let Some(python) = python.as_object_mut() {
+                    python
+                        .entry("pythonPath")
+                        .or_insert_with(|| Value::String(toolchain.path.to_string()));
+                }
             }
         }
 
