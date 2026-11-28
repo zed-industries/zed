@@ -84,6 +84,7 @@ pub use completions::CompletionProvider;
 #[cfg(test)]
 pub(crate) use completions::snippet_candidate_suffixes;
 pub(crate) use completions::split_words;
+pub use cursor_animation::{CursorAnimationState, CursorViewport, LogicalCursorPosition};
 use diagnostics::{ActiveDiagnostic, GlobalDiagnosticRenderer, InlineDiagnostic};
 pub use diagnostics::{DiagnosticRenderer, set_diagnostic_renderer};
 pub use display_map::{

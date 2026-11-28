@@ -1,5 +1,8 @@
 use collections::HashMap;
-use editor::{CursorLayout, EditorSettings, HighlightedRange, HighlightedRangeLine};
+use editor::{
+    CursorLayout, CursorViewport, EditorSettings, HighlightedRange, HighlightedRangeLine,
+    LogicalCursorPosition,
+};
 use gpui::{
     AbsoluteLength, AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Element,
     ElementId, Entity, FocusHandle, Font, FontFeatures, FontStyle, FontWeight, GlobalElementId,
@@ -39,10 +42,12 @@ pub struct LayoutState {
     rects: Vec<LayoutRect>,
     relative_highlighted_ranges: Vec<(Range, Hsla)>,
     cursor: Option<CursorLayout>,
+    cursor_logical_position: LogicalCursorPosition,
     ime_cursor_bounds: Option<Bounds<Pixels>>,
     background_color: Hsla,
     dimensions: TerminalBounds,
     display_offset: usize,
+    history_size: usize,
     hyperlink_tooltip: Option<AnyElement>,
     block_below_cursor_element: Option<AnyElement>,
     base_text_style: TextStyle,
@@ -1385,12 +1390,15 @@ impl Element for TerminalElement {
                 let Content {
                     cells,
                     display_offset,
+                    total_lines,
+                    screen_lines,
                     cursor_char,
                     selection,
                     cursor,
                     ..
                 } = &self.terminal.read(cx).last_content;
                 let display_offset = *display_offset;
+                let history_size = total_lines.saturating_sub(*screen_lines);
 
                 // searches, highlights to a single range representations
                 let mut relative_highlighted_ranges = Vec::new();
@@ -1476,6 +1484,16 @@ impl Element for TerminalElement {
                 // Layout cursor. Rectangle is used for IME, so we should lay it out even
                 // if we don't end up showing it.
                 let cursor_point = DisplayCursor::from(cursor.point, display_offset);
+                // Rows are counted from the top of the history rather than from the top of the
+                // screen, so a cursor that only moves on screen because the history scrolled or
+                // grew is not treated as having moved; the animation viewport accounts for the
+                // scroll instead. Scrollback lines have negative grid lines, which the history
+                // size shifts back to non-negative rows.
+                let cursor_logical_position = LogicalCursorPosition {
+                    row: u32::try_from(i64::from(cursor.point.line) + history_size as i64)
+                        .unwrap_or_default(),
+                    column: u32::try_from(cursor.point.column).unwrap_or_default(),
+                };
                 let cursor_text = {
                     let str_trxt = cursor_char.to_string();
                     let len = str_trxt.len();
@@ -1571,12 +1589,14 @@ impl Element for TerminalElement {
                     batched_text_runs,
                     block_element_rects,
                     cursor,
+                    cursor_logical_position,
                     ime_cursor_bounds,
                     background_color,
                     dimensions,
                     rects,
                     relative_highlighted_ranges,
                     display_offset,
+                    history_size,
                     hyperlink_tooltip,
                     block_below_cursor_element,
                     base_text_style: text_style,
@@ -1635,7 +1655,50 @@ impl Element for TerminalElement {
                 window.set_cursor_style(gpui::CursorStyle::IBeam, &layout.hitbox);
             }
 
-            let original_cursor = layout.cursor.take();
+            let mut original_cursor = layout.cursor.take();
+            let cursor_animation_enabled = self.cursor_visible
+                && marked_text_cloned.is_none()
+                && EditorSettings::get_global(cx).cursor_animation.enabled
+                && !cx.reduce_motion();
+            let cursor_animation_in_flight =
+                self.terminal_view
+                    .update(cx, |terminal_view, _| match original_cursor.as_mut() {
+                        Some(cursor) if cursor_animation_enabled => {
+                            let dimensions = &layout.dimensions;
+                            let viewport = CursorViewport::new(
+                                dimensions.bounds.origin,
+                                dimensions.bounds,
+                                GpuiPoint::default(),
+                                // Rows are counted from the top of the history, so the
+                                // first visible row is the history size minus the display
+                                // offset.
+                                point(
+                                    0.0,
+                                    f64::from(scroll_top)
+                                        + (layout.history_size as f64
+                                            - layout.display_offset as f64)
+                                            * f64::from(dimensions.line_height()),
+                                ),
+                                dimensions.line_height(),
+                                dimensions.cell_width(),
+                            );
+                            cursor.animate(
+                                &mut terminal_view.cursor_animation,
+                                layout.cursor_logical_position,
+                                origin,
+                                viewport,
+                                Instant::now(),
+                                window,
+                            )
+                        }
+                        _ => {
+                            terminal_view.cursor_animation.reset();
+                            false
+                        }
+                    });
+            if cursor_animation_in_flight {
+                window.request_animation_frame();
+            }
             let hyperlink_tooltip = layout.hyperlink_tooltip.take();
             let block_below_cursor_element = layout.block_below_cursor_element.take();
             self.interactivity.paint(

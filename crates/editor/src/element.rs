@@ -17,7 +17,9 @@ use crate::{
     SelectionDragState, SizingBehavior, SoftWrap, ToPoint,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     column_pixels,
-    cursor_animation::{CursorViewport, LogicalCursorPosition, animated_corners_overlap_target},
+    cursor_animation::{
+        CursorAnimationState, CursorViewport, LogicalCursorPosition, animated_corners_cover_target,
+    },
     display_map::{
         Block, BlockContext, BlockStyle, ChunkRendererId, DisplaySnapshot, EditorMargins,
         HighlightKey, HighlightedChunk, ToDisplayPoint,
@@ -11131,6 +11133,31 @@ impl CursorLayout {
         }
     }
 
+    /// Advances `state` toward this cursor's current position and stores the animated corners
+    /// to paint. `origin` must be the same origin later passed to [`Self::paint`].
+    ///
+    /// Returns whether the animation is still in flight, in which case the caller should
+    /// request another animation frame.
+    pub fn animate(
+        &mut self,
+        state: &mut CursorAnimationState,
+        logical_position: LogicalCursorPosition,
+        origin: gpui::Point<Pixels>,
+        viewport: CursorViewport,
+        now: Instant,
+        window: &Window,
+    ) -> bool {
+        if !cursor_shape_supports_cursor_animation(self.shape) {
+            state.reset();
+            self.animated_corners = None;
+            return false;
+        }
+
+        let target_bounds = window.pixel_snap_bounds(self.bounds(origin));
+        self.animated_corners = state.update(logical_position, target_bounds, viewport, now);
+        self.animated_corners.is_some()
+    }
+
     pub fn paint(&mut self, origin: gpui::Point<Pixels>, window: &mut Window, cx: &mut App) {
         let bounds = window.pixel_snap_bounds(self.bounds(origin));
 
@@ -11143,7 +11170,7 @@ impl CursorLayout {
                 }
                 window.paint_path(path, self.color);
 
-                if !animated_corners_overlap_target(bounds, &corners) {
+                if !animated_corners_cover_target(bounds, &corners) {
                     return;
                 }
             }

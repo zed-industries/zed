@@ -5,7 +5,7 @@ mod terminal_path_like_target;
 pub mod terminal_scrollbar;
 
 use editor::{
-    Editor, EditorSettings, actions::SelectAll, blink_manager::BlinkManager,
+    CursorAnimationState, Editor, EditorSettings, actions::SelectAll, blink_manager::BlinkManager,
     ui_scrollbar_settings_from_raw,
 };
 use gpui::{
@@ -132,6 +132,7 @@ pub struct TerminalView {
     has_bell: bool,
     context_menu: Option<(Entity<ContextMenu>, GpuiPoint<Pixels>, Subscription)>,
     cursor_shape: CursorShape,
+    cursor_animation: CursorAnimationState,
     blink_manager: Entity<BlinkManager>,
     mode: TerminalMode,
     /// Corner radii for the terminal's background, for when it's embedded in a
@@ -280,6 +281,7 @@ impl TerminalView {
             focus_handle,
             context_menu: None,
             cursor_shape,
+            cursor_animation: CursorAnimationState::default(),
             blink_manager,
             blinking_terminal_enabled: false,
             hover: None,
@@ -1419,11 +1421,14 @@ impl TerminalView {
             self.blink_manager.update(cx, BlinkManager::enable);
         }
 
+        // Painting resets the animation while unfocused, but a hidden tab is not painted.
+        self.cursor_animation.reset();
         window.invalidate_character_coordinates();
         cx.notify();
     }
 
     fn focus_out(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.cursor_animation.reset();
         self.blink_manager.update(cx, BlinkManager::disable);
         self.terminal.update(cx, |terminal, _| {
             if !self.read_only {
@@ -2628,6 +2633,362 @@ mod tests {
             terminal
                 .update(&mut cx, |terminal, _| terminal.take_input_log())
                 .is_empty()
+        );
+    }
+
+    async fn init_cursor_animation_test(
+        cx: &mut TestAppContext,
+        cursor_animation_enabled: bool,
+    ) -> (Entity<Terminal>, Entity<TerminalView>, VisualTestContext) {
+        let (project, _workspace, window_handle) = init_test_with_window(cx).await;
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .editor
+                        .cursor_animation
+                        .get_or_insert_default()
+                        .enabled = Some(cursor_animation_enabled);
+                });
+            });
+        });
+        let (_pane, terminal, terminal_view) =
+            add_display_only_terminal(&project, window_handle, true, false, cx);
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        draw_terminal(&terminal, &mut cx);
+        (terminal, terminal_view, cx)
+    }
+
+    fn write_and_draw_terminal(
+        terminal: &Entity<Terminal>,
+        output: &[u8],
+        cx: &mut VisualTestContext,
+    ) {
+        cx.update(|_, cx| {
+            terminal.update(cx, |terminal, cx| terminal.write_output(output, cx));
+        });
+        draw_terminal(terminal, cx);
+    }
+
+    fn draw_terminal(terminal: &Entity<Terminal>, cx: &mut VisualTestContext) {
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            terminal.update(cx, |terminal, cx| terminal.sync(window, cx));
+            window.refresh();
+            window.draw(cx).clear(cx);
+        });
+    }
+
+    fn cursor_animation_active(
+        terminal_view: &Entity<TerminalView>,
+        cx: &mut VisualTestContext,
+    ) -> bool {
+        terminal_view.read_with(cx, |terminal_view, _| {
+            terminal_view.cursor_animation.is_active()
+        })
+    }
+
+    fn cursor_line(terminal: &Entity<Terminal>, cx: &mut VisualTestContext) -> i32 {
+        terminal.read_with(cx, |terminal, _| terminal.last_content.cursor.point.line)
+    }
+
+    #[gpui::test]
+    async fn test_cursor_animation_animates_cursor_movement(cx: &mut TestAppContext) {
+        let (terminal, terminal_view, mut cx) = init_cursor_animation_test(cx, true).await;
+        assert!(
+            !cursor_animation_active(&terminal_view, &mut cx),
+            "the first frame should snap the cursor into place"
+        );
+
+        write_and_draw_terminal(&terminal, b"hello", &mut cx);
+        assert!(cursor_animation_active(&terminal_view, &mut cx));
+    }
+
+    #[gpui::test]
+    async fn test_cursor_animation_disabled_by_setting(cx: &mut TestAppContext) {
+        let (terminal, terminal_view, mut cx) = init_cursor_animation_test(cx, false).await;
+
+        write_and_draw_terminal(&terminal, b"hello", &mut cx);
+        assert!(!cursor_animation_active(&terminal_view, &mut cx));
+    }
+
+    #[gpui::test]
+    async fn test_cursor_animation_respects_reduce_motion(cx: &mut TestAppContext) {
+        let (terminal, terminal_view, mut cx) = init_cursor_animation_test(cx, true).await;
+        cx.update(|_, cx| cx.set_reduce_motion(true));
+
+        write_and_draw_terminal(&terminal, b"hello", &mut cx);
+        assert!(!cursor_animation_active(&terminal_view, &mut cx));
+    }
+
+    #[gpui::test]
+    async fn test_cursor_animation_skips_unfocused_terminal(cx: &mut TestAppContext) {
+        let (terminal, terminal_view, mut cx) = init_cursor_animation_test(cx, true).await;
+        // Splitting focuses the new empty pane while the terminal stays visible.
+        cx.update(|window, cx| {
+            let workspace = terminal_view
+                .read(cx)
+                .workspace
+                .upgrade()
+                .expect("test window should keep the workspace alive");
+            workspace.update(cx, |workspace, cx| {
+                let pane = workspace.active_pane().clone();
+                workspace.split_pane(pane, workspace::SplitDirection::Right, window, cx);
+            });
+        });
+        draw_terminal(&terminal, &mut cx);
+        assert!(!cx.update(|window, cx| terminal_view.read(cx).focus_handle.is_focused(window)));
+
+        write_and_draw_terminal(&terminal, b"hello", &mut cx);
+        assert!(
+            !cursor_animation_active(&terminal_view, &mut cx),
+            "the unfocused terminal cursor is hollow, which is not animated"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_cursor_animation_snaps_when_scrolling_history(cx: &mut TestAppContext) {
+        let (terminal, terminal_view, mut cx) = init_cursor_animation_test(cx, true).await;
+        let output = (0..200)
+            .map(|line| format!("line {line}\n"))
+            .collect::<String>();
+        write_and_draw_terminal(&terminal, output.as_bytes(), &mut cx);
+        // Move the cursor off the bottom row so it stays visible after scrolling up a line.
+        write_and_draw_terminal(&terminal, b"\x1b[5A", &mut cx);
+        let line_before_scroll = cursor_line(&terminal, &mut cx);
+
+        cx.update(|_, cx| terminal.update(cx, |terminal, _| terminal.scroll_line_up()));
+        draw_terminal(&terminal, &mut cx);
+        assert_eq!(
+            terminal.read_with(&cx, |terminal, _| terminal.last_content.display_offset),
+            1
+        );
+        assert_eq!(cursor_line(&terminal, &mut cx), line_before_scroll);
+        assert!(
+            !cursor_animation_active(&terminal_view, &mut cx),
+            "scrolling history should snap the cursor rather than animate it"
+        );
+
+        // The snapped position is still tracked, so the next real movement animates.
+        write_and_draw_terminal(&terminal, b"\x1b[3C", &mut cx);
+        assert!(cursor_animation_active(&terminal_view, &mut cx));
+    }
+
+    #[gpui::test]
+    async fn test_cursor_animation_animates_vi_mode_movement_in_scrollback(
+        cx: &mut TestAppContext,
+    ) {
+        let (terminal, terminal_view, mut cx) = init_cursor_animation_test(cx, true).await;
+        let output = (0..200)
+            .map(|line| format!("line {line}\n"))
+            .collect::<String>();
+        write_and_draw_terminal(&terminal, output.as_bytes(), &mut cx);
+        cx.update(|window, cx| window.dispatch_action(Box::new(ToggleViMode), cx));
+
+        let send_vi_key = |key: &str, cx: &mut VisualTestContext| {
+            cx.update(|window, cx| {
+                window.dispatch_action(Box::new(SendKeystroke(key.into())), cx);
+            });
+            draw_terminal(&terminal, cx);
+        };
+        // Move the vi cursor past the top of the screen so the view scrolls into history.
+        for _ in 0..500 {
+            if cursor_line(&terminal, &mut cx) < -5 {
+                break;
+            }
+            send_vi_key("k", &mut cx);
+        }
+        assert!(cursor_line(&terminal, &mut cx) < -5);
+
+        // Moving down from the top of the view keeps the cursor in scrollback.
+        send_vi_key("j", &mut cx);
+        assert!(cursor_line(&terminal, &mut cx) < 0);
+        assert!(
+            cursor_animation_active(&terminal_view, &mut cx),
+            "vertical movement between scrollback rows should animate"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_cursor_animation_snaps_when_output_arrives_during_vi_mode_scrollback(
+        cx: &mut TestAppContext,
+    ) {
+        let (terminal, terminal_view, mut cx) = init_cursor_animation_test(cx, true).await;
+        let output = (0..200)
+            .map(|line| format!("line {line}\n"))
+            .collect::<String>();
+        write_and_draw_terminal(&terminal, output.as_bytes(), &mut cx);
+        cx.update(|window, cx| window.dispatch_action(Box::new(ToggleViMode), cx));
+        for _ in 0..500 {
+            if cursor_line(&terminal, &mut cx) < -5 {
+                break;
+            }
+            cx.update(|window, cx| {
+                window.dispatch_action(Box::new(SendKeystroke("k".into())), cx);
+            });
+            draw_terminal(&terminal, &mut cx);
+        }
+        assert!(cursor_line(&terminal, &mut cx) < -5);
+        cx.update(|_, cx| {
+            terminal_view.update(cx, |terminal_view, _| {
+                terminal_view.cursor_animation.reset()
+            });
+        });
+        draw_terminal(&terminal, &mut cx);
+        assert!(!cursor_animation_active(&terminal_view, &mut cx));
+
+        write_and_draw_terminal(&terminal, b"new output\n", &mut cx);
+        assert!(
+            !cursor_animation_active(&terminal_view, &mut cx),
+            "output arriving while the cursor stays in scrollback should not move the cursor on screen"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_cursor_animation_resets_on_focus_changes(cx: &mut TestAppContext) {
+        let (terminal, terminal_view, mut cx) = init_cursor_animation_test(cx, true).await;
+        write_and_draw_terminal(&terminal, b"hello", &mut cx);
+        assert!(cursor_animation_active(&terminal_view, &mut cx));
+
+        // A hidden tab is never painted, so only the focus handlers can reset the animation.
+        cx.update(|window, cx| {
+            terminal_view.update(cx, |terminal_view, cx| terminal_view.focus_out(window, cx));
+        });
+        assert!(!cursor_animation_active(&terminal_view, &mut cx));
+
+        write_and_draw_terminal(&terminal, b"hello", &mut cx);
+        cx.update(|window, cx| {
+            terminal_view.update(cx, |terminal_view, cx| terminal_view.focus_in(window, cx));
+        });
+        assert!(!cursor_animation_active(&terminal_view, &mut cx));
+    }
+
+    #[gpui::test]
+    async fn test_cursor_animation_follows_content_when_vi_mode_scrolls_history(
+        cx: &mut TestAppContext,
+    ) {
+        let (terminal, terminal_view, mut cx) = init_cursor_animation_test(cx, true).await;
+        let output = (0..200)
+            .map(|line| format!("line {line}\n"))
+            .collect::<String>();
+        write_and_draw_terminal(&terminal, output.as_bytes(), &mut cx);
+        cx.update(|window, cx| window.dispatch_action(Box::new(ToggleViMode), cx));
+        // Park the vi cursor mid-line, away from the screen edges, so scrolling the history
+        // moves it to a different row and column.
+        for key in ["k", "k", "k", "k", "k", "l", "l", "l"] {
+            cx.update(|window, cx| {
+                window.dispatch_action(Box::new(SendKeystroke(key.into())), cx);
+            });
+        }
+        draw_terminal(&terminal, &mut cx);
+        cx.update(|_, cx| {
+            terminal_view.update(cx, |terminal_view, _| {
+                terminal_view.cursor_animation.reset()
+            });
+        });
+        draw_terminal(&terminal, &mut cx);
+        assert!(!cursor_animation_active(&terminal_view, &mut cx));
+        let point_before_scroll =
+            terminal.read_with(&cx, |terminal, _| terminal.last_content.cursor.point);
+
+        cx.update(|_, cx| terminal.update(cx, |terminal, _| terminal.scroll_line_up()));
+        draw_terminal(&terminal, &mut cx);
+        let (point_after_scroll, display_offset, terminal_bounds) =
+            terminal.read_with(&cx, |terminal, _| {
+                let content = &terminal.last_content;
+                (
+                    content.cursor.point,
+                    content.display_offset,
+                    content.terminal_bounds,
+                )
+            });
+        assert_eq!(display_offset, 1);
+        assert_ne!(
+            point_after_scroll, point_before_scroll,
+            "scrolling in vi mode should move the vi cursor"
+        );
+        assert!(cursor_animation_active(&terminal_view, &mut cx));
+
+        // The animation starts where the old cell now sits in the scrolled content, so the
+        // remaining travel is the cursor's movement within the grid.
+        let expected_travel_x = (point_after_scroll.column as f32
+            - point_before_scroll.column as f32)
+            * f32::from(terminal_bounds.cell_width());
+        let expected_travel_y = (point_after_scroll.line - point_before_scroll.line) as f32
+            * f32::from(terminal_bounds.line_height());
+        let travel = terminal_view.read_with(&cx, |terminal_view, _| {
+            terminal_view
+                .cursor_animation
+                .top_left_corner_remaining_travel()
+        });
+        assert!(
+            (f32::from(travel.x) - expected_travel_x).abs() < 1.0
+                && (f32::from(travel.y) - expected_travel_y).abs() < 1.0,
+            "expected the animation to travel ({expected_travel_x}, {expected_travel_y}), got {travel:?}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_cursor_animation_snaps_after_ime_composition(cx: &mut TestAppContext) {
+        let (terminal, terminal_view, mut cx) = init_cursor_animation_test(cx, true).await;
+        write_and_draw_terminal(&terminal, b"hello", &mut cx);
+        assert!(cursor_animation_active(&terminal_view, &mut cx));
+
+        cx.update(|_, cx| {
+            terminal_view.update(cx, |terminal_view, cx| {
+                terminal_view.set_marked_text("あ".to_string(), cx);
+            });
+        });
+        write_and_draw_terminal(&terminal, b"!", &mut cx);
+        assert!(
+            !cursor_animation_active(&terminal_view, &mut cx),
+            "the cursor is not drawn while IME text is marked, so it should not animate"
+        );
+
+        cx.update(|_, cx| {
+            terminal_view.update(cx, |terminal_view, cx| terminal_view.clear_marked_text(cx));
+        });
+        draw_terminal(&terminal, &mut cx);
+        assert!(
+            !cursor_animation_active(&terminal_view, &mut cx),
+            "the cursor should snap to where it is when composition ends"
+        );
+
+        write_and_draw_terminal(&terminal, b"!", &mut cx);
+        assert!(cursor_animation_active(&terminal_view, &mut cx));
+    }
+
+    #[gpui::test]
+    async fn test_cursor_animation_snaps_after_cursor_blinks_off(cx: &mut TestAppContext) {
+        let (terminal, terminal_view, mut cx) = init_cursor_animation_test(cx, true).await;
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.terminal.get_or_insert_default().blinking = Some(TerminalBlink::On);
+                });
+            });
+        });
+        draw_terminal(&terminal, &mut cx);
+
+        write_and_draw_terminal(&terminal, b"hello", &mut cx);
+        assert!(
+            cursor_animation_active(&terminal_view, &mut cx),
+            "the cursor is visible right after blinking is enabled"
+        );
+
+        cx.executor().advance_clock(CURSOR_BLINK_INTERVAL);
+        draw_terminal(&terminal, &mut cx);
+        assert!(
+            !cursor_animation_active(&terminal_view, &mut cx),
+            "a blinked-off cursor is not drawn, so its animation should be dropped"
+        );
+
+        write_and_draw_terminal(&terminal, b"!", &mut cx);
+        cx.executor().advance_clock(CURSOR_BLINK_INTERVAL);
+        draw_terminal(&terminal, &mut cx);
+        assert!(
+            !cursor_animation_active(&terminal_view, &mut cx),
+            "a cursor that blinks back on should snap into place rather than animate from its old position"
         );
     }
 

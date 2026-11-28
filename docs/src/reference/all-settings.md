@@ -1382,7 +1382,7 @@ Numbers from `0` to `106`, with `0` disabling contrast adjustment.
 
 ## Cursor Animation {#cursor-animation}
 
-- Description: Animate movement of bar and block cursors, unless reduced motion is enabled.
+- Description: Animate movement of bar and block cursors, unless reduced motion is enabled. Enabling this may cause additional editor and terminal redraws and increase rendering overhead.
 - Setting: `cursor_animation`
 - Default:
 
