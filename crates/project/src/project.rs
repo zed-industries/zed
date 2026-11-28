@@ -89,10 +89,10 @@ use gpui::{
     Task, TaskExt, WeakEntity, Window,
 };
 use language::{
-    Buffer, BufferEditSource, BufferEvent, Capability, CodeLabel, CursorShape, DiskState, Language,
-    LanguageName, LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain,
-    ToolchainMetadata, ToolchainScope, Transaction, Unclipped, language_settings::InlayHintKind,
-    proto::split_operations,
+    Buffer, BufferEditSource, BufferEvent, Capability, CharClassifier, CodeLabel, CursorShape,
+    DiskState, Language, LanguageName, LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16,
+    Toolchain, ToolchainMetadata, ToolchainScope, Transaction, Unclipped,
+    language_settings::InlayHintKind, proto::split_operations,
 };
 use lsp::{
     CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, InsertTextMode,
@@ -7246,6 +7246,50 @@ impl Completion {
         self.source
             .filter_text()
             .unwrap_or_else(|| self.label.filter_text())
+    }
+
+    /// Text to fuzzy-match this completion's `filter_text()` against the query.
+    ///
+    /// Strips any leading run of non-word characters (per `classifier`) from
+    /// `filter_text()` before matching, so the candidate's real content lines up
+    /// with the query at position 0. This is a general heuristic, not narrowly
+    /// scoped to one language server's quirk: any candidate whose `filter_text()`
+    /// starts with punctuation or whitespace the query itself doesn't have gets
+    /// re-aligned this way, including one whose real name legitimately starts
+    /// with punctuation (e.g. an operator completion like "->") -- in that case
+    /// the leading punctuation is simply not part of what's matched or
+    /// highlighted. If trimming would empty the string entirely (the candidate
+    /// is nothing but punctuation), the original text is used unchanged instead.
+    ///
+    /// The motivating case is language servers (e.g. TypeScript, for member
+    /// access) that prepend the trigger character to `filterText` so edits can
+    /// rewrite it later (e.g. "." to "?."). Zed's query never includes that
+    /// character, since it starts at the word boundary determined by
+    /// `classifier`. Left unaligned, such a candidate would score as if the
+    /// query didn't match at its real start, collapsing fuzzy scores and
+    /// falling back to the language server's unfiltered order.
+    ///
+    /// `classifier` must be the same one used to build the query (i.e. at the
+    /// cursor, not at this completion's own `replace_range`, which can sit in a
+    /// different syntax scope) -- see `CharClassifier::is_completion_scoped`,
+    /// checked below.
+    pub fn match_candidate_text(&self, classifier: &CharClassifier) -> &str {
+        debug_assert!(
+            classifier.is_completion_scoped(),
+            "match_candidate_text classifier must be scoped for completion queries \
+             (built via .scope_context(Some(CharScopeContext::Completion))), matching \
+             the classifier Editor::completion_query used to compute the query"
+        );
+        let filter_text = self.filter_text();
+        if self.match_start.is_some() {
+            return filter_text;
+        }
+        let trimmed = filter_text.trim_start_matches(|c| !classifier.is_word(c));
+        if trimmed.is_empty() {
+            filter_text
+        } else {
+            trimmed
+        }
     }
 
     /// A key that can be used to sort completions when displaying

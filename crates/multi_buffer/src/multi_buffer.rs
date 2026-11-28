@@ -4185,12 +4185,24 @@ impl MultiBufferSnapshot {
         start: T,
         scope_context: Option<CharScopeContext>,
     ) -> (Range<MultiBufferOffset>, Option<CharKind>) {
-        let mut start = start.to_offset(self);
+        let start = start.to_offset(self);
+        let classifier = self.char_classifier_at(start).scope_context(scope_context);
+        self.surrounding_word_for_classifier(start, &classifier)
+    }
+
+    /// Like `surrounding_word`, but against a classifier the caller already
+    /// built, so the word boundary it returns is guaranteed to use the exact
+    /// same rules as other work the caller does with that classifier (e.g.
+    /// aligning fuzzy-match candidates to a query derived from this range).
+    pub fn surrounding_word_for_classifier(
+        &self,
+        start: MultiBufferOffset,
+        classifier: &CharClassifier,
+    ) -> (Range<MultiBufferOffset>, Option<CharKind>) {
+        let mut start = start;
         let mut end = start;
         let mut next_chars = self.chars_at(start).peekable();
         let mut prev_chars = self.reversed_chars_at(start).peekable();
-
-        let classifier = self.char_classifier_at(start).scope_context(scope_context);
 
         let word_kind = cmp::max(
             prev_chars.peek().copied().map(|c| classifier.kind(c)),

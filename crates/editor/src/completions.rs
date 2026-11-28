@@ -399,9 +399,19 @@ impl Editor {
             return;
         }
 
-        let query: Option<Arc<String>> =
-            Self::completion_query(&multibuffer_snapshot, multibuffer_position)
-                .map(|query| query.into());
+        // Built once and threaded through both `completion_query` and the completions
+        // menu below, so both use the exact same word-boundary rules (see
+        // `Completion::match_candidate_text` for why that alignment matters).
+        let query_classifier = multibuffer_snapshot
+            .char_classifier_at(multibuffer_position)
+            .scope_context(Some(CharScopeContext::Completion));
+
+        let query: Option<Arc<String>> = Self::completion_query(
+            &multibuffer_snapshot,
+            multibuffer_position,
+            &query_classifier,
+        )
+        .map(|query| query.into());
 
         drop(multibuffer_snapshot);
 
@@ -737,6 +747,7 @@ impl Editor {
                         snippet_sort_order,
                         languages,
                         language,
+                        query_classifier,
                         cx,
                     );
 
@@ -842,10 +853,13 @@ impl Editor {
         f(Some(completions_menu))
     }
 
-    fn completion_query(buffer: &MultiBufferSnapshot, position: impl ToOffset) -> Option<String> {
+    fn completion_query(
+        buffer: &MultiBufferSnapshot,
+        position: impl ToOffset,
+        classifier: &CharClassifier,
+    ) -> Option<String> {
         let offset = position.to_offset(buffer);
-        let (word_range, kind) =
-            buffer.surrounding_word(offset, Some(CharScopeContext::Completion));
+        let (word_range, kind) = buffer.surrounding_word_for_classifier(offset, classifier);
         if offset > word_range.start && kind == Some(CharKind::Word) {
             Some(
                 buffer

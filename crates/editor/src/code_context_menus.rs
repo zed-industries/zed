@@ -7,7 +7,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::CodeLabel;
-use language::{Buffer, LanguageName, LanguageRegistry};
+use language::{Buffer, CharClassifier, LanguageName, LanguageRegistry};
 use lsp::{CompletionItemKind, CompletionItemTag};
 use markdown::{CopyButtonVisibility, Markdown, MarkdownElement};
 use multi_buffer::Anchor;
@@ -364,12 +364,15 @@ impl CompletionsMenu {
         snippet_sort_order: SnippetSortOrder,
         language_registry: Option<Arc<LanguageRegistry>>,
         language: Option<LanguageName>,
+        query_classifier: CharClassifier,
         cx: &mut Context<Editor>,
     ) -> Self {
         let match_candidates = completions
             .iter()
             .enumerate()
-            .map(|(id, completion)| StringMatchCandidate::new(id, completion.filter_text()))
+            .map(|(id, completion)| {
+                StringMatchCandidate::new(id, completion.match_candidate_text(&query_classifier))
+            })
             .into_group_map_by(|candidate| completions[candidate.id].match_start)
             .into_iter()
             .collect();
@@ -1595,7 +1598,7 @@ impl CompletionsMenu {
                     string_match,
                 ));
                 // This exact matching won't work for multi-word snippets, but it's fine
-                let sort_exact = Reverse(if Some(completion.filter_text()) == query {
+                let sort_exact = Reverse(if Some(string_match.string.as_str()) == query {
                     1
                 } else {
                     0
