@@ -114,5 +114,9 @@ theme_settings.workspace = true
 name = "highlight_map"
 harness = false
 
+[[bench]]
+name = "word_diff"
+harness = false
+
 [package.metadata.cargo-shear]
 ignored = ["tracing"]

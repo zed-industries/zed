@@ -176,6 +176,10 @@ pub fn text_diff(old_text: &str, new_text: &str) -> Vec<(Range<usize>, Arc<str>)
 
 /// Computes word-level diff ranges between two strings.
 ///
+/// Lines are first paired by similarity, preserving their order, and words are
+/// only diffed within paired lines. Lines without a similar counterpart get no
+/// ranges, so they read as whole-line additions or deletions.
+///
 /// Returns a tuple of (old_ranges, new_ranges) where each vector contains
 /// the byte ranges of changed words in the respective text.
 pub fn word_diff_ranges(
@@ -183,36 +187,251 @@ pub fn word_diff_ranges(
     new_text: &str,
     options: DiffOptions,
 ) -> (Vec<Range<usize>>, Vec<Range<usize>>) {
-    let mut input: InternedInput<&str> = InternedInput::default();
-    input.update_before(tokenize(old_text, options.language_scope.clone()));
-    input.update_after(tokenize(new_text, options.language_scope));
+    let mut interner = Interner::default();
+    let old_lines = tokenize_lines(old_text, &options.language_scope, &mut interner);
+    let new_lines = tokenize_lines(new_text, &options.language_scope, &mut interner);
+    let mut diff = Diff::default();
+    let mut compare_lines =
+        |old_line, new_line| LineDiff::new(old_line, new_line, &mut diff, interner.num_tokens());
 
-    let mut old_ranges: Vec<Range<usize>> = Vec::new();
-    let mut new_ranges: Vec<Range<usize>> = Vec::new();
+    let mut diagonal = Vec::new();
+    if old_lines.len() == new_lines.len() {
+        diagonal.extend(
+            old_lines
+                .iter()
+                .zip(&new_lines)
+                .map(|(old_line, new_line)| compare_lines(old_line, new_line)),
+        );
 
-    diff_internal(&input, &mut |old_byte_range, new_byte_range, _, _| {
-        if !old_byte_range.is_empty() {
-            if let Some(last) = old_ranges.last_mut()
-                && last.end >= old_byte_range.start
-            {
-                last.end = old_byte_range.end;
-            } else {
-                old_ranges.push(old_byte_range);
-            }
+        // Any different alignment would leave at least one line unpaired on each
+        // side, at a cost of 2. Let the full search handle ties.
+        if diagonal.iter().all(Option::is_some)
+            && diagonal
+                .iter()
+                .flatten()
+                .map(|diff| diff.distance)
+                .sum::<f32>()
+                < 2.0
+        {
+            return collect_word_diff_ranges(diagonal.into_iter().flatten());
         }
+    }
 
-        if !new_byte_range.is_empty() {
-            if let Some(last) = new_ranges.last_mut()
-                && last.end >= new_byte_range.start
-            {
-                last.end = new_byte_range.end;
-            } else {
-                new_ranges.push(new_byte_range);
-            }
-        }
-    });
+    let mut line_diffs: Vec<Vec<Option<LineDiff>>> = old_lines
+        .iter()
+        .enumerate()
+        .map(|(old_index, old_line)| {
+            new_lines
+                .iter()
+                .enumerate()
+                .map(|(new_index, new_line)| {
+                    if old_index == new_index
+                        && let Some(diff) = diagonal.get_mut(old_index)
+                    {
+                        diff.take()
+                    } else {
+                        compare_lines(old_line, new_line)
+                    }
+                })
+                .collect()
+        })
+        .collect();
 
+    let paired_diffs = align_lines(&line_diffs)
+        .into_iter()
+        .filter_map(|(old_index, new_index)| line_diffs[old_index][new_index].take());
+    collect_word_diff_ranges(paired_diffs)
+}
+
+fn collect_word_diff_ranges(
+    line_diffs: impl Iterator<Item = LineDiff>,
+) -> (Vec<Range<usize>>, Vec<Range<usize>>) {
+    let mut old_ranges = Vec::new();
+    let mut new_ranges = Vec::new();
+    for line_diff in line_diffs {
+        old_ranges.extend(line_diff.old_ranges);
+        new_ranges.extend(line_diff.new_ranges);
+    }
     (old_ranges, new_ranges)
+}
+
+/// Lines further apart than this are treated as unrelated rather than modified.
+const MAX_LINE_DISTANCE: f32 = 0.6;
+
+/// Word-level diff of a single pair of lines.
+struct LineDiff {
+    /// Fraction of non-whitespace bytes, across both lines, that changed.
+    distance: f32,
+    old_ranges: Vec<Range<usize>>,
+    new_ranges: Vec<Range<usize>>,
+}
+
+impl LineDiff {
+    fn new(
+        old_line: &TokenizedLine,
+        new_line: &TokenizedLine,
+        diff: &mut Diff,
+        token_count: u32,
+    ) -> Option<Self> {
+        diff.compute_with(
+            Algorithm::Histogram,
+            &old_line.tokens,
+            &new_line.tokens,
+            token_count,
+        );
+
+        let mut old_ranges = Vec::new();
+        let mut new_ranges = Vec::new();
+        let mut changed_len = 0;
+        for hunk in diff.hunks() {
+            if !hunk.before.is_empty() {
+                changed_len += old_line.content_len(&hunk.before);
+                old_ranges.push(old_line.byte_range(hunk.before));
+            }
+            if !hunk.after.is_empty() {
+                changed_len += new_line.content_len(&hunk.after);
+                new_ranges.push(new_line.byte_range(hunk.after));
+            }
+        }
+
+        let total_len = old_line.total_content_len() + new_line.total_content_len();
+        let distance = changed_len as f32 / total_len.max(1) as f32;
+        (distance <= MAX_LINE_DISTANCE).then_some(Self {
+            distance,
+            old_ranges,
+            new_ranges,
+        })
+    }
+}
+
+struct TokenizedLine {
+    tokens: Vec<Token>,
+    offsets: Vec<usize>,
+    /// Non-whitespace byte counts from the line start up to each token boundary. Line
+    /// distance ignores whitespace, so shared indentation doesn't make unrelated lines
+    /// look similar.
+    content_offsets: Vec<usize>,
+}
+
+impl TokenizedLine {
+    fn byte_range(&self, tokens: Range<u32>) -> Range<usize> {
+        self.offsets[tokens.start as usize]..self.offsets[tokens.end as usize]
+    }
+
+    fn content_len(&self, tokens: &Range<u32>) -> usize {
+        self.content_offsets[tokens.end as usize] - self.content_offsets[tokens.start as usize]
+    }
+
+    fn total_content_len(&self) -> usize {
+        self.content_offsets.last().copied().unwrap_or(0)
+    }
+}
+
+fn tokenize_lines<'a>(
+    text: &'a str,
+    language_scope: &Option<LanguageScope>,
+    interner: &mut Interner<&'a str>,
+) -> Vec<TokenizedLine> {
+    // Reused across lines so that each line's vectors are allocated once, at their final size.
+    let mut line_tokens = Vec::new();
+    let mut offset = 0;
+    text.split_inclusive('\n')
+        .map(|line| {
+            let text = line.trim_end_matches('\n');
+            line_tokens.clear();
+            line_tokens.extend(tokenize(text, language_scope.clone()).flat_map(split_whitespace));
+            let tokens = line_tokens
+                .iter()
+                .map(|(token, _)| interner.intern(token))
+                .collect();
+            let mut offsets = Vec::with_capacity(line_tokens.len() + 1);
+            let mut content_offsets = Vec::with_capacity(line_tokens.len() + 1);
+            offsets.push(offset);
+            content_offsets.push(0);
+            let mut content_offset = 0;
+            for (token, is_whitespace) in &line_tokens {
+                offset += token.len();
+                if !is_whitespace {
+                    content_offset += token.len();
+                }
+                offsets.push(offset);
+                content_offsets.push(content_offset);
+            }
+            offset += line.len() - text.len();
+            TokenizedLine {
+                tokens,
+                offsets,
+                content_offsets,
+            }
+        })
+        .collect()
+}
+
+/// Splits a whitespace token into single characters, so re-indenting a line
+/// highlights only the added or removed whitespace, not the whole indent. Returns
+/// each piece with whether it is whitespace.
+fn split_whitespace(token: &str) -> impl Iterator<Item = (&str, bool)> {
+    let is_whitespace = token.starts_with(char::is_whitespace);
+    token
+        .split_inclusive(move |_: char| is_whitespace)
+        .map(move |piece| (piece, is_whitespace))
+}
+
+/// Pairs old and new lines in order, minimizing the total cost where an
+/// unpaired line costs 1 and a pair costs its distance. Only pairable lines,
+/// those with a `LineDiff`, are considered. Returns `(old_ix, new_ix)` pairs.
+fn align_lines(line_diffs: &[Vec<Option<LineDiff>>]) -> Vec<(usize, usize)> {
+    #[derive(Clone, Copy)]
+    enum Step {
+        Delete,
+        Insert,
+        Pair,
+    }
+
+    let old_len = line_diffs.len();
+    let new_len = line_diffs.first().map_or(0, Vec::len);
+    let mut costs = vec![vec![0.0_f32; new_len + 1]; old_len + 1];
+    let mut steps = vec![vec![Step::Delete; new_len + 1]; old_len + 1];
+    for old_ix in 0..=old_len {
+        for new_ix in 0..=new_len {
+            let mut best = (f32::INFINITY, Step::Delete);
+            if old_ix > 0 {
+                best = (costs[old_ix - 1][new_ix] + 1.0, Step::Delete);
+            }
+            if new_ix > 0 && costs[old_ix][new_ix - 1] + 1.0 < best.0 {
+                best = (costs[old_ix][new_ix - 1] + 1.0, Step::Insert);
+            }
+            if old_ix > 0
+                && new_ix > 0
+                && let Some(line_diff) = &line_diffs[old_ix - 1][new_ix - 1]
+                && costs[old_ix - 1][new_ix - 1] + line_diff.distance < best.0
+            {
+                best = (
+                    costs[old_ix - 1][new_ix - 1] + line_diff.distance,
+                    Step::Pair,
+                );
+            }
+            if old_ix > 0 || new_ix > 0 {
+                (costs[old_ix][new_ix], steps[old_ix][new_ix]) = best;
+            }
+        }
+    }
+
+    let mut pairs = Vec::new();
+    let (mut old_ix, mut new_ix) = (old_len, new_len);
+    while old_ix > 0 || new_ix > 0 {
+        match steps[old_ix][new_ix] {
+            Step::Delete => old_ix -= 1,
+            Step::Insert => new_ix -= 1,
+            Step::Pair => {
+                old_ix -= 1;
+                new_ix -= 1;
+                pairs.push((old_ix, new_ix));
+            }
+        }
+    }
+    pairs.reverse();
+    pairs
 }
 
 /// Computes character-level diff between two strings.
@@ -451,6 +670,206 @@ mod tests {
         assert_eq!(
             tokenize(text, None).collect::<Vec<_>>(),
             vec!["   ", "one", "\n ", "two", " ", "three"]
+        );
+    }
+
+    fn word_diffs<'a>(old_text: &'a str, new_text: &'a str) -> (Vec<&'a str>, Vec<&'a str>) {
+        let (old_ranges, new_ranges) = word_diff_ranges(old_text, new_text, DiffOptions::default());
+        (
+            old_ranges
+                .into_iter()
+                .map(|range| &old_text[range])
+                .collect(),
+            new_ranges
+                .into_iter()
+                .map(|range| &new_text[range])
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn test_word_diff_ranges() {
+        assert_eq!(
+            word_diffs("foo(a, b)\n", "foo(a, c)\n"),
+            (vec!["b"], vec!["c"])
+        );
+
+        // Similar lines are paired across inserted and deleted lines.
+        assert_eq!(
+            word_diffs(
+                "let x = 1;\nremoved();\nlet y = 2;\n",
+                "fn new() {}\nlet x = 10;\nlet y = 20;\n"
+            ),
+            (vec!["1", "2"], vec!["10", "20"])
+        );
+
+        // Unrelated lines are not paired, so they get no word ranges.
+        assert_eq!(
+            word_diffs("first_function();\n", "let unrelated = 42;\n"),
+            (vec![], vec![])
+        );
+
+        // Pairing picks the most similar line rather than the first one.
+        assert_eq!(
+            word_diffs(
+                "call(alpha, beta, gamma);\n",
+                "call(alpha, delta);\ncall(alpha, beta, omega);\n"
+            ),
+            (vec!["gamma"], vec!["omega"])
+        );
+
+        // At cost 2, pairing by position ties with leaving a gap on each side.
+        assert_eq!(
+            word_diffs("xx aa\nxx bb\nxx cc\nxx dd\n", "xx bb\nxx cc\nxx dd\nxx ee\n"),
+            (vec![], vec![])
+        );
+
+        // Long lines are still diffed.
+        let prefix = "a".repeat(600);
+        assert_eq!(
+            word_diffs(&format!("{prefix} = 1;\n"), &format!("{prefix} = 2;\n")),
+            (vec!["1"], vec!["2"])
+        );
+
+        // Multibyte lines are paired across an inserted line.
+        assert_eq!(
+            word_diffs("hello world 世界\n", "\nhello world 朋友\n"),
+            (vec!["世界"], vec!["朋友"])
+        );
+
+        // The final line may lack a trailing newline.
+        assert_eq!(
+            word_diffs("value = 1", "inserted();\nvalue = 2"),
+            (vec!["1"], vec!["2"])
+        );
+
+        assert_eq!(word_diffs("", "added\n"), (vec![], vec![]));
+
+        // Ranges point at the paired line, not an identical earlier one.
+        assert_eq!(
+            word_diff_ranges(
+                "x = 1;\nx = 1;\n",
+                "x = 1;\nx = 2;\n",
+                DiffOptions::default()
+            ),
+            (vec![11..12], vec![11..12])
+        );
+
+        // A partial rename highlights the whole identifier.
+        assert_eq!(
+            word_diffs("reader.items_old()\n", "reader.items()\n"),
+            (vec!["items_old"], vec!["items"])
+        );
+
+        // A multibyte line pairs with its match after an unrelated line is removed.
+        assert_eq!(
+            word_diffs(
+                "猫 猫 犬 猫 猫 犬 猫 猫 犬\n雪 雪 雨 雪 雪 雨 雪 雪 雨\n",
+                "雪 雪 雨 雪 雪 霧 雪 雪 雨\n"
+            ),
+            (vec!["雨"], vec!["霧"])
+        );
+
+        // An inserted lifetime includes its separator in the range.
+        assert_eq!(
+            word_diffs("fn lookup<'a, Entry>(\n", "fn lookup<'a, 'b, Entry>(\n"),
+            (vec![], vec!["'b, "])
+        );
+
+        // Wrapping an expression highlights the opening and closing tokens separately.
+        assert_eq!(
+            word_diffs(
+                "let limit = settings[\"depth\"];\n",
+                "let limit = parse(settings[\"depth\"]);\n"
+            ),
+            (vec![], vec!["parse(", ")"])
+        );
+
+        // Inserting repeated words between identical words produces one range.
+        assert_eq!(
+            word_diffs("item item\n", "item next next item\n"),
+            (vec![], vec!["next next "])
+        );
+
+        // A value appended to the line includes its leading space.
+        assert_eq!(
+            word_diffs("    entries[index] =\n", "    entries[index] = value\n"),
+            (vec![], vec![" value"])
+        );
+
+        // Removing a word from a string includes its leading space.
+        assert_eq!(
+            word_diffs("label(\"build metadata\");\n", "label(\"build\");\n"),
+            (vec![" metadata"], vec![])
+        );
+
+        // Moving the comma outside the brackets produces a range at each position.
+        assert_eq!(
+            word_diff_ranges("[entry,]\n", "[entry],\n", DiffOptions::default()),
+            (vec![6..7], vec![7..8])
+        );
+
+        // Of these two edits, only the shorter pair meets the similarity threshold.
+        assert_eq!(
+            word_diffs("xx cat\nxx cats\n", "xx dog\nxx dogs\n"),
+            (vec!["cat"], vec!["dog"])
+        );
+
+        // Re-indenting a line highlights only the added indent, not the whole indent.
+        assert_eq!(
+            word_diffs("    from_str::<Config>(text)\n", "        from_str(text)\n"),
+            (vec!["::<Config>"], vec!["    "])
+        );
+
+        // Each line pairs with its most similar counterpart, and the unrelated middle
+        // lines stay unpaired.
+        assert_eq!(
+            word_diffs(
+                "aaaa a aaa\nbbbb b bbb\ncccc c ccc\n",
+                "bbbb ! bbb\ndddd d ddd\ncccc ! ccc\n"
+            ),
+            (vec!["b", "c"], vec!["!", "!"])
+        );
+
+        // Moving a space across a word highlights only the word.
+        assert_eq!(word_diffs("'b '\n", "' b'\n"), (vec!["b"], vec!["b"]));
+
+        // Replacing the start of a line keeps the shared rest unhighlighted.
+        assert_eq!(
+            word_diffs(
+                "printf \"%s\\n\" s y y | git add -p &&\n",
+                "test_write_lines s y y | git add -p &&\n"
+            ),
+            (vec!["printf \"%s\\n\""], vec!["test_write_lines"])
+        );
+
+        // Shared indentation doesn't make rewritten lines similar enough to pair. Only
+        // the line containing the new one pairs with it.
+        let indent = |lines: &[&str]| {
+            lines
+                .iter()
+                .map(|line| format!("            {line}\n"))
+                .collect::<String>()
+        };
+        let old_text = indent(&[
+            "let mut i = 0;",
+            "for ((_, c0), (_, c1)) in s0.zip(s1) {",
+            "    if c0 != c1 {",
+            "        break;",
+            "    } else {",
+            "        i += c0.len();",
+            "    }",
+            "}",
+            "i",
+        ]);
+        let new_text = indent(&[
+            "s0.zip(s1)",
+            "    .take_while(|((_, c0), (_, c1))| c0 == c1)",
+            "    .fold(0, |offset, ((_, c0), (_, _))| offset + c0.len())",
+        ]);
+        assert_eq!(
+            word_diffs(&old_text, &new_text),
+            (vec!["for ((_, c0), (_, c1)) in ", " {"], vec![])
         );
     }
 
