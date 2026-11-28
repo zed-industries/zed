@@ -30,6 +30,8 @@ Create additional terminals with `Cmd+N` (macOS) or `Ctrl+N` (Linux/Windows) whi
 
 Split terminals horizontally with `Cmd+D` (macOS) or `Ctrl+Shift+5` (Linux/Windows).
 
+A tab is labeled with its working directory and command. While a program other than the shell is running, the tab shows the title that program sets (via the OSC 0/2 escape sequences) instead, for example the session name and working/idle glyph of a coding agent like Claude Code. Terminals running a known coding agent CLI show its logo. A tab you renamed keeps its name.
+
 ## Configuring the Shell
 
 By default, Zed uses your system's default shell (from `/etc/passwd` on Unix systems). To use a different shell:
