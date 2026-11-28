@@ -345,6 +345,26 @@ impl ContextServerSettings {
             ContextServerSettings::Extension { enabled: e, .. } => *e = enabled,
         }
     }
+
+    pub fn remote(&self) -> bool {
+        match self {
+            ContextServerSettings::Stdio { remote, .. }
+            | ContextServerSettings::Extension { remote, .. } => *remote,
+            ContextServerSettings::Http { .. } => false,
+        }
+    }
+
+    pub fn set_remote(&mut self, remote: bool) {
+        match self {
+            ContextServerSettings::Stdio {
+                remote: current, ..
+            }
+            | ContextServerSettings::Extension {
+                remote: current, ..
+            } => *current = remote,
+            ContextServerSettings::Http { .. } => {}
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
