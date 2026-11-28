@@ -571,12 +571,13 @@ pub fn play_remote_video_track(
     {
         _ = executor;
         let mut pool = None;
-        let most_recent_frame_size = (0, 0);
+        let mut most_recent_frame_size = (0, 0);
         NativeVideoStream::new(track.0.rtc_track()).filter_map(move |frame| {
             if pool == None
                 || most_recent_frame_size != (frame.buffer.width(), frame.buffer.height())
             {
                 pool = create_buffer_pool(frame.buffer.width(), frame.buffer.height()).log_err();
+                most_recent_frame_size = (frame.buffer.width(), frame.buffer.height());
             }
             let pool = pool.clone();
             async move {
