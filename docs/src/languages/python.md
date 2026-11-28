@@ -12,7 +12,7 @@ Python support is available natively in Zed.
   - [DetachHead/basedpyright](https://github.com/DetachHead/basedpyright)
   - [astral-sh/ruff](https://github.com/astral-sh/ruff)
   - [astral-sh/ty](https://github.com/astral-sh/ty)
-  - [facebook/pyrefly](https://github.com/facebook/pyrefly)
+  - [pyrefly-org/pyrefly](https://github.com/pyrefly-org/pyrefly)
   - [microsoft/pyright](https://github.com/microsoft/pyright)
   - [python-lsp/python-lsp-server](https://github.com/python-lsp/python-lsp-server) (PyLSP)
 - Debug Adapter: [debugpy](https://github.com/microsoft/debugpy)
@@ -174,38 +174,56 @@ See [Python Language Server Configuration](https://github.com/python-lsp/python-
 
 ### Pyrefly
 
-[Pyrefly](https://pyrefly.org) is a modern Python type checker and language server from Meta with powerful IDE features.
+[Pyrefly](https://pyrefly.org) is a fast type checker and language server for Python.
 
-#### Showing Type Errors
+#### Project Configuration
 
-By default, Pyrefly only displays type errors when a configuration file is present in your project. To see type errors in Zed:
+Configure type checking for your project with a `pyrefly.toml` file or a `[tool.pyrefly]` section in your `pyproject.toml`.
 
-**Create a configuration file** (recommended): Add a `pyrefly.toml` or configure `[tool.pyrefly]` in your `pyproject.toml` at the root of your project. This is the standard way to use Pyrefly and allows you to customize its behavior.
-
-Example minimal `pyrefly.toml`:
+Example `pyrefly.toml`:
 
 ```toml
-# Check all Python files in your project
-project-includes = ["."]
+# set the directories Pyrefly will search for files to type check
+project-includes = ["src", "tests"]
+
+# manually set the `sys.platform` Pyrefly will assume when type checking
+python-platform = "linux"
+
+# a table mapping error codes to an `is-enabled` boolean
+[errors]
+# disable `bad-assignment` errors
+bad-assignment = false
+# disable `bad-return` errors
+bad-return = false
 ```
 
-For comprehensive configuration options, see the [Pyrefly configuration documentation](https://pyrefly.org/docs/configuration).
+If your project has no Pyrefly configuration, Pyrefly reads an existing mypy or Pyright configuration instead, such as `mypy.ini`, `pyrightconfig.json`, or a `[tool.mypy]` or `[tool.pyright]` section in `pyproject.toml`. If it finds neither, it uses its `basic` preset, which reports only high-confidence errors.
 
-Alternatively, add to the `lsp` section of your zed config file to tell Pyrefly to always display type errors:
+For all configuration options, see the [Pyrefly configuration documentation](https://pyrefly.org/en/docs/configuration/).
 
-```json
-"lsp": {
-  "pyrefly": {
-    "initialization_options": {
-      "python": {
-        "pyrefly": {
-          "displayTypeErrors": "force-on"
+#### Language Server Settings
+
+To change how Pyrefly behaves in Zed, add a `settings` object to the `lsp.pyrefly` section of your settings file.
+
+For example, to enable strict type checking without a Pyrefly configuration, set `typeCheckingMode` to `strict`:
+
+```json [settings]
+{
+  "lsp": {
+    "pyrefly": {
+      "settings": {
+        "python": {
+          "pyrefly": {
+            "typeCheckingMode": "strict"
+          }
         }
       }
     }
   }
 }
 ```
+
+The keys follow Pyrefly's VS Code setting names: `python.pyrefly.typeCheckingMode` becomes `"python": { "pyrefly": { "typeCheckingMode": ... } }`. For all available settings, see [Pyrefly's IDE settings](https://pyrefly.org/en/docs/IDE/#vscode-extension-settings).
 
 ## Virtual Environments
 
