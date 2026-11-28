@@ -129,7 +129,7 @@ impl Keystroke {
         Self::parse_internal(source, Some(os))
     }
 
-    fn parse_internal(
+    pub(crate) fn parse_internal(
         source: &str,
         os: Option<OperatingSystem>,
     ) -> std::result::Result<Self, InvalidKeystrokeError> {

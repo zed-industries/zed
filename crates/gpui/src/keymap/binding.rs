@@ -31,20 +31,33 @@ impl Clone for KeyBinding {
 impl KeyBinding {
     /// Constructs a static keybinding with explicit modifiers. Panics on parse error.
     ///
-    /// Use [`Self::load`] for dynamic input or to resolve `secondary-` using the host OS.
+    /// Use [`Self::try_new`] for fallible parsing, or [`Self::load`] to resolve
+    /// `secondary-` using the host OS.
     pub fn new<A: Action>(keystrokes: &'static str, action: A, context: Option<&str>) -> Self {
-        let context_predicate =
-            context.map(|context| KeyBindingContextPredicate::parse(context).unwrap().into());
-        Self::load_internal(
+        Self::try_new(keystrokes, action, context).unwrap()
+    }
+
+    /// Constructs a static keybinding with explicit modifiers, returning an error
+    /// if the keystrokes or context predicate fail to parse.
+    ///
+    /// Use [`Self::load`] to resolve `secondary-` using the host OS or apply a keyboard mapper.
+    pub fn try_new<A: Action>(
+        keystrokes: &str,
+        action: A,
+        context: Option<&str>,
+    ) -> anyhow::Result<Self> {
+        let context_predicate = context
+            .map(|context| KeyBindingContextPredicate::parse(context).map(Rc::new))
+            .transpose()?;
+        Ok(Self::load_internal(
             keystrokes,
             Box::new(action),
             context_predicate,
             false,
             None,
             &DummyKeyboardMapper,
-            Keystroke::parse,
-        )
-        .unwrap()
+            |source| Keystroke::parse_internal(source, None),
+        )?)
     }
 
     /// Load a keybinding from the given raw data.
@@ -164,3 +177,27 @@ impl std::fmt::Debug for KeyBinding {
 /// associated with the binding, such as the source of the binding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct KeyBindingMetaIndex(pub u32);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::NoAction;
+
+    #[test]
+    fn test_try_new() {
+        let dynamic_keystroke = String::from("ctrl-a cmd-b");
+        let binding = KeyBinding::try_new(&dynamic_keystroke, NoAction, Some("editor && !menu"))
+            .expect("valid keybinding should parse");
+        assert_eq!(binding.keystrokes().len(), 2);
+        assert!(binding.predicate().is_some());
+
+        // Unknown modifier returns Err instead of panicking.
+        assert!(KeyBinding::try_new("foo-b", NoAction, None).is_err());
+
+        // `secondary-` requires an OS via `KeyBinding::load`.
+        assert!(KeyBinding::try_new("secondary-a", NoAction, None).is_err());
+
+        // Invalid context predicate returns Err instead of panicking.
+        assert!(KeyBinding::try_new("ctrl-a", NoAction, Some("editor &&")).is_err());
+    }
+}
