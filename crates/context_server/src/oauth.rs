@@ -148,7 +148,49 @@ pub struct AuthServerMetadata {
     pub scopes_supported: Option<Vec<String>>,
     pub grant_types_supported: Option<Vec<String>>,
     pub code_challenge_methods_supported: Option<Vec<String>>,
+    pub token_endpoint_auth_methods_supported: Option<Vec<String>>,
     pub client_id_metadata_document_supported: bool,
+}
+
+impl AuthServerMetadata {
+    /// Whether a statically pre-registered client may *attempt* the authorization
+    /// code flow without a client secret.
+    ///
+    /// Qualifies two ways:
+    ///
+    /// 1. RFC 8414 — the server explicitly advertises `none` in
+    ///    `token_endpoint_auth_methods_supported`.
+    /// 2. The server advertises `S256`. RFC 7636 (and OAuth 2.1, which makes PKCE
+    ///    mandatory for the authorization code grant) define PKCE as the public-client
+    ///    replacement for a client secret.
+    ///
+    /// Case 2 is required, not belt-and-braces: several widely deployed authorization
+    /// servers accept public clients while advertising ONLY confidential methods.
+    /// authentik, for example, hardcodes
+    /// `["client_secret_post", "client_secret_basic"]` regardless of the client's
+    /// configured type, so the absence of `none` cannot be read as "a secret is
+    /// required" — and keying solely on `none` would leave those deployments with no
+    /// working path at all.
+    ///
+    /// This deliberately only decides whether to ATTEMPT the flow. A server that
+    /// genuinely requires a secret rejects the token exchange with `invalid_client`
+    /// (or `unauthorized_client`, which authentik and Keycloak emit for a missing or
+    /// blank secret). `ContextServerStore::authenticate_server` maps both back to
+    /// `ClientSecretRequired`, so a confidential client is not silently downgraded —
+    /// it reaches the same prompt, one request later than before.
+    pub fn may_accept_public_client(&self) -> bool {
+        let advertises_none = self
+            .token_endpoint_auth_methods_supported
+            .as_ref()
+            .is_some_and(|methods| methods.iter().any(|m| m == "none"));
+
+        let supports_s256 = self
+            .code_challenge_methods_supported
+            .as_ref()
+            .is_some_and(|methods| methods.iter().any(|m| m == "S256"));
+
+        advertises_none || supports_s256
+    }
 }
 
 /// The result of client registration — either CIMD or DCR.
@@ -843,6 +885,8 @@ pub async fn fetch_auth_server_metadata(
                     registration_endpoint: response.registration_endpoint,
                     scopes_supported: response.scopes_supported,
                     code_challenge_methods_supported: response.code_challenge_methods_supported,
+                    token_endpoint_auth_methods_supported: response
+                        .token_endpoint_auth_methods_supported,
                     client_id_metadata_document_supported: response
                         .client_id_metadata_document_supported
                         .unwrap_or(false),
@@ -1175,6 +1219,8 @@ struct AuthServerMetadataResponse {
     #[serde(default)]
     code_challenge_methods_supported: Option<Vec<String>>,
     #[serde(default)]
+    token_endpoint_auth_methods_supported: Option<Vec<String>>,
+    #[serde(default)]
     client_id_metadata_document_supported: Option<bool>,
 }
 
@@ -1298,6 +1344,63 @@ mod tests {
     use http_client::Response;
 
     // -- require_https_or_loopback tests ------------------------------------
+
+    fn test_metadata(
+        token_auth: Option<Vec<String>>,
+        pkce: Option<Vec<String>>,
+    ) -> AuthServerMetadata {
+        AuthServerMetadata {
+            issuer: Url::parse("https://as.example.com").unwrap(),
+            authorization_endpoint: Url::parse("https://as.example.com/authorize").unwrap(),
+            token_endpoint: Url::parse("https://as.example.com/token").unwrap(),
+            registration_endpoint: None,
+            scopes_supported: None,
+            grant_types_supported: None,
+            code_challenge_methods_supported: pkce,
+            token_endpoint_auth_methods_supported: token_auth,
+            client_id_metadata_document_supported: false,
+        }
+    }
+
+    #[test]
+    fn public_client_accepted_when_none_advertised() {
+        // RFC 8414 explicit advertisement.
+        let m = test_metadata(Some(vec!["none".into()]), None);
+        assert!(m.may_accept_public_client());
+    }
+
+    #[test]
+    fn public_client_accepted_when_s256_advertised() {
+        // The authentik / Authelia / older-Keycloak shape: only confidential methods
+        // are advertised, yet the server accepts public clients. S256 is what makes
+        // the secret unnecessary (RFC 7636). Regression test for #62637 — keying
+        // solely on `none` leaves these deployments with no working path.
+        let m = test_metadata(
+            Some(vec![
+                "client_secret_post".into(),
+                "client_secret_basic".into(),
+            ]),
+            Some(vec!["plain".into(), "S256".into()]),
+        );
+        assert!(m.may_accept_public_client());
+    }
+
+    #[test]
+    fn public_client_rejected_when_no_pkce_and_no_none() {
+        // Neither signal present: RFC 8414's default is client_secret_basic, so a
+        // secret really may be required. Must NOT be treated as public.
+        let m = test_metadata(
+            Some(vec!["client_secret_basic".into()]),
+            Some(vec!["plain".into()]),
+        );
+        assert!(!m.may_accept_public_client());
+    }
+
+    #[test]
+    fn public_client_rejected_when_both_fields_absent() {
+        let m = test_metadata(None, None);
+        assert!(!m.may_accept_public_client());
+    }
 
     #[test]
     fn test_require_https_or_loopback_accepts_https() {
@@ -1675,6 +1778,7 @@ mod tests {
             registration_endpoint: Some(Url::parse("https://auth.example.com/register").unwrap()),
             scopes_supported: None,
             code_challenge_methods_supported: Some(vec!["S256".into()]),
+            token_endpoint_auth_methods_supported: None,
             client_id_metadata_document_supported: true,
             grant_types_supported: None,
         };
@@ -1696,6 +1800,7 @@ mod tests {
             registration_endpoint: Some(reg_endpoint.clone()),
             scopes_supported: None,
             code_challenge_methods_supported: Some(vec!["S256".into()]),
+            token_endpoint_auth_methods_supported: None,
             client_id_metadata_document_supported: false,
             grant_types_supported: None,
         };
@@ -1716,6 +1821,7 @@ mod tests {
             registration_endpoint: None,
             scopes_supported: None,
             code_challenge_methods_supported: Some(vec!["S256".into()]),
+            token_endpoint_auth_methods_supported: None,
             client_id_metadata_document_supported: false,
             grant_types_supported: None,
         };
@@ -1773,6 +1879,7 @@ mod tests {
             registration_endpoint: None,
             scopes_supported: None,
             code_challenge_methods_supported: Some(vec!["S256".into()]),
+            token_endpoint_auth_methods_supported: None,
             client_id_metadata_document_supported: true,
             grant_types_supported: None,
         };
@@ -1816,6 +1923,7 @@ mod tests {
             registration_endpoint: None,
             scopes_supported: None,
             code_challenge_methods_supported: Some(vec!["S256".into()]),
+            token_endpoint_auth_methods_supported: None,
             client_id_metadata_document_supported: false,
             grant_types_supported: None,
         };
@@ -2162,6 +2270,71 @@ mod tests {
         });
     }
 
+    /// End-to-end over the REAL discovery document, through the real parser.
+    ///
+    /// This is authentik 2025.4.1's actual `.well-known/openid-configuration` for a
+    /// provider whose client is configured `client_type: public` (captured verbatim,
+    /// hostname neutralised). It is the exact shape reported in #62637:
+    /// no `registration_endpoint` (no DCR), no `client_id_metadata_document_supported`
+    /// (no CIMD), only confidential values in `token_endpoint_auth_methods_supported`,
+    /// and `S256` offered.
+    ///
+    /// A `may_accept_public_client()` keyed solely on `none` returns false here, which
+    /// is why that spelling would leave this deployment with no working path at all.
+    #[test]
+    fn test_authentik_public_client_document_is_accepted() {
+        gpui::block_on(async {
+            let client = make_fake_http_client(|req| {
+                Box::pin(async move {
+                    let uri = req.uri().to_string();
+                    if uri.contains(".well-known/oauth-authorization-server")
+                        || uri.contains(".well-known/openid-configuration")
+                    {
+                        json_response(
+                            200,
+                            r#"{
+                                "issuer": "https://auth.example.com/application/o/mcp-gateway/",
+                                "authorization_endpoint": "https://auth.example.com/application/o/authorize/",
+                                "token_endpoint": "https://auth.example.com/application/o/token/",
+                                "code_challenge_methods_supported": ["plain", "S256"],
+                                "token_endpoint_auth_methods_supported": [
+                                    "client_secret_post",
+                                    "client_secret_basic"
+                                ]
+                            }"#,
+                        )
+                    } else {
+                        json_response(404, "{}")
+                    }
+                })
+            });
+
+            let issuer = Url::parse("https://auth.example.com/application/o/mcp-gateway/").unwrap();
+            let metadata = fetch_auth_server_metadata(&client, &issuer).await.unwrap();
+
+            // The server never advertises `none` ...
+            assert_eq!(
+                metadata.token_endpoint_auth_methods_supported.as_deref(),
+                Some(
+                    &[
+                        "client_secret_post".to_string(),
+                        "client_secret_basic".to_string()
+                    ][..]
+                ),
+            );
+            // ... and offers no DCR and no CIMD, so pre-registration is the only option.
+            assert!(metadata.registration_endpoint.is_none());
+            assert!(!metadata.client_id_metadata_document_supported);
+
+            // ... yet it accepts public clients, and S256 is what says so.
+            assert!(
+                metadata.may_accept_public_client(),
+                "authentik's real document must be recognised as public-client capable; \
+                 keying only on `none` regresses #62637"
+            );
+        });
+    }
+
     #[test]
     fn test_fetch_auth_server_metadata() {
         gpui::block_on(async {
@@ -2472,6 +2645,7 @@ mod tests {
                 registration_endpoint: None,
                 scopes_supported: None,
                 code_challenge_methods_supported: Some(vec!["S256".into()]),
+                token_endpoint_auth_methods_supported: None,
                 client_id_metadata_document_supported: true,
                 grant_types_supported: None,
             };
@@ -2549,6 +2723,7 @@ mod tests {
                 registration_endpoint: None,
                 scopes_supported: None,
                 code_challenge_methods_supported: Some(vec!["S256".into()]),
+                token_endpoint_auth_methods_supported: None,
                 client_id_metadata_document_supported: true,
                 grant_types_supported: None,
             };
