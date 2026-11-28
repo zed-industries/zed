@@ -18,6 +18,11 @@ pub struct Toolbar {
     pub breadcrumbs: bool,
 }
 
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct TabBar {
+    pub show: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, RegisterSetting)]
 pub struct TerminalSettings {
     pub shell: Shell,
@@ -46,6 +51,7 @@ pub struct TerminalSettings {
     pub max_scroll_history_lines: Option<usize>,
     pub scroll_multiplier: f32,
     pub toolbar: Toolbar,
+    pub tab_bar: TabBar,
     pub scrollbar: ScrollbarSettings,
     pub minimum_contrast: f32,
     pub path_hyperlink_regexes: Vec<String>,
@@ -119,6 +125,9 @@ impl settings::Settings for TerminalSettings {
             max_scroll_history_lines: user_content.max_scroll_history_lines,
             toolbar: Toolbar {
                 breadcrumbs: user_content.toolbar.unwrap().breadcrumbs.unwrap(),
+            },
+            tab_bar: TabBar {
+                show: user_content.tab_bar.unwrap().show.unwrap(),
             },
             scrollbar: ScrollbarSettings {
                 show: user_content.scrollbar.unwrap().show,

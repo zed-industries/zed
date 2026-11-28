@@ -210,6 +210,8 @@ pub struct TerminalSettingsContent {
     pub scroll_multiplier: Option<f32>,
     /// Toolbar related settings
     pub toolbar: Option<TerminalToolbarContent>,
+    /// Tab bar related settings
+    pub tab_bar: Option<TerminalTabBarContent>,
     /// Scrollbar-related settings
     pub scrollbar: Option<ScrollbarSettingsContent>,
     /// The minimum APCA perceptual contrast between foreground and background colors.
@@ -245,7 +247,7 @@ crate::fallible_options::flattened_deserialize!(TerminalSettingsContent {
         cursor_shape, blinking, alternate_scroll, option_as_meta, copy_on_select,
         keep_selection_on_copy, open_links_in_mouse_mode, button, dock, starts_open, flexible,
         default_width, default_height, max_scroll_history_lines, scroll_multiplier, toolbar,
-        scrollbar, minimum_contrast, show_count_badge, bell,
+        tab_bar, scrollbar, minimum_contrast, show_count_badge, bell,
     },
     defaults: {},
 });
@@ -461,6 +463,15 @@ pub struct TerminalToolbarContent {
     ///
     /// Default: true
     pub breadcrumbs: Option<bool>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+pub struct TerminalTabBarContent {
+    /// Whether to show the tab bar in the terminal panel.
+    ///
+    /// Default: true
+    pub show: Option<bool>,
 }
 
 #[derive(
