@@ -7906,6 +7906,276 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_placeholder_windows_have_project_titles(cx: &mut TestAppContext) {
+        use util::path_list::PathList;
+        use workspace::{SerializedWorkspaceLocation, SessionWorkspace, WorkspaceId};
+
+        let app_state = init_test(cx);
+        let app_name = cx.read(|cx| release_channel::ReleaseChannel::global(cx).display_name());
+        let remote = SerializedWorkspaceLocation::Remote(remote::RemoteConnectionOptions::Ssh(
+            remote::SshConnectionOptions {
+                host: "example.com".to_string().into(),
+                nickname: Some("Development".to_string()),
+                ..Default::default()
+            },
+        ));
+        let cases = [
+            (
+                SerializedWorkspaceLocation::Local,
+                vec![
+                    PathBuf::from(path!("/second")),
+                    PathBuf::from(path!("/first")),
+                ],
+                "second, first",
+                "second, first",
+            ),
+            (
+                remote.clone(),
+                vec![PathBuf::from("/srv/project")],
+                "project",
+                "project | Development | example.com",
+            ),
+            (
+                remote,
+                vec![PathBuf::from(r"C:\Users\developer\project")],
+                "project",
+                "project | Development | example.com",
+            ),
+            (
+                SerializedWorkspaceLocation::Local,
+                Vec::new(),
+                "empty project",
+                "empty project",
+            ),
+        ];
+        let windows = cx.update(|cx| {
+            cases.map(|(location, paths, project_name, formatted_title)| {
+                let session_workspace = SessionWorkspace {
+                    workspace_id: WorkspaceId::from_i64(0),
+                    location,
+                    paths: PathList::new(&paths),
+                    window_id: None,
+                };
+                let window =
+                    workspace::create_workspace_window(&session_workspace, app_state.clone(), cx)
+                        .expect("placeholder window should open");
+                (window, project_name, formatted_title)
+            })
+        });
+
+        for (window, project_name, _) in &windows {
+            let window_cx = &mut VisualTestContext::from_window((*window).into(), cx);
+            assert_eq!(window_cx.window_title().as_deref(), Some(*project_name));
+            window_cx.run_until_parked();
+            assert_eq!(window_cx.window_title().as_deref(), Some(*project_name));
+            window
+                .read_with(window_cx, |multi_workspace, cx| {
+                    let workspace = multi_workspace.workspace().read(cx);
+                    assert_eq!(workspace.placeholder_project_name(), Some(*project_name));
+                    assert!(workspace.root_paths(cx).is_empty());
+                    assert!(workspace.items(cx).next().is_none());
+                })
+                .expect("placeholder window should exist");
+        }
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.window_title_format = Some(
+                        "${projectName}${separator}${remoteName}${separator}${remoteHost}${separator}${appName}"
+                            .to_string(),
+                    );
+                    settings.workspace.window_title_separator = Some(" | ".to_string());
+                });
+            });
+        });
+        cx.run_until_parked();
+        for (window, _, title_prefix) in windows {
+            let window_cx = &mut VisualTestContext::from_window(window.into(), cx);
+            let expected_title = format!("{title_prefix} | {app_name}");
+            assert_eq!(
+                window_cx.window_title().as_deref(),
+                Some(expected_title.as_str())
+            );
+        }
+
+        let (window, _, _) = windows.first().expect("first placeholder should exist");
+        cx.dispatch_action((*window).into(), NewFile);
+        cx.run_until_parked();
+        let window_cx = &mut VisualTestContext::from_window((*window).into(), cx);
+        let expected_title = format!("empty project | {app_name}");
+        assert_eq!(
+            window_cx.window_title().as_deref(),
+            Some(expected_title.as_str())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_session_restore_creates_windows_before_loading_without_refocusing(
+        cx: &mut TestAppContext,
+    ) {
+        use session::Session;
+        use std::{
+            cell::{Cell, RefCell},
+            rc::Rc,
+        };
+
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/"),
+                json!({
+                    "startup-a": { "a.txt": "first" },
+                    "startup-b": { "b.txt": "second" }
+                }),
+            )
+            .await;
+        let session_id = cx.read(|cx| app_state.session.read(cx).id().to_owned());
+        let mut initial_windows = Vec::new();
+        for (path, file) in [
+            (path!("/startup-a"), "a.txt"),
+            (path!("/startup-b"), "b.txt"),
+        ] {
+            initial_windows.push(
+                open_test_project_window_with_tabs(
+                    &app_state,
+                    Path::new(path),
+                    &[rel_path(file)],
+                    cx,
+                )
+                .await,
+            );
+        }
+        let empty_window = cx
+            .update(|cx| {
+                Workspace::new_local(
+                    Vec::new(),
+                    app_state.clone(),
+                    None,
+                    None,
+                    Some(Box::new(|workspace, window, cx| {
+                        Editor::new_file(workspace, &Default::default(), window, cx);
+                    })),
+                    workspace::OpenMode::Activate,
+                    cx,
+                )
+            })
+            .await
+            .expect("failed to open empty workspace")
+            .window;
+        cx.run_until_parked();
+        empty_window
+            .update(cx, |multi_workspace, window, cx| {
+                let editor = multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .active_item(cx)
+                    .and_then(|item| item.downcast::<Editor>())
+                    .expect("empty workspace should have an untitled editor");
+                editor.update(cx, |editor, cx| {
+                    editor.insert("unsaved text", window, cx);
+                });
+            })
+            .expect("empty workspace window should exist");
+
+        initial_windows.push(empty_window);
+        for window in initial_windows {
+            flush_workspace_serialization(&window, cx).await;
+            window
+                .update(cx, |_, window, _| window.remove_window())
+                .expect("workspace window should exist");
+        }
+        cx.run_until_parked();
+        cx.update(|cx| {
+            app_state.session.update(cx, |app_session, _cx| {
+                app_session.replace_session_for_test(Session::test_with_old_session(session_id));
+            });
+        });
+
+        let created_windows = Rc::new(RefCell::new(Vec::new()));
+        let loaded_workspaces = Rc::new(Cell::new(0));
+        let _observe_windows = cx.update(|cx| {
+            cx.observe_new::<MultiWorkspace>({
+                let created_windows = created_windows.clone();
+                move |_, window, _| {
+                    let window = window.expect("workspace should have a window");
+                    created_windows.borrow_mut().push(
+                        window
+                            .window_handle()
+                            .downcast::<MultiWorkspace>()
+                            .expect("workspace window"),
+                    );
+                }
+            })
+        });
+        let _observe_workspaces = cx.update(|cx| {
+            cx.observe_new::<Workspace>({
+                let created_windows = created_windows.clone();
+                let loaded_workspaces = loaded_workspaces.clone();
+                move |workspace, _, cx| {
+                    if workspace.database_id().is_none() {
+                        return;
+                    }
+                    let windows = created_windows.borrow();
+                    assert_eq!(windows.len(), 3, "all windows must exist before loading");
+                    let first_window = windows.first().expect("first restored window");
+                    let selected_window = windows.last().expect("last restored window");
+                    if loaded_workspaces.get() == 0 {
+                        assert_eq!(cx.active_window(), Some((*first_window).into()));
+                        selected_window
+                            .update(cx, |_, window, _| window.activate_window())
+                            .expect("selected window should exist");
+                    }
+                    assert_eq!(cx.active_window(), Some((*selected_window).into()));
+                    loaded_workspaces.set(loaded_workspaces.get() + 1);
+                }
+            })
+        });
+
+        crate::restore_or_create_workspace(app_state, &mut cx.to_async())
+            .await
+            .expect("session restoration should succeed");
+        cx.run_until_parked();
+
+        assert_eq!(loaded_workspaces.get(), 3);
+        let windows = created_windows.borrow();
+        assert_eq!(
+            cx.read(|cx| cx.active_window()),
+            windows.last().copied().map(Into::into)
+        );
+        let mut titles = Vec::new();
+        for window in windows.iter() {
+            window
+                .read_with(cx, |multi_workspace, cx| {
+                    assert_eq!(multi_workspace.workspaces().count(), 1);
+                    let workspace = multi_workspace.workspace().read(cx);
+                    assert_eq!(workspace.placeholder_project_name(), None);
+                    assert_eq!(workspace.items(cx).count(), 1);
+                    if workspace.root_paths(cx).is_empty() {
+                        let editor = workspace
+                            .active_item(cx)
+                            .and_then(|item| item.downcast::<Editor>())
+                            .expect("untitled editor should be restored");
+                        assert_eq!(editor.read(cx).text(cx), "unsaved text");
+                    }
+                })
+                .expect("restored window should exist");
+            titles.push(
+                VisualTestContext::from_window((*window).into(), cx)
+                    .window_title()
+                    .expect("restored window should have a title"),
+            );
+        }
+        titles.sort();
+        assert_eq!(
+            titles,
+            ["empty project", "startup-a — a.txt", "startup-b — b.txt"]
+        );
+    }
+
+    #[gpui::test]
     async fn test_quit_preserves_focused_workspace_for_restore(cx: &mut TestAppContext) {
         use session::Session;
         use workspace::{OpenMode, Workspace};
