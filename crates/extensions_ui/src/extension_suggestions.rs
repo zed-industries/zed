@@ -566,6 +566,13 @@ mod tests {
     #[gpui::test]
     async fn test_suggestion_returns_after_failed_install(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
+        // Fail the install before it unpacks the 404 body into the real `installed` directory.
+        app_state.fs.as_fake().set_remove_dir_error(
+            paths::extensions_dir()
+                .join("installed")
+                .join(EMMET_EXTENSION_ID),
+            "simulated install failure".into(),
+        );
         cx.update(|cx| {
             ExtensionStore::global(cx).update(cx, |store, cx| {
                 store.install_latest_extension(Arc::from(EMMET_EXTENSION_ID), cx);
@@ -786,6 +793,12 @@ mod tests {
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
             let app_state = AppState::test(cx);
+            // The extension store watches this directory, and watching a missing
+            // path falls back to polling on a timer that these tests never reach.
+            let installed_dir = paths::extensions_dir().join("installed");
+            cx.foreground_executor()
+                .block_on(app_state.fs.create_dir(&installed_dir))
+                .unwrap();
             AppState::set_global(app_state.clone(), cx);
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings(cx, |content| {

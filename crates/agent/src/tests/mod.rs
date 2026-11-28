@@ -610,15 +610,10 @@ async fn test_thinking_allowed_when_model_cannot_disable_thinking(cx: &mut TestA
 
 #[gpui::test]
 async fn test_system_prompt(cx: &mut TestAppContext) {
-    let ThreadTest {
-        fake,
-        thread,
-        project_context,
-        ..
-    } = setup(cx, TestModel::Fake).await;
+    let ThreadTest { fake, thread, .. } = setup(cx, TestModel::Fake).await;
 
-    project_context.update(cx, |project_context, _cx| {
-        project_context.shell = "test-shell".into()
+    let shell = thread.read_with(cx, |thread, cx| {
+        crate::sandboxing::terminal_shell_name(thread.project().read(cx), cx)
     });
     thread.update(cx, |thread, _| thread.add_tool(EchoTool));
     thread
@@ -643,7 +638,7 @@ async fn test_system_prompt(cx: &mut TestAppContext) {
         panic!("Expected text content");
     };
     assert!(
-        system_prompt.contains("test-shell"),
+        system_prompt.contains(&format!("Default Shell: {shell}")),
         "unexpected system message: {:?}",
         system_message
     );
@@ -6014,12 +6009,12 @@ async fn test_ask_user_elicitation_references_scoped_tool_call_id(cx: &mut TestA
         thread.respond_to_elicitation(
             &elicitation_id,
             acp_v2::CreateElicitationResponse::new(acp_v2::ElicitationAction::Accept(
-                acp_v2::ElicitationAcceptAction::new().content(std::collections::BTreeMap::from([
-                    (
+                acp_v2::ElicitationAcceptAction::new().content(
+                    agent_client_protocol::schema::IndexMap::from([(
                         "other".to_string(),
                         acp_v2::ElicitationContentValue::from("delve into src"),
-                    ),
-                ])),
+                    )]),
+                ),
             )),
             cx,
         );
@@ -7529,6 +7524,94 @@ async fn test_native_subagent_reports_and_restores_each_runs_outcome(cx: &mut Te
         assert!(subagent.subagent_association().is_some());
     });
     assert_reported(&reloaded, cx);
+}
+
+#[gpui::test]
+async fn test_native_subagent_restores_the_outcome_of_a_retry_from_its_own_view(
+    cx: &mut TestAppContext,
+) {
+    let test = SubagentCompactionTest::new(cx).await;
+    test.configure_compaction(false, 1_000_000, None, cx);
+    let session_id = test.handle.id();
+    let subagent = test._agent.read_with(cx, |agent, _| {
+        agent.sessions[&session_id].acp_thread.upgrade().unwrap()
+    });
+
+    let send = test.send("task", cx);
+    test.fake.send_last_error(
+        &test.model,
+        LanguageModelCompletionError::from_http_status(
+            LanguageModelProviderName::new("test"),
+            http_client::StatusCode::BAD_REQUEST,
+            "request failed".to_string(),
+            None,
+        ),
+    );
+    test.fake.end_last(&test.model);
+    let error = send.await.unwrap_err().to_string();
+    let failed_run_end = subagent.read_with(cx, |subagent, _| subagent.entries().len());
+
+    // A retry from the subagent's own view doesn't go through the parent's tool call.
+    let retry = subagent.update(cx, |subagent, cx| subagent.retry(cx));
+    cx.run_until_parked();
+    test.fake.send_last_text(&test.model, "done");
+    test.fake.end_last(&test.model);
+    cx.run_until_parked();
+    retry.await.unwrap();
+    let run_end = subagent.read_with(cx, |subagent, _| subagent.entries().len() - 1);
+
+    let mut failure = acp_v2::Error::internal_error();
+    failure.message = error;
+    test.thread.read_with(cx, |thread, _| {
+        assert_eq!(
+            thread.subagent_outcomes(),
+            [
+                SubagentOutcome {
+                    entry_count: failed_run_end,
+                    stop_reason: acp_v2::StopReason::Error(
+                        acp_v2::ErrorStopReason::new().error(failure)
+                    ),
+                },
+                SubagentOutcome {
+                    entry_count: run_end + 1,
+                    stop_reason: acp_v2::StopReason::EndTurn,
+                },
+            ]
+        )
+    });
+
+    let done = acp_v2::StateUpdate::Idle(
+        acp_v2::IdleStateUpdate::new().stop_reason(acp_v2::StopReason::EndTurn),
+    );
+    let assert_done = |subagent: &Entity<AcpThread>, cx: &mut TestAppContext| {
+        subagent.read_with(cx, |subagent, _| {
+            assert_eq!(subagent.subagent_outcome_between(0, run_end), Some(&done));
+        });
+    };
+    assert_done(&subagent, cx);
+
+    let project = test
+        .thread
+        .read_with(cx, |thread, _| thread.project.clone());
+    let SubagentCompactionTest {
+        _agent: agent,
+        _acp_thread,
+        parent,
+        thread,
+        environment,
+        handle,
+        ..
+    } = test;
+    drop((_acp_thread, parent, thread, environment, handle, subagent));
+    cx.run_until_parked();
+    release_dropped_entities(cx);
+    agent.read_with(cx, |agent, _| assert!(agent.sessions.is_empty()));
+
+    let reloaded = agent
+        .update(cx, |agent, cx| agent.open_thread(session_id, project, cx))
+        .await
+        .unwrap();
+    assert_done(&reloaded, cx);
 }
 
 #[gpui::test]

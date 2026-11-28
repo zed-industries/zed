@@ -241,14 +241,27 @@ pub(crate) fn create_socket(kind: SocketKind, address: SocketAddr) -> io::Result
     Ok(socket)
 }
 
-/// Route every address to loopback. Called by the helper in its new network
-/// namespace. (Ping would now get replies from every address, so the seccomp
-/// filter refuses ping sockets.)
+/// The address [`configure_namespace`] gives loopback besides `127.0.0.1`,
+/// from TEST-NET-1 (RFC 5737), which no network routes and which is outside
+/// the DNS's fake addresses.
+const OUTWARD_ADDRESS: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 1);
+
+/// Route every address to loopback, and give loopback an address that isn't
+/// a loopback one. Called by the helper in its new network namespace. (Ping
+/// would now get replies from every address, so the seccomp filter refuses
+/// ping sockets.)
+///
+/// Programs such as Nix decide they're offline when no interface has an
+/// address outside loopback, and then never connect, so they would never
+/// reach a rule that asks. The extra address changes nothing else: every
+/// address already routes back into the namespace.
 pub(crate) fn configure_namespace() -> anyhow::Result<()> {
     add_local_route(libc::AF_INET).context("routing IPv4 addresses to loopback")?;
     if ipv6_available() {
         add_local_route(libc::AF_INET6).context("routing IPv6 addresses to loopback")?;
     }
+    add_loopback_address(OUTWARD_ADDRESS)
+        .with_context(|| format!("giving loopback the address {OUTWARD_ADDRESS}"))?;
     Ok(())
 }
 
@@ -275,25 +288,55 @@ fn ipv6_available() -> bool {
     std::path::Path::new("/proc/net/if_inet6").exists()
 }
 
-/// `ip route add local <family's whole space> dev lo table local`.
-fn add_local_route(family: i32) -> io::Result<()> {
-    let socket = sys::socket(libc::AF_NETLINK, libc::SOCK_RAW, libc::NETLINK_ROUTE)?;
+/// The size of a netlink message header, `struct nlmsghdr`.
+const NETLINK_HEADER: usize = 16;
+
+fn loopback_index() -> io::Result<u32> {
     // SAFETY: valid NUL-terminated name.
     let loopback = unsafe { libc::if_nametoindex(c"lo".as_ptr()) };
     if loopback == 0 {
         return Err(io::Error::last_os_error());
     }
-    const HEADER: usize = 16;
-    const ROUTE: usize = 12;
-    const ATTRIBUTE: usize = 8;
-    let mut message = Vec::with_capacity(HEADER + ROUTE + ATTRIBUTE);
+    Ok(loopback)
+}
+
+/// Starts a netlink request of `message_type` whose body is `body_len`
+/// bytes long.
+fn netlink_request(message_type: u16, body_len: usize) -> Vec<u8> {
+    let mut message = Vec::with_capacity(NETLINK_HEADER + body_len);
     // struct nlmsghdr
-    message.extend(((HEADER + ROUTE + ATTRIBUTE) as u32).to_ne_bytes());
-    message.extend(libc::RTM_NEWROUTE.to_ne_bytes());
+    message.extend(((NETLINK_HEADER + body_len) as u32).to_ne_bytes());
+    message.extend(message_type.to_ne_bytes());
     let flags = libc::NLM_F_REQUEST | libc::NLM_F_ACK | libc::NLM_F_CREATE | libc::NLM_F_EXCL;
     message.extend((flags as u16).to_ne_bytes());
     message.extend(1u32.to_ne_bytes());
     message.extend(0u32.to_ne_bytes());
+    message
+}
+
+/// `ip address add <address>/32 dev lo`.
+fn add_loopback_address(address: Ipv4Addr) -> io::Result<()> {
+    const ADDRESS_MESSAGE: usize = 8;
+    const ATTRIBUTE: usize = 8;
+    let mut message = netlink_request(libc::RTM_NEWADDR, ADDRESS_MESSAGE + 2 * ATTRIBUTE);
+    // struct ifaddrmsg: one host address, scoped like a real interface's.
+    message.extend([libc::AF_INET as u8, 32, 0, libc::RT_SCOPE_UNIVERSE]);
+    message.extend(loopback_index()?.to_ne_bytes());
+    for attribute in [libc::IFA_LOCAL, libc::IFA_ADDRESS] {
+        // struct rtattr
+        message.extend((ATTRIBUTE as u16).to_ne_bytes());
+        message.extend(attribute.to_ne_bytes());
+        message.extend(address.octets());
+    }
+    send_netlink_request(&message)
+}
+
+/// `ip route add local <family's whole space> dev lo table local`.
+fn add_local_route(family: i32) -> io::Result<()> {
+    const ROUTE: usize = 12;
+    const ATTRIBUTE: usize = 8;
+    let loopback = loopback_index()?;
+    let mut message = netlink_request(libc::RTM_NEWROUTE, ROUTE + ATTRIBUTE);
     // struct rtmsg: no destination prefix bits, i.e. every address.
     message.extend([
         family as u8,
@@ -310,7 +353,13 @@ fn add_local_route(family: i32) -> io::Result<()> {
     message.extend((ATTRIBUTE as u16).to_ne_bytes());
     message.extend(libc::RTA_OIF.to_ne_bytes());
     message.extend(loopback.to_ne_bytes());
+    send_netlink_request(&message)
+}
 
+/// Sends one request to the kernel's routing netlink and waits for its
+/// acknowledgement.
+fn send_netlink_request(message: &[u8]) -> io::Result<()> {
+    let socket = sys::socket(libc::AF_NETLINK, libc::SOCK_RAW, libc::NETLINK_ROUTE)?;
     // SAFETY: sending a buffer we own; netlink addresses the kernel by
     // default.
     let sent = unsafe {
@@ -343,7 +392,7 @@ fn add_local_route(family: i32) -> io::Result<()> {
         .and_then(|bytes| bytes.try_into().ok())
         .map(u16::from_ne_bytes);
     let error = reply
-        .get(HEADER..HEADER + 4)
+        .get(NETLINK_HEADER..NETLINK_HEADER + 4)
         .and_then(|bytes| bytes.try_into().ok())
         .map(i32::from_ne_bytes);
     match (message_type, error) {
@@ -856,7 +905,8 @@ fn upstream_addresses(host: &NetHost, port: u16) -> io::Result<Vec<SocketAddr>> 
 }
 
 /// A name that resolves to a loopback or local-network address (e.g. by DNS
-/// rebinding) only reaches it if the address is allowed too.
+/// rebinding) only reaches it if the address is allowed too, or, for a
+/// local-network address, the rule allowing the name says it may.
 fn may_reach(
     shared: &Shared,
     sandbox: &SandboxState,
@@ -866,6 +916,14 @@ fn may_reach(
     caller: &Caller<'_>,
 ) -> bool {
     if matches!(host, NetHost::Ip(_)) || AddressClass::of(address.ip()) == AddressClass::Public {
+        return true;
+    }
+    if let NetHost::Domain(name) = host
+        && AddressClass::of(address.ip()) == AddressClass::LocalNetwork
+        && sandbox
+            .policy()
+            .name_reaches_local_network(name, address.port(), protocol)
+    {
         return true;
     }
     let request = RequestedAccess::Net {

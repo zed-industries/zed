@@ -5985,7 +5985,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.manipulate_immutable_lines(window, cx, |lines| {
-            lines.sort_by_key(|&line| line.chars().count())
+            lines.sort_by_cached_key(|&line| line.chars().count())
         })
     }
 
@@ -5996,7 +5996,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.manipulate_immutable_lines(window, cx, |lines| {
-            lines.sort_by_key(|line| line.to_lowercase())
+            lines.sort_by_cached_key(|line| line.to_lowercase())
         })
     }
 
@@ -6026,6 +6026,18 @@ impl Editor {
 
     fn enable_wrap_selections_in_tag(&self, cx: &App) -> bool {
         let snapshot = self.buffer.read(cx).snapshot(cx);
+
+        // No selection can be in a language with wrap characters when neither the buffer nor the
+        // diff base text shown in its expanded deleted hunks has one.
+        if let Some(buffer) = snapshot.as_singleton()
+            && !buffer.has_language_with_wrap_characters()
+            && snapshot
+                .diff_for_buffer_id(buffer.remote_id())
+                .is_none_or(|diff| !diff.base_text().has_language_with_wrap_characters())
+        {
+            return false;
+        }
+
         for selection in self.selections.disjoint_anchors_arc().iter() {
             if snapshot
                 .language_at(selection.start)
@@ -8461,13 +8473,30 @@ impl Editor {
 
         let project = project.read(cx);
         let multi_buffer = self.buffer.read(cx);
-        let snapshot = multi_buffer.snapshot(cx);
 
+        if let Some(buffer) = multi_buffer.as_singleton() {
+            // A pending selection alone does not count, as in the general case below.
+            return !self.selections.disjoint_anchors().is_empty()
+                && project.supports_range_formatting(&buffer, cx);
+        }
+
+        let snapshot = multi_buffer.read(cx);
+        let mut previous_buffer_id = None;
         self.selections
             .disjoint_anchor_ranges()
             .flat_map(|range| [range.start, range.end])
-            .filter_map(|anchor| snapshot.anchor_to_buffer_anchor(anchor))
-            .filter_map(|(_, buffer_snapshot)| multi_buffer.buffer(buffer_snapshot.remote_id()))
+            .filter_map(|anchor| {
+                anchor.buffer_id().or_else(|| {
+                    snapshot
+                        .anchor_to_buffer_anchor(anchor)
+                        .map(|(_, buffer_snapshot)| buffer_snapshot.remote_id())
+                })
+            })
+            // Selections are ordered, so this collapses each run of selections in the same buffer
+            // into a single range formatting check. `Itertools::dedup` would read a whole run
+            // before yielding its buffer.
+            .filter(|buffer_id| previous_buffer_id.replace(*buffer_id) != Some(*buffer_id))
+            .filter_map(|buffer_id| multi_buffer.buffer(buffer_id))
             .any(|buffer| project.supports_range_formatting(&buffer, cx))
     }
 

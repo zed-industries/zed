@@ -207,8 +207,7 @@ impl Vim {
                 let paste_text_last_character_offsets: Vec<_> = edits
                     .iter()
                     .map(|(_, text)| {
-                        text.strip_suffix('\n')
-                            .unwrap_or(text.as_str())
+                        text.trim_suffix('\n')
                             .char_indices()
                             .next_back()
                             .map_or(0, |(offset, _)| offset)

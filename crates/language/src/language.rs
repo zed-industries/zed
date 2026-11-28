@@ -941,7 +941,6 @@ pub struct FakeLspAdapter {
     pub initialization_options: Option<Value>,
     pub additional_initialization_options: HashMap<LanguageServerName, Value>,
     pub additional_workspace_configuration: HashMap<LanguageServerName, Value>,
-    pub prettier_plugins: Vec<&'static str>,
     pub disk_based_diagnostics_progress_token: Option<String>,
     pub disk_based_diagnostics_sources: Vec<String>,
     pub language_server_binary: LanguageServerBinary,
@@ -1630,7 +1629,6 @@ impl Default for FakeLspAdapter {
             additional_initialization_options: HashMap::default(),
             additional_workspace_configuration: HashMap::default(),
             disk_based_diagnostics_sources: Vec::new(),
-            prettier_plugins: Vec::new(),
             language_server_binary: LanguageServerBinary {
                 path: "/the/fake/lsp/path".into(),
                 arguments: vec![],
@@ -2026,6 +2024,22 @@ mod tests {
         assert!(
             !Arc::ptr_eq(&first_highlights.runs, &second_highlights.runs),
             "texts over the cache entry cap must not be memoized"
+        );
+    }
+
+    #[test]
+    fn test_text_highlight_cache_does_not_keep_grammar_alive() {
+        let language = rust_lang();
+        let grammar = Arc::downgrade(language.grammar().unwrap());
+        let code = "fn main() {}";
+        let highlights = language.highlight_text_resolved(code, 0..code.len());
+        let memoized = language.highlight_text_resolved(code, 0..code.len());
+        assert!(Arc::ptr_eq(&highlights.runs, &memoized.runs));
+
+        drop((highlights, memoized, language));
+        assert!(
+            grammar.upgrade().is_none(),
+            "cached highlights must not keep their grammar alive"
         );
     }
 

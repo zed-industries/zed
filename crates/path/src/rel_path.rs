@@ -311,21 +311,46 @@ impl PartialOrd for RelPath {
 impl Ord for RelPath {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Ranking `/` below every other byte orders paths by component.
-        const CHUNK: usize = 16;
         let rank = |byte: u8| if byte == b'/' { 0 } else { u16::from(byte) + 1 };
-        let (a, b) = (self.0.as_bytes(), other.0.as_bytes());
-        let len = a.len().min(b.len());
-        let mut offset = 0;
-        while offset + CHUNK <= len && a[offset..offset + CHUNK] == b[offset..offset + CHUNK] {
-            offset += CHUNK;
-        }
-        match a[offset..len]
+        const CHUNK: usize = size_of::<u128>();
+        // Read as little-endian, the XOR's lowest set bit is in the first difference.
+        let first_difference = |left: &[u8; CHUNK], right: &[u8; CHUNK]| {
+            let difference = u128::from_le_bytes(*left) ^ u128::from_le_bytes(*right);
+            (difference != 0).then(|| difference.trailing_zeros() as usize / 8)
+        };
+        let (left, right) = (self.0.as_bytes(), other.0.as_bytes());
+        let common_length = left.len().min(right.len());
+        let (left_prefix, right_prefix) = (&left[..common_length], &right[..common_length]);
+        let mut difference = None;
+        for (chunk_index, (left_chunk, right_chunk)) in left_prefix
+            .as_chunks::<CHUNK>()
+            .0
             .iter()
-            .zip(&b[offset..len])
-            .position(|(a, b)| a != b)
+            .zip(right_prefix.as_chunks::<CHUNK>().0)
+            .enumerate()
         {
-            Some(ix) => rank(a[offset + ix]).cmp(&rank(b[offset + ix])),
-            None => a.len().cmp(&b.len()),
+            if let Some(index) = first_difference(left_chunk, right_chunk) {
+                difference = Some(chunk_index * CHUNK + index);
+                break;
+            }
+        }
+        if difference.is_none() && common_length % CHUNK != 0 {
+            // A window ending at `common_length` overlaps only matched bytes.
+            difference = match (
+                left_prefix.last_chunk::<CHUNK>(),
+                right_prefix.last_chunk::<CHUNK>(),
+            ) {
+                (Some(left_chunk), Some(right_chunk)) => first_difference(left_chunk, right_chunk)
+                    .map(|index| common_length - CHUNK + index),
+                _ => left_prefix
+                    .iter()
+                    .zip(right_prefix)
+                    .position(|(left_byte, right_byte)| left_byte != right_byte),
+            };
+        }
+        match difference {
+            Some(index) => rank(left[index]).cmp(&rank(right[index])),
+            None => left.len().cmp(&right.len()),
         }
     }
 }
@@ -660,6 +685,10 @@ mod tests {
             "日本/語",
             "x/a.b/c",
             "x/a/b",
+            // Differ inside a full 16-byte chunk.
+            "a/cdefghijklmnop",
+            "A/cdefghijklmnop",
+            "a.bdefghijklmnop",
         ];
         // Long prefixes make `cmp` compare 16-byte chunks.
         for prefix in [

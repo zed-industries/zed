@@ -1610,6 +1610,7 @@ pub mod test {
         pub default_size: Pixels,
         pub flexible: bool,
         pub activation_priority: u32,
+        pub pane: Option<Entity<Pane>>,
     }
     actions!(test_only, [ToggleTestPanel]);
 
@@ -1627,6 +1628,7 @@ pub mod test {
                 default_size: px(300.),
                 flexible: false,
                 activation_priority,
+                pane: None,
             }
         }
 
@@ -1747,6 +1749,10 @@ pub mod test {
 
         fn activation_priority(&self) -> u32 {
             self.activation_priority
+        }
+
+        fn pane(&self) -> Option<Entity<Pane>> {
+            self.pane.clone()
         }
     }
 

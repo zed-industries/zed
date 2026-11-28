@@ -1170,8 +1170,9 @@ impl OutlinePanel {
                             outline_panel.default_depth_applied_buffers = outline_panel
                                 .buffers
                                 .iter()
-                                .filter(|(_, buffer)| {
-                                    matches!(buffer.outlines, OutlineState::Outlines(_))
+                                .filter(|(_, buffer)| match &buffer.outlines {
+                                    OutlineState::Outlines(outlines) => !outlines.is_empty(),
+                                    _ => false,
                                 })
                                 .map(|(buffer_id, _)| *buffer_id)
                                 .collect();
@@ -3817,9 +3818,10 @@ impl OutlinePanel {
                         .update_in(cx, |outline_panel, window, cx| {
                             let pending_default_depth =
                                 outline_panel.pending_default_expansion_depth.filter(|_| {
-                                    outline_panel
-                                        .default_depth_applied_buffers
-                                        .insert(buffer_id)
+                                    !fetched_outlines.is_empty()
+                                        && outline_panel
+                                            .default_depth_applied_buffers
+                                            .insert(buffer_id)
                                 });
 
                             let mut entries_changed = false;
@@ -13085,6 +13087,221 @@ test/
         outline: pub struct Two"
                 ),
                 "both files should render only their collapsed parent outlines"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_default_depth_applies_to_outlines_loaded_later(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .outline_panel
+                        .get_or_insert_default()
+                        .expand_outlines_with_depth = Some(0);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/test"),
+            json!({"src": {"one.rs": "mod alpha {\n    fn a() {}\n}\n"}}),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let outline_panel = outline_panel(&workspace, cx);
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.set_active(true, window, cx)
+        });
+
+        let buffer = open_buffer(&project, path!("/test/src/one.rs"), cx).await;
+        add_multi_buffer_editor(&workspace, &project, &[(&buffer, Vec::new())], cx);
+        wait_for_outline_tasks(&outline_panel, cx).await;
+
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
+        wait_for_outline_tasks(&outline_panel, cx).await;
+
+        outline_panel.update(cx, |panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(panel, cx),
+                    &panel.cached_entries,
+                    None,
+                    cx
+                ),
+                indoc!(
+                    "
+test/
+  src/
+    one.rs
+        outline: mod alpha"
+                ),
+                "an outline that arrives after the initial fetch should still be collapsed \
+                 by the default expansion depth"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_manually_expanded_outline_survives_edit_at_boundary(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .outline_panel
+                        .get_or_insert_default()
+                        .expand_outlines_with_depth = Some(0);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/test"),
+            json!({
+                "doc.md": "# Doc\n\n## A\n\ntext a\n\n## B\n\ntext b\n",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+        project.read_with(cx, |project, _| project.languages().add(markdown_lang()));
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let outline_panel = outline_panel(&workspace, cx);
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.set_active(true, window, cx)
+        });
+
+        let buffer = open_buffer(&project, path!("/test/doc.md"), cx).await;
+        add_multi_buffer_editor(&workspace, &project, &[(&buffer, Vec::new())], cx);
+        wait_for_outline_tasks(&outline_panel, cx).await;
+
+        outline_panel.update_in(cx, |panel, window, cx| {
+            let doc_entry = panel
+                .cached_entries
+                .iter()
+                .map(|entry| entry.entry.clone())
+                .find(|entry| {
+                    matches!(
+                        entry,
+                        PanelEntry::Outline(OutlineEntry::Outline(outline)) if outline.text == "# Doc"
+                    )
+                })
+                .expect("the Doc outline should be listed");
+            panel.toggle_expanded(&doc_entry, window, cx);
+        });
+        wait_for_outline_tasks(&outline_panel, cx).await;
+
+        let expanded = indoc!(
+            "
+test/
+  doc.md
+      outline: # Doc
+        outline: ## A
+        outline: ## B"
+        );
+        outline_panel.update(cx, |panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(panel, cx),
+                    &panel.cached_entries,
+                    None,
+                    cx
+                ),
+                expanded
+            );
+        });
+
+        buffer.update(cx, |buffer, cx| {
+            let end = buffer.len();
+            buffer.edit([(end..end, "!")], None, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
+        wait_for_outline_tasks(&outline_panel, cx).await;
+
+        outline_panel.update(cx, |panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(panel, cx),
+                    &panel.cached_entries,
+                    None,
+                    cx
+                ),
+                expanded,
+                "an outline the user expanded must stay expanded after an edit at its boundary"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_depth_change_while_outlines_empty_applies_to_later_symbols(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(path!("/test"), json!({"src": {"one.rs": ""}}))
+            .await;
+
+        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let outline_panel = outline_panel(&workspace, cx);
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.set_active(true, window, cx)
+        });
+
+        let buffer = open_buffer(&project, path!("/test/src/one.rs"), cx).await;
+        add_multi_buffer_editor(&workspace, &project, &[(&buffer, Vec::new())], cx);
+        wait_for_outline_tasks(&outline_panel, cx).await;
+
+        update_outline_panel_settings(cx, |settings| {
+            settings.expand_outlines_with_depth = Some(0);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
+        wait_for_outline_tasks(&outline_panel, cx).await;
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "mod alpha {\n    fn a() {}\n}\n")], None, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
+        wait_for_outline_tasks(&outline_panel, cx).await;
+
+        outline_panel.update(cx, |panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(panel, cx),
+                    &panel.cached_entries,
+                    None,
+                    cx
+                ),
+                indoc!(
+                    "
+test/
+  src/
+    one.rs
+        outline: mod alpha"
+                ),
+                "a depth change made while a buffer had no outlines should apply to \
+                 outlines that appear later"
             );
         });
     }

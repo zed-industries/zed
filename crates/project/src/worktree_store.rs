@@ -13,8 +13,8 @@ use collections::HashMap;
 use fs::{Fs, copy_recursive};
 use futures::{FutureExt, future::Shared};
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, Task, TaskExt,
-    WeakEntity,
+    App, AppContext as _, AsyncApp, BorrowAppContext, Context, Entity, EntityId, EventEmitter,
+    Global, Task, TaskExt, WeakEntity,
 };
 use itertools::Either;
 use postage::{prelude::Stream as _, watch};
@@ -23,6 +23,7 @@ use rpc::{
     proto::{self, REMOTE_SERVER_PROJECT_ID},
 };
 use serde::{Deserialize, Serialize};
+use settings::SettingsStore;
 use text::ReplicaId;
 use util::{
     ResultExt,
@@ -969,6 +970,11 @@ impl WorktreeStore {
                 .unwrap_or(root_path_buf.to_string_lossy().into_owned());
 
             let worktree = cx.update(|cx| {
+                cx.update_global::<SettingsStore, _>(|store, cx| {
+                    store
+                        .clear_local_settings(WorktreeId::from_proto(response.worktree_id), cx)
+                        .log_err();
+                });
                 Worktree::remote(
                     REMOTE_SERVER_PROJECT_ID,
                     ReplicaId::REMOTE_SERVER,
@@ -1007,6 +1013,25 @@ impl WorktreeStore {
 
         cx.spawn(async move |this, cx| {
             let worktree_id = next_worktree_id.await?;
+            // Before the worktree starts scanning, so that neither a trust check nor a scan
+            // event happens before the worktree joins the store with the corrected grants.
+            let resolve_trusted_path_casing = this.update(cx, |_, cx| {
+                TrustedWorktrees::try_get_global(cx).map(|trusted_worktrees| {
+                    let worktree_store = cx.entity();
+                    trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                        trusted_worktrees.resolve_trusted_path_casing(
+                            &worktree_store,
+                            abs_path.as_path(),
+                            fs.clone(),
+                            cx,
+                        )
+                    })
+                })
+            })?;
+            if let Some(resolve_trusted_path_casing) = resolve_trusted_path_casing {
+                resolve_trusted_path_casing.await;
+            }
+
             let worktree = Worktree::local(
                 SanitizedPath::cast_arc(abs_path.clone()),
                 visible,

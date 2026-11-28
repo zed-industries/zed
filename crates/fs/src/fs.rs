@@ -31,8 +31,8 @@ use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::mem::MaybeUninit;
 
 use async_tar::Archive;
-use futures::{AsyncRead, Stream, StreamExt, future::BoxFuture};
-use git::repository::{GitRepository, RealGitRepository};
+use futures::{AsyncRead, FutureExt as _, Stream, StreamExt, future::BoxFuture};
+use git::repository::{GitRepository, RealGitRepository, untrusted_git_command};
 #[cfg(windows)]
 use is_executable::IsExecutable;
 use rope::Rope;
@@ -161,6 +161,10 @@ pub trait Fs: Send + Sync {
     async fn is_file(&self, path: &Path) -> bool;
     async fn is_dir(&self, path: &Path) -> bool;
     async fn metadata(&self, path: &Path) -> Result<Option<Metadata>>;
+    /// Whether `path` is a symlink, without following it or needing read access to it.
+    /// On Windows, junctions and other name surrogate reparse points (e.g. mount points) count too.
+    /// Errors when `path` does not exist.
+    async fn is_symlink(&self, path: &Path) -> Result<bool>;
     async fn read_link(&self, path: &Path) -> Result<PathBuf>;
     async fn read_dir(
         &self,
@@ -205,6 +209,12 @@ pub trait Fs: Send + Sync {
     -> Result<()>;
     async fn git_clone(&self, abs_work_directory: &Path, repo_url: &str) -> Result<()>;
     async fn git_config(&self, abs_work_directory: &Path, args: Vec<String>) -> Result<String>;
+    async fn git_command(
+        &self,
+        git_binary_path: &Path,
+        abs_work_directory: &Path,
+        args: Vec<String>,
+    ) -> Result<String>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> bool;
     fn subscribe_to_jobs(&self) -> JobEventReceiver;
@@ -1275,6 +1285,15 @@ impl Fs for RealFs {
         }))
     }
 
+    async fn is_symlink(&self, path: &Path) -> Result<bool> {
+        let path = path.to_owned();
+        let metadata = self
+            .executor
+            .spawn(async move { std::fs::symlink_metadata(&path) })
+            .await?;
+        Ok(metadata.file_type().is_symlink())
+    }
+
     async fn read_link(&self, path: &Path) -> Result<PathBuf> {
         let path = path.to_owned();
         let path = self
@@ -1438,6 +1457,35 @@ impl Fs for RealFs {
         String::from_utf8(output.stdout).map_err(Into::into)
     }
 
+    async fn git_command(
+        &self,
+        git_binary_path: &Path,
+        abs_work_directory: &Path,
+        args: Vec<String>,
+    ) -> Result<String> {
+        let mut command = untrusted_git_command(
+            git_binary_path,
+            abs_work_directory,
+            self.executor.clone(),
+            &args,
+        );
+        command.kill_on_drop(true);
+        let output = command.output().fuse();
+        let timeout = self.executor.timer(Duration::from_secs(5)).fuse();
+        futures::pin_mut!(output, timeout);
+        let output = futures::select_biased! {
+            output = output => output?,
+            _ = timeout => {
+                log::warn!("git command in {abs_work_directory:?} timed out");
+                anyhow::bail!("git command in {abs_work_directory:?} timed out");
+            }
+        };
+        if !output.status.success() {
+            anyhow::bail!(String::from_utf8(output.stderr)?);
+        }
+        String::from_utf8(output.stdout).map_err(Into::into)
+    }
+
     fn is_fake(&self) -> bool {
         false
     }
@@ -1569,7 +1617,6 @@ struct FakeFsState {
     root: FakeFsEntry,
     next_inode: u64,
     next_mtime: SystemTime,
-    git_event_tx: async_channel::Sender<PathBuf>,
     watch_roots: Vec<(PathBuf, std::sync::Weak<dyn Watcher>)>,
     watches: FakeWatches,
     events_paused: bool,
@@ -2064,8 +2111,6 @@ impl FakeFs {
     const SYSTEMTIME_INTERVAL: Duration = Duration::from_nanos(100);
 
     pub fn new(executor: gpui::BackgroundExecutor) -> Arc<Self> {
-        let (tx, rx) = async_channel::bounded::<PathBuf>(10);
-
         let state = Arc::new(Mutex::new(FakeFsState {
             root: FakeFsEntry::Dir {
                 inode: 0,
@@ -2074,7 +2119,6 @@ impl FakeFs {
                 entries: Default::default(),
                 git_repo_state: None,
             },
-            git_event_tx: tx,
             next_mtime: UNIX_EPOCH + Self::SYSTEMTIME_INTERVAL,
             next_inode: 1,
             watch_roots: Vec::new(),
@@ -2103,28 +2147,13 @@ impl FakeFs {
         let poll_watcher =
             fs_watcher::OsWatcher::new(fs_watcher::OsWatcherKind::Poll, executor.clone());
 
-        let this = Arc::new_cyclic(|this| Self {
+        Arc::new_cyclic(|this| Self {
             this: this.clone(),
             executor: executor.clone(),
             state,
             native_watcher,
             poll_watcher,
-        });
-
-        executor.spawn({
-            let this = this.clone();
-            async move {
-                while let Ok(git_event) = rx.recv().await {
-                    if let Some(mut state) = this.state.try_lock() {
-                        state.emit_event([(git_event, Some(PathEventKind::Changed))]);
-                    } else {
-                        panic!("Failed to lock file system state, this execution would have caused a test hang");
-                    }
-                }
-            }
-        }).detach();
-
-        this
+        })
     }
 
     /// Configures whether the fake filesystem reports as case-sensitive.
@@ -2431,13 +2460,12 @@ impl FakeFs {
         F: FnOnce(&mut FakeGitRepositoryState, &Path, &Path) -> T,
     {
         let mut state = self.state.lock();
-        let git_event_tx = state.git_event_tx.clone();
         let entry = state.entry(dot_git).context("open .git")?;
 
         if let FakeFsEntry::Dir { git_repo_state, .. } = entry {
             let repo_state = git_repo_state.get_or_insert_with(|| {
                 log::debug!("insert git state for {dot_git:?}");
-                Arc::new(Mutex::new(FakeGitRepositoryState::new(git_event_tx)))
+                Arc::new(Mutex::new(FakeGitRepositoryState::new()))
             });
             let mut repo_state = repo_state.lock();
 
@@ -2494,9 +2522,8 @@ impl FakeFs {
             } else {
                 canonical_path.clone()
             };
-            let repo_state = git_repo_state.get_or_insert_with(|| {
-                Arc::new(Mutex::new(FakeGitRepositoryState::new(git_event_tx)))
-            });
+            let repo_state = git_repo_state
+                .get_or_insert_with(|| Arc::new(Mutex::new(FakeGitRepositoryState::new())));
             let mut repo_state = repo_state.lock();
 
             let result = f(&mut repo_state, &canonical_path, &common_dir);
@@ -2567,9 +2594,7 @@ impl FakeFs {
             .ref_name
             .as_ref()
             .expect("linked worktree must have a ref_name");
-        let branch_name = ref_name
-            .strip_prefix("refs/heads/")
-            .unwrap_or(ref_name.as_ref());
+        let branch_name = ref_name.trim_prefix("refs/heads/");
 
         // Create ref in git state.
         self.with_git_state(dot_git, false, |state| {
@@ -2626,7 +2651,7 @@ impl FakeFs {
         emit_git_event: bool,
         ref_name: &str,
     ) {
-        let branch_name = ref_name.strip_prefix("refs/heads/").unwrap_or(ref_name);
+        let branch_name = ref_name.trim_prefix("refs/heads/");
         let worktrees_entry_dir = dot_git.join("worktrees").join(branch_name);
 
         // Read gitdir to find the worktree checkout path.
@@ -3669,6 +3694,16 @@ impl Fs for FakeFs {
         }
     }
 
+    async fn is_symlink(&self, path: &Path) -> Result<bool> {
+        self.simulate_random_delay().await;
+        let path = normalize_path(path);
+        let mut state = self.state.lock();
+        let (entry, _) = state
+            .try_entry(&path, false)
+            .with_context(|| format!("path does not exist: {path:?}"))?;
+        Ok(entry.is_symlink())
+    }
+
     async fn read_link(&self, path: &Path) -> Result<PathBuf> {
         self.simulate_random_delay().await;
         let path = normalize_path(path);
@@ -3767,6 +3802,15 @@ impl Fs for FakeFs {
 
     async fn git_config(&self, _abs_work_directory: &Path, _args: Vec<String>) -> Result<String> {
         anyhow::bail!("Git config is not supported in fake Fs")
+    }
+
+    async fn git_command(
+        &self,
+        _git_binary_path: &Path,
+        _abs_work_directory: &Path,
+        _args: Vec<String>,
+    ) -> Result<String> {
+        anyhow::bail!("Git commands are not supported in fake Fs")
     }
 
     fn record_watcher_diagnostics(&self) -> Option<fs_watcher::WatchRecording> {
@@ -3988,5 +4032,93 @@ fn atomic_replace<P: AsRef<Path>>(
             None,
             None,
         )
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use gpui::BackgroundExecutor;
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    #[gpui::test]
+    async fn test_git_command_times_out_and_kills_git(executor: BackgroundExecutor) {
+        executor.allow_parking();
+        let fs = RealFs::new(None, executor.clone());
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let repository = temp_dir.path().join("repository");
+        let fifo_path = repository.join(".git/included");
+        fs.git_command(
+            Path::new("git"),
+            temp_dir.path(),
+            ["init", "--quiet", "repository"].map(String::from).to_vec(),
+        )
+        .await
+        .unwrap();
+        let fifo_c_string =
+            std::ffi::CString::new(fifo_path.as_os_str().as_encoded_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo_c_string.as_ptr(), 0o600) }, 0);
+        fs.git_command(
+            Path::new("git"),
+            &repository,
+            ["config", "include.path", "included"]
+                .map(String::from)
+                .to_vec(),
+        )
+        .await
+        .unwrap();
+
+        let git_command = executor.spawn({
+            let fs = fs.clone();
+            let repository = repository.clone();
+            async move {
+                fs.git_command(
+                    Path::new("git"),
+                    &repository,
+                    ["rev-parse", "--git-dir"].map(String::from).to_vec(),
+                )
+                .await
+            }
+        });
+        let open_writer = || {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&fifo_path)
+        };
+        executor.run_until_parked();
+        let mut writers = Vec::new();
+        for _ in 0..50 {
+            if let Ok(writer) = open_writer() {
+                writers.push(writer);
+                break;
+            }
+            executor.timer(Duration::from_millis(10)).await;
+        }
+        assert_eq!(writers.len(), 1, "git never opened the included config");
+        executor.advance_clock(Duration::from_secs(5));
+        executor.run_until_parked();
+        let error = git_command
+            .now_or_never()
+            .expect("git command is still running")
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!("git command in {repository:?} timed out")
+        );
+
+        let mut has_reader = true;
+        for _ in 0..50 {
+            match open_writer() {
+                Ok(writer) => writers.push(writer),
+                Err(_) => {
+                    has_reader = false;
+                    break;
+                }
+            }
+            executor.timer(Duration::from_millis(10)).await;
+        }
+        drop(writers);
+        assert!(!has_reader, "the timed out git process is still running");
     }
 }

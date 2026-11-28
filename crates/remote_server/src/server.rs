@@ -1,5 +1,6 @@
 mod global_skills;
 mod headless_project;
+mod tcp;
 
 #[cfg(test)]
 mod remote_editing_tests;
@@ -88,6 +89,12 @@ pub enum Commands {
         identifier: String,
     },
     Version,
+    Tcp {
+        address: std::net::SocketAddr,
+        timeout: u64,
+        #[arg(last = true)]
+        command: Vec<String>,
+    },
     #[cfg(unix)]
     Exec,
 }
@@ -116,6 +123,19 @@ pub fn run(command: Commands) -> anyhow::Result<()> {
         } => execute_proxy(identifier, reconnect).context("running proxy on the remote server"),
         #[cfg(unix)]
         Commands::Exec => execute_command(),
+        Commands::Tcp {
+            address,
+            timeout,
+            command,
+        } => smol::block_on(tcp::proxy(
+            address,
+            std::time::Duration::from_millis(timeout),
+            &command,
+            smol::net::TcpStream::connect,
+            smol::Unblock::new(std::io::stdin()),
+            smol::Unblock::new(std::io::stdout()),
+            tcp::stdin_closed(),
+        )),
         Commands::Version => {
             let release_channel = *RELEASE_CHANNEL;
             match release_channel {

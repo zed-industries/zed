@@ -1091,7 +1091,7 @@ async fn github_release_asset_sha256(
         .iter()
         .find(|asset| asset.name == github_archive.asset_name)?;
     let digest = asset.digest.as_ref()?;
-    Some(digest.strip_prefix("sha256:").unwrap_or(digest).to_string())
+    Some(digest.trim_prefix("sha256:").to_string())
 }
 
 fn sanitize_path_component(input: &str) -> String {

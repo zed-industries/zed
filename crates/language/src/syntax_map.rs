@@ -67,6 +67,7 @@ impl Drop for SyntaxSnapshot {
                 last_layer_range: Anchor::min_min_range_for_buffer(BufferId::new(1).unwrap()),
                 last_layer_language: Default::default(),
                 contains_unknown_injections: Default::default(),
+                contains_wrap_characters: Default::default(),
             }),
         ));
     }
@@ -264,6 +265,7 @@ struct SyntaxLayerSummary {
     last_layer_range: Range<Anchor>,
     last_layer_language: Option<LanguageId>,
     contains_unknown_injections: bool,
+    contains_wrap_characters: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1186,6 +1188,11 @@ impl SyntaxSnapshot {
 
     pub fn contains_unknown_injections(&self) -> bool {
         self.layers.summary().contains_unknown_injections
+    }
+
+    /// Whether the language of any parsed layer has wrap characters.
+    pub fn contains_wrap_characters(&self) -> bool {
+        self.layers.summary().contains_wrap_characters
     }
 
     pub fn language_registry_version(&self) -> usize {
@@ -2156,6 +2163,7 @@ impl sum_tree::Summary for SyntaxLayerSummary {
                 ..Anchor::max_for_buffer(buffer.remote_id()),
             last_layer_language: None,
             contains_unknown_injections: false,
+            contains_wrap_characters: false,
         }
     }
 
@@ -2174,6 +2182,7 @@ impl sum_tree::Summary for SyntaxLayerSummary {
         self.last_layer_range = other.last_layer_range.clone();
         self.last_layer_language = other.last_layer_language;
         self.contains_unknown_injections |= other.contains_unknown_injections;
+        self.contains_wrap_characters |= other.contains_wrap_characters;
     }
 }
 
@@ -2223,6 +2232,11 @@ impl sum_tree::Item for SyntaxLayerEntry {
             last_layer_range: self.range.clone(),
             last_layer_language: self.content.language_id(),
             contains_unknown_injections: matches!(self.content, SyntaxLayerContent::Pending { .. }),
+            contains_wrap_characters: matches!(
+                &self.content,
+                SyntaxLayerContent::Parsed { language, .. }
+                    if language.config.wrap_characters.is_some()
+            ),
         }
     }
 }

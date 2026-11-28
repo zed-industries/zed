@@ -1420,15 +1420,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             })
             .collect();
 
-        let volumes: Vec<MountDefinition> = resources
-            .additional_mounts
-            .iter()
-            .map(|v| MountDefinition {
-                source: v.source.clone(),
-                target: v.target.clone(),
-                mount_type: v.mount_type.clone(),
-            })
-            .collect();
+        let volumes: Vec<MountDefinition> = resources.additional_mounts.clone();
 
         let entrypoint = resources.entrypoint_script.map(|script| {
             vec![
@@ -2152,6 +2144,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                 project_directory_name.display()
             ),
             mount_type: None,
+            ..Default::default()
         })
     }
 
@@ -2454,6 +2447,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             let container_started = !docker_inspect.is_running();
             if container_started {
                 log::debug!("Container not running. Will attempt to start, and then proceed");
+                self.run_initialize_commands().await?;
                 match self.dev_container().build_type() {
                     DevContainerBuildType::DockerCompose => {
                         let resources = self.docker_compose_manifest().await?;
@@ -3302,7 +3296,9 @@ fn append_mount_with_target_override(mounts: &mut Vec<MountDefinition>, mount: M
 
 fn mount_definition_from_metadata(value: &serde_json_lenient::Value) -> Option<MountDefinition> {
     match value {
-        serde_json_lenient::Value::String(value) => parse_mount_definition_string(value),
+        serde_json_lenient::Value::String(value) => MountDefinition::parse(value)
+            .inspect_err(|error| log::warn!("Skipping image metadata mount: {error}"))
+            .ok(),
         serde_json_lenient::Value::Object(object) => {
             let source = object
                 .get("source")
@@ -3323,34 +3319,11 @@ fn mount_definition_from_metadata(value: &serde_json_lenient::Value) -> Option<M
                 source,
                 target,
                 mount_type,
+                ..Default::default()
             })
         }
         _ => None,
     }
-}
-
-fn parse_mount_definition_string(value: &str) -> Option<MountDefinition> {
-    let mut source = None;
-    let mut target = None;
-    let mut mount_type = None;
-
-    for part in value.split(',') {
-        let Some((key, value)) = part.trim().split_once('=') else {
-            continue;
-        };
-        match key.trim() {
-            "source" | "src" => source = Some(value.trim().to_string()),
-            "target" | "dst" | "destination" => target = Some(value.trim().to_string()),
-            "type" => mount_type = Some(value.trim().to_string()),
-            _ => {}
-        }
-    }
-
-    target.map(|target| MountDefinition {
-        source,
-        target,
-        mount_type,
-    })
 }
 
 fn escape_compose_interpolation(value: &str) -> String {
@@ -3935,6 +3908,7 @@ mod test {
                 )),
                 target: "/var/lib/docker".to_string(),
                 mount_type: Some("volume".to_string()),
+                ..Default::default()
             }]
         );
         assert_eq!(
@@ -3956,6 +3930,98 @@ mod test {
         assert_eq!(
             persisted_mount_source,
             Some("dind-var-lib-docker-${devcontainerId}")
+        );
+    }
+
+    async fn mount_options_test_resources(
+        cx: &mut TestAppContext,
+    ) -> (DevContainerManifest, DockerBuildResources) {
+        let (_, mut devcontainer_manifest) = init_default_devcontainer_manifest(
+            cx,
+            r#"{
+                "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+                "mounts": [
+                    "source=/host/hooks,target=/hooks,type=bind,READONLY=false,readonly",
+                    "source=/host/cache,target=/cache,type=bind,bind-propagation=rslave"
+                ]
+            }"#,
+        )
+        .await
+        .unwrap();
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+
+        let metadata = serde_json_lenient::from_str(
+            r#"[
+                {
+                    "mounts": ["source=/host/metadata,target=/metadata,type=bind,\"ro\""]
+                }
+            ]"#,
+        )
+        .unwrap();
+        let base_image = DockerInspect {
+            id: "base-image-id".to_string(),
+            config: DockerInspectConfig {
+                labels: DockerConfigLabels {
+                    metadata: Some(metadata),
+                },
+                image_user: None,
+                env: Vec::new(),
+            },
+            mounts: None,
+            state: None,
+        };
+        let resources = devcontainer_manifest
+            .build_merged_resources(base_image, "mcr.microsoft.com/devcontainers/base:ubuntu")
+            .unwrap();
+        (devcontainer_manifest, resources)
+    }
+
+    #[gpui::test]
+    async fn should_pass_mount_options_to_docker_run(cx: &mut TestAppContext) {
+        let (devcontainer_manifest, resources) = mount_options_test_resources(cx).await;
+
+        let docker_run_command = devcontainer_manifest
+            .create_docker_run_command(resources)
+            .unwrap();
+
+        let args = docker_run_command.get_args().collect::<Vec<&OsStr>>();
+        let mounts = args
+            .iter()
+            .zip(args.iter().skip(1))
+            .filter(|(flag, _)| **flag == "--mount")
+            .map(|(_, mount)| mount.to_str().unwrap())
+            .skip(1)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            mounts,
+            vec![
+                "type=bind,source=/host/metadata,target=/metadata,readonly,consistency=cached",
+                "type=bind,source=/host/hooks,target=/hooks,readonly,consistency=cached",
+                "type=bind,source=/host/cache,target=/cache,bind-propagation=rslave,consistency=cached",
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn should_pass_mount_options_to_compose_override(cx: &mut TestAppContext) {
+        let (devcontainer_manifest, resources) = mount_options_test_resources(cx).await;
+
+        let runtime_override = devcontainer_manifest
+            .build_runtime_override("app", None, resources)
+            .unwrap();
+
+        let runtime_override = serde_json_lenient::to_value(&runtime_override).unwrap();
+        let volumes: Vec<Value> = serde_json_lenient::from_str(
+            r#"[
+                { "source": "/host/metadata", "target": "/metadata", "type": "bind", "read_only": true },
+                { "source": "/host/hooks", "target": "/hooks", "type": "bind", "read_only": true },
+                { "source": "/host/cache", "target": "/cache", "type": "bind" }
+            ]"#,
+        )
+        .unwrap();
+        assert_eq!(
+            runtime_override["services"]["app"]["volumes"],
+            Value::Array(volumes)
         );
     }
 
@@ -5982,6 +6048,21 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
         );
     }
 
+    #[gpui::test]
+    async fn test_runs_initialize_command_before_restarting_container(cx: &mut TestAppContext) {
+        let json = r#"{"image": "image", "initializeCommand": ["touch", "marker"]}"#;
+        let (dependencies, mut manifest) =
+            init_default_devcontainer_manifest(cx, json).await.unwrap();
+        manifest.parse_nonremote_vars().unwrap();
+
+        // `FakeDocker` fails every start, so `touch` is recorded only if it runs first.
+        let result = manifest.check_for_existing_devcontainer().await;
+
+        assert!(matches!(result, Err(DevContainerError::DockerNotAvailable)));
+        let commands = dependencies.command_runner.commands_by_program("touch");
+        assert_eq!(commands.len(), 1);
+    }
+
     #[cfg(not(target_os = "windows"))]
     #[gpui::test]
     async fn test_spawns_devcontainer_with_docker_compose_and_podman(cx: &mut TestAppContext) {
@@ -7498,6 +7579,7 @@ RUN echo $RUBY_VERSION2
                                     source: Some("../..".to_string()),
                                     target: "/workspaces".to_string(),
                                     mount_type: Some("bind".to_string()),
+                                    ..Default::default()
                                 }],
                                 command: vec!["sleep".to_string(), "infinity".to_string()],
                                 ..Default::default()
@@ -7517,6 +7599,7 @@ RUN echo $RUBY_VERSION2
                                     source: Some("../..".to_string()),
                                     target: "/workspaces".to_string(),
                                     mount_type: Some("bind".to_string()),
+                                    ..Default::default()
                                 }],
                                 network_mode: Some("service:db".to_string()),
                                 ..Default::default()
@@ -7530,6 +7613,7 @@ RUN echo $RUBY_VERSION2
                                     source: Some("postgres-data".to_string()),
                                     target: "/var/lib/postgresql/data".to_string(),
                                     mount_type: Some("volume".to_string()),
+                                    ..Default::default()
                                 }],
                                 env_file: Some(vec![".env".to_string()]),
                                 ..Default::default()
