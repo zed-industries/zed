@@ -4936,6 +4936,7 @@ dependencies = [
  "serde_yaml_ng",
  "settings",
  "shlex 2.0.1",
+ "tempfile",
  "ui",
  "util",
  "walkdir",
