@@ -1194,9 +1194,9 @@ pub trait OAuthTokenProvider: Send + Sync {
     /// Returns the current access token, if one is available.
     fn access_token(&self) -> Option<String>;
 
-    /// Attempts to refresh the access token. Returns `true` if a new token was
-    /// obtained and the request should be retried.
-    async fn try_refresh(&self) -> Result<bool>;
+    /// Refreshes an expired token or one rejected by the server. If another
+    /// request already replaced the rejected token, reuses that token instead.
+    async fn try_refresh(&self, rejected_access_token: Option<&str>) -> Result<bool>;
 }
 
 /// Concrete `OAuthTokenProvider` backed by a full persisted OAuth session and
@@ -1204,22 +1204,32 @@ pub trait OAuthTokenProvider: Send + Sync {
 /// an interactive authentication flow and when restoring a saved session from
 /// the keychain on startup.
 pub struct McpOAuthTokenProvider {
-    session: SyncMutex<OAuthSession>,
+    session: SyncMutex<Option<Arc<OAuthSession>>>,
+    refresh_lock: futures::lock::Mutex<()>,
     http_client: Arc<dyn HttpClient>,
-    token_refresh_tx: Option<mpsc::UnboundedSender<OAuthSession>>,
+    token_refresh_tx: Option<mpsc::UnboundedSender<Arc<OAuthSession>>>,
 }
 
 impl McpOAuthTokenProvider {
     pub fn new(
         session: OAuthSession,
         http_client: Arc<dyn HttpClient>,
-        token_refresh_tx: Option<mpsc::UnboundedSender<OAuthSession>>,
+        token_refresh_tx: Option<mpsc::UnboundedSender<Arc<OAuthSession>>>,
     ) -> Self {
         Self {
-            session: SyncMutex::new(session),
+            session: SyncMutex::new(Some(Arc::new(session))),
+            refresh_lock: futures::lock::Mutex::new(()),
             http_client,
             token_refresh_tx,
         }
+    }
+
+    pub fn session(&self) -> Option<Arc<OAuthSession>> {
+        self.session.lock().clone()
+    }
+
+    pub fn set_session(&self, session: Option<OAuthSession>) {
+        *self.session.lock() = session.map(Arc::new);
     }
 
     fn access_token_is_expired(tokens: &OAuthTokens) -> bool {
@@ -1234,58 +1244,68 @@ impl McpOAuthTokenProvider {
 #[async_trait]
 impl OAuthTokenProvider for McpOAuthTokenProvider {
     fn access_token(&self) -> Option<String> {
-        let session = self.session.lock();
+        let session = self.session()?;
         if Self::access_token_is_expired(&session.tokens) {
             return None;
         }
         Some(session.tokens.access_token.clone())
     }
 
-    async fn try_refresh(&self) -> Result<bool> {
-        let (refresh_token, token_endpoint, resource, client_id, client_secret) = {
-            let session = self.session.lock();
-            match session.tokens.refresh_token.clone() {
-                Some(refresh_token) => (
-                    refresh_token,
-                    session.token_endpoint.clone(),
-                    session.resource.clone(),
-                    session.client_registration.client_id.clone(),
-                    session.client_registration.client_secret.clone(),
-                ),
-                None => return Ok(false),
-            }
+    async fn try_refresh(&self, rejected_access_token: Option<&str>) -> Result<bool> {
+        // Refresh tokens may be single-use, so read the session after acquiring
+        // the lock and hold it through the exchange.
+        let _guard = self.refresh_lock.lock().await;
+        let Some(session) = self.session() else {
+            return Ok(false);
         };
-
-        let resource_str = canonical_server_uri(&resource);
-
-        match refresh_tokens(
-            &self.http_client,
-            &token_endpoint,
-            &refresh_token,
-            &client_id,
-            &resource_str,
-            client_secret.as_deref(),
-        )
-        .await
+        if !Self::access_token_is_expired(&session.tokens)
+            && rejected_access_token != Some(session.tokens.access_token.as_str())
         {
+            return Ok(true);
+        }
+        let Some(refresh_token) = session.tokens.refresh_token.as_ref() else {
+            return Ok(false);
+        };
+        let resource = canonical_server_uri(&session.resource);
+
+        let result = refresh_tokens(
+            &self.http_client,
+            &session.token_endpoint,
+            refresh_token,
+            &session.client_registration.client_id,
+            &resource,
+            session.client_registration.client_secret.as_deref(),
+        )
+        .await;
+        let mut current_session = self.session.lock();
+        // Logout or a new login can replace the session during the exchange.
+        if !current_session
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, &session))
+        {
+            return Ok(current_session
+                .as_ref()
+                .is_some_and(|current| !Self::access_token_is_expired(&current.tokens)));
+        }
+        match result {
             Ok(mut new_tokens) => {
                 if new_tokens.refresh_token.is_none() {
-                    new_tokens.refresh_token = Some(refresh_token);
+                    new_tokens.refresh_token = Some(refresh_token.clone());
                 }
-
-                {
-                    let mut session = self.session.lock();
-                    session.tokens = new_tokens;
-
-                    if let Some(ref tx) = self.token_refresh_tx {
-                        tx.unbounded_send(session.clone()).ok();
+                let refreshed_session = Arc::new(OAuthSession {
+                    tokens: new_tokens,
+                    ..session.as_ref().clone()
+                });
+                *current_session = Some(refreshed_session.clone());
+                if let Some(ref sender) = self.token_refresh_tx {
+                    if let Err(error) = sender.unbounded_send(refreshed_session) {
+                        log::warn!("Failed to queue refreshed OAuth session: {}", error);
                     }
                 }
-
                 Ok(true)
             }
-            Err(err) => {
-                log::warn!("OAuth token refresh failed: {}", err);
+            Err(error) => {
+                log::warn!("OAuth token refresh failed: {}", error);
                 Ok(false)
             }
         }
@@ -2756,6 +2776,96 @@ mod tests {
     }
 
     #[test]
+    fn test_mcp_oauth_provider_coalesces_concurrent_refreshes() {
+        gpui::block_on(async {
+            for expired in [false, true] {
+                let (response_sender, response_receiver) = futures::channel::oneshot::channel();
+                let response_receiver = SyncMutex::new(Some(response_receiver));
+                let request_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let http_client = make_fake_http_client({
+                    let request_count = request_count.clone();
+                    move |_request| {
+                        request_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        let response_receiver =
+                            response_receiver.lock().take().expect("only one refresh");
+                        Box::pin(async move {
+                            response_receiver.await?;
+                            json_response(
+                                200,
+                                r#"{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600}"#,
+                            )
+                        })
+                    }
+                });
+                let session = make_test_session(
+                    "old-access",
+                    Some("old-refresh"),
+                    expired.then(|| SystemTime::now() - Duration::from_secs(60)),
+                );
+                let provider = McpOAuthTokenProvider::new(session, http_client, None);
+                let rejected_token = if expired { None } else { Some("old-access") };
+                let first_refresh = provider.try_refresh(rejected_token);
+                let second_refresh = provider.try_refresh(rejected_token);
+                futures::pin_mut!(first_refresh, second_refresh);
+                assert!(futures::poll!(&mut first_refresh).is_pending());
+                assert!(futures::poll!(&mut second_refresh).is_pending());
+                response_sender.send(()).unwrap();
+
+                let (first_result, second_result) = futures::join!(first_refresh, second_refresh);
+                assert!(first_result.unwrap());
+                assert!(second_result.unwrap());
+                assert_eq!(provider.access_token().as_deref(), Some("new-access"));
+                assert!(provider.try_refresh(Some("old-access")).await.unwrap());
+                assert_eq!(request_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+            }
+        });
+    }
+
+    #[test]
+    fn test_mcp_oauth_provider_discards_refresh_after_session_replacement() {
+        gpui::block_on(async {
+            for logged_out in [false, true] {
+                let (response_sender, response_receiver) = futures::channel::oneshot::channel();
+                let response_receiver = SyncMutex::new(Some(response_receiver));
+                let http_client = make_fake_http_client(move |_request| {
+                    let response_receiver = response_receiver.lock().take().unwrap();
+                    Box::pin(async move {
+                        response_receiver.await?;
+                        json_response(
+                            200,
+                            r#"{"access_token":"stale-access","refresh_token":"stale-refresh"}"#,
+                        )
+                    })
+                });
+                let (sender, mut receiver) = mpsc::unbounded();
+                let provider = McpOAuthTokenProvider::new(
+                    make_test_session("old-access", Some("old-refresh"), None),
+                    http_client,
+                    Some(sender),
+                );
+                let refresh = provider.try_refresh(Some("old-access"));
+                futures::pin_mut!(refresh);
+                assert!(futures::poll!(&mut refresh).is_pending());
+
+                provider.set_session(
+                    (!logged_out)
+                        .then(|| make_test_session("login-access", Some("login-refresh"), None)),
+                );
+                response_sender.send(()).unwrap();
+                assert_eq!(refresh.await.unwrap(), !logged_out);
+                assert_eq!(
+                    provider.access_token().as_deref(),
+                    (!logged_out).then_some("login-access")
+                );
+                assert!(
+                    receiver.try_recv().is_err(),
+                    "stale session must not be persisted"
+                );
+            }
+        });
+    }
+
+    #[test]
     fn test_mcp_oauth_provider_returns_none_when_token_expired() {
         let expired = SystemTime::now() - Duration::from_secs(60);
         let session = make_test_session("stale-token", Some("rt"), Some(expired));
@@ -2805,7 +2915,7 @@ mod tests {
                 None,
             );
 
-            let refreshed = provider.try_refresh().await.unwrap();
+            let refreshed = provider.try_refresh(Some("token")).await.unwrap();
             assert!(!refreshed);
         });
     }
@@ -2831,7 +2941,7 @@ mod tests {
 
             let provider = McpOAuthTokenProvider::new(session, http_client, Some(tx));
 
-            let refreshed = provider.try_refresh().await.unwrap();
+            let refreshed = provider.try_refresh(Some("old-access")).await.unwrap();
             assert!(refreshed);
             assert_eq!(provider.access_token().as_deref(), Some("new-access"));
 
@@ -2864,7 +2974,7 @@ mod tests {
 
             let provider = McpOAuthTokenProvider::new(session, http_client, Some(tx));
 
-            let refreshed = provider.try_refresh().await.unwrap();
+            let refreshed = provider.try_refresh(Some("old-access")).await.unwrap();
             assert!(refreshed);
 
             let notified_session = rx.try_recv().expect("channel should have a session");
@@ -2887,7 +2997,7 @@ mod tests {
 
             let provider = McpOAuthTokenProvider::new(session, http_client, None);
 
-            let refreshed = provider.try_refresh().await.unwrap();
+            let refreshed = provider.try_refresh(Some("old-access")).await.unwrap();
             assert!(!refreshed);
             // The old token should still be in place.
             assert_eq!(provider.access_token().as_deref(), Some("old-access"));
