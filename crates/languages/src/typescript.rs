@@ -1037,6 +1037,75 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_arktype_injections(cx: &mut TestAppContext) {
+        use language::{Buffer, Language, LanguageConfig, LanguageRegistry};
+        use std::sync::Arc;
+
+        let source = r#"
+            const User = type({ name: "string" });
+            const types = scope({ id: "string" });
+            const Admin = User.and({ role: "'admin'" });
+            const Email = $.type("string.email");
+            const Slug = regex("^[a-z-]+$", "u");
+            const label = format("label");
+            const plain = "plain";
+        "#
+        .unindent();
+
+        // Stands in for the language the ArkType extension provides; only its name matters.
+        let registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        registry.add(Arc::new(Language::new(
+            LanguageConfig {
+                name: "ArkType".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+        )));
+
+        for language in [
+            crate::language(
+                "typescript",
+                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            ),
+            crate::language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into()),
+            crate::language("javascript", tree_sitter_typescript::LANGUAGE_TSX.into()),
+        ] {
+            let buffer = cx.new(|cx| {
+                let mut buffer = Buffer::local(source.clone(), cx);
+                buffer.set_language_registry(registry.clone());
+                buffer.set_sync_parse_timeout(None);
+                buffer.set_language(Some(language.clone()), cx);
+                buffer
+            });
+            buffer
+                .read_with(cx, |buffer, _| buffer.parsing_idle())
+                .await;
+            let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+            let language_at = |text: &str| {
+                let offset = source.find(text).unwrap();
+                snapshot.language_at(offset).unwrap().name()
+            };
+
+            for text in ["name", "id", "role", "string.email", "[a-z-]"] {
+                assert_eq!(
+                    language_at(text),
+                    "ArkType",
+                    "{}: {text:?}",
+                    language.name()
+                );
+            }
+            for text in ["\"u\"", "\"label\"", "\"plain\""] {
+                assert_eq!(
+                    language_at(text),
+                    language.name(),
+                    "{}: {text:?}",
+                    language.name()
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
     async fn test_outline(cx: &mut TestAppContext) {
         for language in [
             crate::language(
