@@ -45,7 +45,7 @@ use gpui::{
     popup::PopupOptions,
     px, size,
 };
-use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig, wgpu};
+use gpui_wgpu::{CompositorGpuHint, DrawOutcome, WgpuRenderer, WgpuSurfaceConfig, wgpu};
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
@@ -2048,6 +2048,17 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn draw(&self, scene: &Scene) {
+        self.draw_with_damage(scene, None);
+    }
+
+    fn wants_render_damage(&self) -> bool {
+        self.borrow()
+            .renderer
+            .as_ref()
+            .is_some_and(|renderer| renderer.damage_enabled())
+    }
+
+    fn draw_with_damage(&self, scene: &Scene, damage: Option<gpui::SceneDamage>) {
         let mut state = self.borrow_mut();
         let state = &mut *state;
         let Some(renderer) = &mut state.renderer else {
@@ -2082,12 +2093,18 @@ impl PlatformWindow for WaylandWindow {
             let callback = state.surface.frame(&state.globals.qh, state.surface.id());
             state.pending_frame_callback = Some(callback);
         }
-        if renderer.draw(scene) {
-            state.presentation = PresentationState::Presented;
-            self.0.frame_loop.set(FrameLoop::AwaitingCallback);
-        } else {
-            state.presentation = state.presentation.failed();
-            self.0.frame_loop.set(FrameLoop::PresentationFailed);
+        match renderer.draw_with_damage(scene, damage) {
+            DrawOutcome::Presented => {
+                state.presentation = PresentationState::Presented;
+                self.0.frame_loop.set(FrameLoop::AwaitingCallback);
+            }
+            // No buffer was attached, so no frame callback is guaranteed. Commit the
+            // pending surface state, and let the frame loop park or reschedule.
+            DrawOutcome::Unchanged => state.surface.commit(),
+            DrawOutcome::Failed => {
+                state.presentation = state.presentation.failed();
+                self.0.frame_loop.set(FrameLoop::PresentationFailed);
+            }
         }
 
         if renderer.needs_redraw() {
