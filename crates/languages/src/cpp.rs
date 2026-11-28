@@ -731,4 +731,45 @@ mod tests {
         assert!(captures.contains(&("FOO".into(), "preproc".into())));
         assert!(!captures.contains(&("42".into(), "preproc".into())));
     }
+
+    #[test]
+    fn test_cpp_highlights_query_captures_builtin_types_in_functional_casts() {
+        let language: tree_sitter::Language = tree_sitter_cpp::LANGUAGE.into();
+        let query_source = include_str!("../../grammars/src/cpp/highlights.scm");
+
+        let query = tree_sitter::Query::new(&language, query_source)
+            .expect("C++ highlights query should compile");
+
+        let source = indoc! {"
+            void f(int v) {
+              auto a = char(65);
+              auto b = bool(v);
+              auto c = size_t(v);
+            }
+        "};
+
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&language).unwrap();
+
+        let tree = parser.parse(source, None).expect("C++ source should parse");
+
+        let mut cursor = tree_sitter::QueryCursor::new();
+        let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+
+        let mut captures = Vec::new();
+
+        while let Some(query_match) = matches.next() {
+            for capture in query_match.captures() {
+                let capture_name = query.capture_names()[capture.index as usize];
+                let captured_text = &source[capture.node.byte_range()];
+
+                captures.push((captured_text.to_owned(), capture_name.to_owned()));
+            }
+        }
+
+        assert!(captures.contains(&("int".into(), "type.builtin".into())));
+        assert!(captures.contains(&("char".into(), "type.builtin".into())));
+        assert!(captures.contains(&("bool".into(), "type.builtin".into())));
+        assert!(captures.contains(&("size_t".into(), "type.builtin".into())));
+    }
 }
