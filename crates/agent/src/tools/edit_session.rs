@@ -2,6 +2,7 @@ mod reindent;
 mod streaming_fuzzy_matcher;
 mod streaming_parser;
 
+use super::tool_permissions::{PathResolveError, canonicalize_worktree_roots};
 use crate::{GlobalSkillFiles, Thread, ToolCallEventStream};
 use acp_thread::Diff;
 use action_log::ActionLog;
@@ -696,7 +697,18 @@ impl EditSession {
                 project_path: None,
             }
         } else {
-            let project_path = cx.update(|cx| resolve_path(mode, &path, &context.project, cx))?;
+            let project_path = match cx.update(|cx| resolve_path(mode, &path, &context.project, cx))
+            {
+                Ok(path) => path,
+                Err(error) => {
+                    // The failure may be a workspace-scope denial rather than a
+                    // missing file; consult the filesystem to tell them apart.
+                    let fs = cx.update(|cx| context.project.read(cx).fs().clone());
+                    let canonical_roots =
+                        canonicalize_worktree_roots(&context.project, &fs, cx).await;
+                    return Err(error.into_message(fs.as_ref(), &canonical_roots).await);
+                }
+            };
 
             let Some(abs_path) =
                 cx.update(|cx| context.project.read(cx).absolute_path(&project_path, cx))
@@ -1229,23 +1241,32 @@ fn resolve_path(
     path: &PathBuf,
     project: &Entity<Project>,
     cx: &mut App,
-) -> Result<ProjectPath, String> {
+) -> Result<ProjectPath, PathResolveError> {
     let project = project.read(cx);
+    let input_path = path.to_string_lossy().into_owned();
 
     match mode {
         EditSessionMode::Edit => {
-            let path = project
-                .find_project_path(&path, cx)
-                .ok_or_else(|| "Can't edit file: path not found".to_string())?;
+            let path = project.find_project_path(&path, cx).ok_or_else(|| {
+                PathResolveError::NotInProject {
+                    input_path: input_path.clone(),
+                    message: "Can't edit file: path not found".to_string(),
+                }
+            })?;
 
-            let entry = project
-                .entry_for_path(&path, cx)
-                .ok_or_else(|| "Can't edit file: path not found".to_string())?;
+            let entry = project.entry_for_path(&path, cx).ok_or_else(|| {
+                PathResolveError::NotInProject {
+                    input_path: input_path.clone(),
+                    message: "Can't edit file: path not found".to_string(),
+                }
+            })?;
 
             if entry.is_file() {
                 Ok(path)
             } else {
-                Err("Can't edit file: path is a directory".to_string())
+                Err(PathResolveError::Message(
+                    "Can't edit file: path is a directory".to_string(),
+                ))
             }
         }
         EditSessionMode::Write => {
@@ -1255,37 +1276,53 @@ fn resolve_path(
                 if entry.is_file() {
                     return Ok(path);
                 } else {
-                    return Err("Can't write to file: path is a directory".to_string());
+                    return Err(PathResolveError::Message(
+                        "Can't write to file: path is a directory".to_string(),
+                    ));
                 }
             }
 
             let parent_path = path
                 .parent()
-                .ok_or_else(|| "Can't create file: incorrect path".to_string())?;
+                .ok_or_else(|| {
+                    PathResolveError::Message("Can't create file: incorrect path".to_string())
+                })?
+                .to_path_buf();
 
             let parent_project_path = project.find_project_path(&parent_path, cx);
 
             let parent_entry = parent_project_path
                 .as_ref()
                 .and_then(|path| project.entry_for_path(path, cx))
-                .ok_or_else(|| "Can't create file: parent directory doesn't exist")?;
+                .ok_or_else(|| {
+                    // The parent can be outside the workspace or excluded from
+                    // the worktree scan; upgrade the message if it exists.
+                    PathResolveError::NotInProject {
+                        input_path: parent_path.to_string_lossy().into_owned(),
+                        message: "Can't create file: parent directory doesn't exist".to_string(),
+                    }
+                })?;
 
             if !parent_entry.is_dir() {
-                return Err("Can't create file: parent is not a directory".to_string());
+                return Err(PathResolveError::Message(
+                    "Can't create file: parent is not a directory".to_string(),
+                ));
             }
 
             let file_name = path
                 .file_name()
                 .and_then(|file_name| file_name.to_str())
                 .and_then(|file_name| RelPath::from_unix_str(file_name).ok())
-                .ok_or_else(|| "Can't create file: invalid filename".to_string())?;
+                .ok_or_else(|| {
+                    PathResolveError::Message("Can't create file: invalid filename".to_string())
+                })?;
 
             let new_file_path = parent_project_path.map(|parent| ProjectPath {
                 path: parent.path.join(file_name).into(),
                 ..parent
             });
 
-            new_file_path.ok_or_else(|| "Can't create file".to_string())
+            new_file_path.ok_or_else(|| PathResolveError::Message("Can't create file".to_string()))
         }
     }
 }
@@ -1298,4 +1335,5 @@ pub(crate) async fn test_resolve_path(
     cx: &mut gpui::TestAppContext,
 ) -> Result<ProjectPath, String> {
     cx.update(|cx| resolve_path(*mode, &PathBuf::from(path), project, cx))
+        .map_err(|error| error.plain_message().to_string())
 }
