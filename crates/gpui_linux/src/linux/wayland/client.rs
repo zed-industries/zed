@@ -23,7 +23,7 @@ use filedescriptor::Pipe;
 use gpui_util::ResultExt as _;
 use http_client::Url;
 use smallvec::SmallVec;
-use wayland_backend::client::ObjectId;
+use wayland_backend::client::{ObjectId, WaylandError};
 use wayland_backend::protocol::WEnum;
 use wayland_client::event_created_child;
 use wayland_client::globals::{GlobalList, GlobalListContents, registry_queue_init};
@@ -35,7 +35,7 @@ use wayland_client::protocol::{
     wl_data_device, wl_data_device_manager, wl_data_offer, wl_data_source, wl_output, wl_region,
 };
 use wayland_client::{
-    Connection, Dispatch, Proxy, QueueHandle, delegate_noop,
+    Connection, Dispatch, DispatchError, Proxy, QueueHandle, delegate_noop,
     protocol::{
         wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm,
         wl_shm_pool, wl_surface,
@@ -1230,9 +1230,19 @@ impl WaylandConnection {
             .log_err();
 
         client.register_source(
-            handle.insert_source(WaylandSource::new(conn, event_queue), {
+            handle.insert_source(WaylandSource::new(conn.clone(), event_queue), {
                 let mut client = pointer;
-                move |_, queue, _| queue.dispatch_pending(&mut client)
+                move |_, queue, _| {
+                    let dispatched = queue.dispatch_pending(&mut client)?;
+                    // A protocol error closes the connection, but neither
+                    // wayland-client's dispatch nor calloop-wayland-source's
+                    // read reports it. Left alone, the loop wakes on the dead
+                    // socket forever, logging the error each time.
+                    match conn.protocol_error() {
+                        Some(error) => Err(DispatchError::Backend(WaylandError::Protocol(error))),
+                        None => Ok(dispatched),
+                    }
+                }
             }),
             "failed to register Wayland connection source",
         )?;

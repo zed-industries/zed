@@ -1557,7 +1557,15 @@ impl WaylandWindowStatePtr {
 
         let state = self.state.borrow_mut();
         if let Some(viewport) = &state.viewport {
-            viewport.set_destination(f32::from(size.width) as i32, f32::from(size.height) as i32);
+            let width = f32::from(size.width) as i32;
+            let height = f32::from(size.height) as i32;
+            // A window created with zero bounds (a layer surface anchored to
+            // opposite edges, sized by the compositor) can be rescaled before
+            // its first configure. A zero destination is a protocol error that
+            // kills the connection; the first configure sets the real one.
+            if width > 0 && height > 0 {
+                viewport.set_destination(width, height);
+            }
         }
         update_window(state);
     }
