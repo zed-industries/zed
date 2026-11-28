@@ -1,6 +1,7 @@
 mod base_keymap_setting;
 mod content_into_gpui;
 mod editorconfig_store;
+mod editorconfig_watcher;
 mod granted_write_path;
 mod keymap_file;
 mod settings_file;
