@@ -4264,6 +4264,63 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_start_of_line_resets_goal_without_moving(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        for keystrokes in ["j 0 j", "j g 0 j"] {
+            cx.set_state(
+                indoc! {"
+                    The quiˇck brown
+
+                    jumps over the
+                "},
+                Mode::Normal,
+            );
+            cx.simulate_keystrokes(keystrokes);
+            cx.assert_state(
+                indoc! {"
+                    The quick brown
+
+                    ˇjumps over the
+                "},
+                Mode::Normal,
+            );
+        }
+
+        cx.set_state(
+            indoc! {"
+                The quiˇck brown
+                a
+                jumps over the
+            "},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("j 0 j");
+        cx.assert_state(
+            indoc! {"
+                The quick brown
+                a
+                ˇjumps over the
+            "},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_operators_with_start_of_line_at_column_zero(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        for operator_keystrokes in ["y 0", "d 0"] {
+            cx.set_state("ˇone two", Mode::Normal);
+            cx.simulate_keystrokes("y w");
+            cx.simulate_keystrokes(operator_keystrokes);
+            cx.assert_state("ˇone two", Mode::Normal);
+            cx.simulate_keystrokes("P");
+            cx.assert_state("oneˇ one two", Mode::Normal);
+        }
+    }
+
+    #[gpui::test]
     async fn test_end_of_line_with_vertical_motion(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
