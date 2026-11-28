@@ -48,6 +48,19 @@ pub trait DiffOperations {
         _cx: &mut App,
     ) {
     }
+    /// Whether the base text is backed by an editable document, so that hunks
+    /// can be copied from the buffer into the base text.
+    fn supports_copy_to_base(&self) -> bool {
+        false
+    }
+    /// Replaces byte ranges of the diff's current base text with the given texts.
+    fn copy_to_base(
+        &self,
+        _diff: Entity<BufferDiff>,
+        _base_text_edits: Vec<(Range<usize>, String)>,
+        _cx: &mut App,
+    ) {
+    }
 }
 
 pub struct RestoreDiffOperations;
