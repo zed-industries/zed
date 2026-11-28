@@ -9704,11 +9704,10 @@ impl ThreadView {
                     .when(tool_failed || command_failed, |card| card.border_dashed())
                     .border_color(border_color)
                     .rounded_md()
+                    .overflow_hidden()
             })
-            .overflow_hidden()
-            .child(header)
-            .when(is_expanded && terminal_view.is_some(), |this| {
-                this.child(
+            .map(|this| {
+                let terminal_content = || {
                     div()
                         .border_t_1()
                         .when(tool_failed || command_failed, |card| card.border_dashed())
@@ -9716,7 +9715,7 @@ impl ThreadView {
                         .rounded_b_md()
                         .text_ui_sm(cx)
                         .h_full()
-                        .children(terminal_view.map(|terminal_view| {
+                        .children(terminal_view.clone().map(|terminal_view| {
                             let element = if terminal_view
                                 .read(cx)
                                 .content_mode(window, cx)
@@ -9737,8 +9736,30 @@ impl ThreadView {
                                 }))
                                 .child(element)
                                 .into_any_element()
-                        })),
-                )
+                        }))
+                };
+
+                // In the floating row, the header (which shows the full
+                // command) scrolls together with the output, so neither can
+                // push the permission buttons out of view.
+                if layout == ToolCallLayout::Floating {
+                    this.child(
+                        div()
+                            .id(("floating-tool-call-body", entry_ix))
+                            .debug_selector(|| "floating-terminal-tool-call-body".to_string())
+                            .max_h_40()
+                            .overflow_y_scroll()
+                            .child(header)
+                            .when(is_expanded && terminal_view.is_some(), |this| {
+                                this.child(terminal_content())
+                            }),
+                    )
+                } else {
+                    this.child(header)
+                        .when(is_expanded && terminal_view.is_some(), |this| {
+                            this.child(terminal_content())
+                        })
+                }
             })
             .when_some(permission_request, |this, request| {
                 let is_first = self.is_first_tool_call(active_session_id, &tool_call.id, cx);
