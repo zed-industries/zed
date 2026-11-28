@@ -278,6 +278,25 @@ impl AnyProtoClient {
     where
         T: LspRequestMessage,
     {
+        self.request_lsp_for_peer(project_id, server_id, None, timeout, executor, request)
+    }
+
+    /// Like [`Self::request_lsp`], for a query that a host proxies on behalf of `forwarded_for`.
+    /// The upstream peer keeps such queries apart from the host's own and from other peers'.
+    pub fn request_lsp_for_peer<T>(
+        &self,
+        project_id: u64,
+        server_id: Option<u64>,
+        forwarded_for: Option<proto::PeerId>,
+        timeout: Duration,
+        executor: BackgroundExecutor,
+        request: T,
+    ) -> impl Future<
+        Output = Result<Option<TypedEnvelope<Vec<proto::ProtoLspResponse<T::Response>>>>>,
+    > + use<T>
+    where
+        T: LspRequestMessage,
+    {
         let new_id = LspRequestId(
             self.0
                 .next_lsp_request_id
@@ -291,6 +310,7 @@ impl AnyProtoClient {
         let query = proto::LspQuery {
             project_id,
             server_id,
+            forwarded_for,
             lsp_request_id: new_id.0,
             request: Some(request.to_proto_query()),
         };
