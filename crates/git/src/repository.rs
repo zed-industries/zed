@@ -97,6 +97,20 @@ fn normalize_git_metadata_path(path: PathBuf) -> Result<PathBuf> {
         .map_err(|_| anyhow!("git metadata path escapes its filesystem root: {path:?}"))
 }
 
+/// Null device path used as `core.hooksPath` to disable hooks in untrusted
+/// repositories.
+///
+/// `/dev/null` is not an absolute path on Windows, so Git LFS treats it as
+/// relative to the worktree and installs its hooks into a `dev/null`
+/// directory there. `NUL` is the Windows null device.
+fn disabled_hooks_path() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "NUL"
+    } else {
+        "/dev/null"
+    }
+}
+
 /// Commit data needed for the git graph visualization.
 #[derive(Debug, Clone)]
 pub struct CommitData {
@@ -3836,7 +3850,7 @@ impl GitBinary {
         command.arg("--no-pager");
 
         if !self.is_trusted {
-            command.args(["-c", "core.hooksPath=/dev/null"]);
+            command.args(["-c", &format!("core.hooksPath={}", disabled_hooks_path())]);
             command.args(["-c", "core.sshCommand=ssh"]);
             command.args(["-c", "credential.helper="]);
             command.args(["-c", "protocol.ext.allow=never"]);
@@ -5605,10 +5619,14 @@ mod tests {
             .await
             .expect("git config should run");
         let stdout = String::from_utf8_lossy(&output.stdout);
+        #[cfg(target_os = "windows")]
+        let expected_hooks_path = "NUL";
+        #[cfg(not(target_os = "windows"))]
+        let expected_hooks_path = "/dev/null";
         assert_eq!(
             stdout.trim(),
-            "/dev/null",
-            "hooksPath should be /dev/null for untrusted repos"
+            expected_hooks_path,
+            "hooksPath should disable hooks for untrusted repos"
         );
     }
 
