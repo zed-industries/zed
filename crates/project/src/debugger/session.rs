@@ -2370,8 +2370,6 @@ impl Session {
     ) {
         self.select_historic_snapshot(None, cx);
 
-        let supports_single_thread_execution_requests =
-            self.capabilities.supports_single_thread_execution_requests;
         let supports_stepping_granularity = self
             .capabilities
             .supports_stepping_granularity
@@ -2381,7 +2379,7 @@ impl Session {
             inner: StepCommand {
                 thread_id: thread_id.0,
                 granularity: supports_stepping_granularity.then(|| granularity),
-                single_thread: supports_single_thread_execution_requests,
+                single_thread: None,
             },
         };
 
@@ -2402,8 +2400,6 @@ impl Session {
     ) {
         self.select_historic_snapshot(None, cx);
 
-        let supports_single_thread_execution_requests =
-            self.capabilities.supports_single_thread_execution_requests;
         let supports_stepping_granularity = self
             .capabilities
             .supports_stepping_granularity
@@ -2413,7 +2409,7 @@ impl Session {
             inner: StepCommand {
                 thread_id: thread_id.0,
                 granularity: supports_stepping_granularity.then(|| granularity),
-                single_thread: supports_single_thread_execution_requests,
+                single_thread: None,
             },
         };
 
@@ -2434,8 +2430,6 @@ impl Session {
     ) {
         self.select_historic_snapshot(None, cx);
 
-        let supports_single_thread_execution_requests =
-            self.capabilities.supports_single_thread_execution_requests;
         let supports_stepping_granularity = self
             .capabilities
             .supports_stepping_granularity
@@ -2445,7 +2439,7 @@ impl Session {
             inner: StepCommand {
                 thread_id: thread_id.0,
                 granularity: supports_stepping_granularity.then(|| granularity),
-                single_thread: supports_single_thread_execution_requests,
+                single_thread: None,
             },
         };
 
@@ -2466,8 +2460,6 @@ impl Session {
     ) {
         self.select_historic_snapshot(None, cx);
 
-        let supports_single_thread_execution_requests =
-            self.capabilities.supports_single_thread_execution_requests;
         let supports_stepping_granularity = self
             .capabilities
             .supports_stepping_granularity
@@ -2477,7 +2469,7 @@ impl Session {
             inner: StepCommand {
                 thread_id: thread_id.0,
                 granularity: supports_stepping_granularity.then(|| granularity),
-                single_thread: supports_single_thread_execution_requests,
+                single_thread: None,
             },
         };
 
