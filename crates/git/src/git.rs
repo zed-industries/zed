@@ -36,6 +36,7 @@ pub const BISECT_LOG: &str = "BISECT_LOG";
 pub const GC_PID: &str = "gc.pid";
 pub const INFO_DIR: &str = "info";
 pub const REPO_EXCLUDE: &str = "info/exclude";
+pub const WORKTREES_DIR: &str = "worktrees";
 
 actions!(
     git,
