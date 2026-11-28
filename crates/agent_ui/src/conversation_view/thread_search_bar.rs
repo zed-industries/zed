@@ -380,18 +380,20 @@ impl ThreadSearchBar {
                         for content in tool_call.content() {
                             if let ToolCallContent::DiffPatch { render, .. } = content {
                                 for hunk in render.files.iter().flat_map(|file| &file.hunks) {
-                                    if let Some(editor) = entry_view_state
-                                        .entry(entry_ix)
-                                        .and_then(|entry| entry.editor_for_patch_hunk(&hunk.buffer))
-                                    {
-                                        patch_buffers.push(hunk.buffer.clone());
-                                        let snapshot =
-                                            editor.read(cx).buffer().read(cx).snapshot(cx);
-                                        targets.push(SearchTarget::Editor {
-                                            entry_ix,
-                                            editor,
-                                            snapshot,
-                                        });
+                                    if let Some(buffer) = hunk.resolved_buffer() {
+                                        if let Some(editor) = entry_view_state
+                                            .entry(entry_ix)
+                                            .and_then(|entry| entry.editor_for_patch_hunk(&buffer))
+                                        {
+                                            patch_buffers.push(buffer);
+                                            let snapshot =
+                                                editor.read(cx).buffer().read(cx).snapshot(cx);
+                                            targets.push(SearchTarget::Editor {
+                                                entry_ix,
+                                                editor,
+                                                snapshot,
+                                            });
+                                        }
                                     }
                                 }
                             }
