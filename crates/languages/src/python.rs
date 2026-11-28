@@ -3,7 +3,6 @@ use anyhow::{Context as _, ensure};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::future::BoxFuture;
-use futures::lock::OwnedMutexGuard;
 use futures::{AsyncBufReadExt, StreamExt as _};
 use github_releases::{
     AssetKind, GitHubLspBinaryVersion, GithubBinaryMetadata, download_server_binary,
@@ -12,7 +11,8 @@ use github_releases::{
 use gpui::{App, AsyncApp, Entity, SharedString, Task};
 use language::language_settings::LanguageSettings;
 use language::{
-    Buffer, ContextLocation, DynLspInstaller, LanguageToolchainStore, LspInstaller, Symbol,
+    Buffer, ContextLocation, DynLspInstaller, LanguageToolchainStore, LspInstaller,
+    ServerBinaryCache, Symbol,
 };
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
@@ -32,7 +32,6 @@ use serde_json::{Value, json};
 use settings::{SemanticTokenRules, Settings};
 use terminal::terminal_settings::TerminalSettings;
 
-use smol::lock::OnceCell;
 use std::cmp::{Ordering, Reverse};
 use std::env::consts;
 use util::command::Stdio;
@@ -372,6 +371,10 @@ impl TyLspAdapter {
 
 #[async_trait(?Send)]
 impl LspAdapter for TyLspAdapter {
+    fn supports_background_updates(&self) -> bool {
+        true
+    }
+
     fn name(&self) -> LanguageServerName {
         Self::SERVER_NAME
     }
@@ -456,6 +459,14 @@ impl LspAdapter for TyLspAdapter {
 
 impl LspInstaller for TyLspAdapter {
     type BinaryVersion = GitHubLspBinaryVersion;
+
+    fn version_key(&self, version: &Self::BinaryVersion) -> Option<String> {
+        Some(format!(
+            "{}:{}",
+            version.name,
+            version.digest.as_deref().unwrap_or_default()
+        ))
+    }
     async fn fetch_latest_server_version(
         &self,
         delegate: &Arc<dyn LspAdapterDelegate>,
@@ -657,7 +668,7 @@ impl PyrightLspAdapter {
         let server_path = container_dir.join(Self::SERVER_PATH);
         if server_path.exists() {
             Some(LanguageServerBinary {
-                path: node.binary_path().await.log_err()?,
+                path: node.local_binary_path().await.log_err()?,
                 env: None,
                 arguments: vec![server_path.into(), "--stdio".into()],
             })
@@ -670,6 +681,10 @@ impl PyrightLspAdapter {
 
 #[async_trait(?Send)]
 impl LspAdapter for PyrightLspAdapter {
+    fn supports_background_updates(&self) -> bool {
+        true
+    }
+
     fn name(&self) -> LanguageServerName {
         Self::SERVER_NAME
     }
@@ -819,9 +834,8 @@ impl LspInstaller for PyrightLspAdapter {
         &self,
         _latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
-        delegate: &Arc<dyn LspAdapterDelegate>,
+        _: &Arc<dyn LspAdapterDelegate>,
     ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
-        let delegate = delegate.clone();
         let node = self.node.clone();
 
         async move {
@@ -829,10 +843,9 @@ impl LspInstaller for PyrightLspAdapter {
             node.npm_install_latest_packages(&container_dir, &[Self::SERVER_NAME.as_ref()])
                 .await?;
 
-            let env = delegate.shell_env().await;
             Ok(LanguageServerBinary {
                 path: node.binary_path().await?,
-                env: Some(env),
+                env: None,
                 arguments: vec![server_path.into(), "--stdio".into()],
             })
         }
@@ -842,9 +855,8 @@ impl LspInstaller for PyrightLspAdapter {
         &self,
         version: &Self::BinaryVersion,
         container_dir: &PathBuf,
-        delegate: &Arc<dyn LspAdapterDelegate>,
+        _: &Arc<dyn LspAdapterDelegate>,
     ) -> impl Send + Future<Output = Option<LanguageServerBinary>> + use<> {
-        let delegate = delegate.clone();
         let node = self.node.clone();
         let version = version.clone();
         let container_dir = container_dir.clone();
@@ -864,10 +876,9 @@ impl LspInstaller for PyrightLspAdapter {
             if should_install_language_server {
                 None
             } else {
-                let env = delegate.shell_env().await;
                 Some(LanguageServerBinary {
                     path: node.binary_path().await.ok()?,
-                    env: Some(env),
+                    env: None,
                     arguments: vec![server_path.into(), "--stdio".into()],
                 })
             }
@@ -877,11 +888,9 @@ impl LspInstaller for PyrightLspAdapter {
     async fn cached_server_binary(
         &self,
         container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
+        _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        let mut binary = Self::get_cached_server_binary(container_dir, &self.node).await?;
-        binary.env = Some(delegate.shell_env().await);
-        Some(binary)
+        Self::get_cached_server_binary(container_dir, &self.node).await
     }
 }
 
@@ -1733,17 +1742,13 @@ impl pet_core::os_environment::Environment for EnvironmentApi<'_> {
     }
 }
 
-pub(crate) struct PyLspAdapter {
-    python_venv_base: OnceCell<Result<Arc<Path>, String>>,
-}
+pub(crate) struct PyLspAdapter;
 impl PyLspAdapter {
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("pylsp");
     pub(crate) fn new() -> Self {
-        Self {
-            python_venv_base: OnceCell::new(),
-        }
+        Self
     }
-    async fn ensure_venv(delegate: &dyn LspAdapterDelegate) -> Result<Arc<Path>> {
+    async fn ensure_venv(delegate: &dyn LspAdapterDelegate, work_dir: &Path) -> Result<PathBuf> {
         let python_path = Self::find_base_python(delegate)
             .await
             .with_context(|| {
@@ -1753,25 +1758,39 @@ impl PyLspAdapter {
                 }
                 message
             })?;
-        let work_dir = delegate
-            .language_server_download_dir(&Self::SERVER_NAME)
-            .await
-            .context("Could not get working directory for PyLSP")?;
-        let mut path = PathBuf::from(work_dir.as_ref());
-        path.push("pylsp-venv");
-        if !path.exists() {
-            util::command::new_command(python_path)
-                .arg("-m")
-                .arg("venv")
-                .arg("pylsp-venv")
-                .current_dir(work_dir)
-                .spawn()?
-                .output()
-                .await?;
-        }
-
-        Ok(path.into())
+        let path = work_dir.join("pylsp-venv");
+        let output = new_command(python_path)
+            .arg("-m")
+            .arg("venv")
+            .arg(&path)
+            .output()
+            .await?;
+        ensure!(
+            output.status.success(),
+            "creating pylsp virtual environment: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(path)
     }
+
+    fn venv_python(container: &Path) -> PathBuf {
+        container
+            .join("pylsp-venv")
+            .join(BINARY_DIR)
+            .join(if cfg!(windows) {
+                "python.exe"
+            } else {
+                "python"
+            })
+    }
+
+    fn venv_pylsp(container: &Path) -> PathBuf {
+        container
+            .join("pylsp-venv")
+            .join(BINARY_DIR)
+            .join(format!("pylsp{}", consts::EXE_SUFFIX))
+    }
+
     // Find "baseline", user python version from which we'll create our own venv.
     async fn find_base_python(delegate: &dyn LspAdapterDelegate) -> Option<PathBuf> {
         for path in ["python3", "python"] {
@@ -1796,17 +1815,6 @@ impl PyLspAdapter {
         }
         None
     }
-
-    async fn base_venv(&self, delegate: &dyn LspAdapterDelegate) -> Result<Arc<Path>, String> {
-        self.python_venv_base
-            .get_or_init(move || async move {
-                Self::ensure_venv(delegate)
-                    .await
-                    .map_err(|e| format!("{e}"))
-            })
-            .await
-            .clone()
-    }
 }
 
 const BINARY_DIR: &str = if cfg!(target_os = "windows") {
@@ -1817,6 +1825,10 @@ const BINARY_DIR: &str = if cfg!(target_os = "windows") {
 
 #[async_trait(?Send)]
 impl LspAdapter for PyLspAdapter {
+    fn supports_background_updates(&self) -> bool {
+        true
+    }
+
     fn name(&self) -> LanguageServerName {
         Self::SERVER_NAME
     }
@@ -1988,65 +2000,105 @@ impl LspInstaller for PyLspAdapter {
         Ok(())
     }
 
+    fn check_if_version_installed(
+        &self,
+        _: &(),
+        container_dir: &PathBuf,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Option<LanguageServerBinary>> + use<> {
+        let python = Self::venv_python(container_dir);
+        let pylsp = Self::venv_pylsp(container_dir);
+        async move {
+            if !pylsp.is_file() {
+                return None;
+            }
+            let output = new_command(python)
+                .args([
+                    "-m",
+                    "pip",
+                    "install",
+                    "--upgrade",
+                    "--dry-run",
+                    "--report",
+                    "-",
+                    "--quiet",
+                    "python-lsp-server[all]",
+                    "pylsp-mypy",
+                ])
+                .output()
+                .await
+                .ok()?;
+            if !output.status.success() {
+                return None;
+            }
+            let report: Value = serde_json::from_slice(&output.stdout).ok()?;
+            if !report.get("install")?.as_array()?.is_empty() {
+                return None;
+            }
+            Some(LanguageServerBinary {
+                path: pylsp,
+                env: None,
+                arguments: Vec::new(),
+            })
+        }
+    }
+
     fn fetch_server_binary(
         &self,
         _: (),
-        _: PathBuf,
+        container_dir: PathBuf,
         delegate: &Arc<dyn LspAdapterDelegate>,
     ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
         let delegate = delegate.clone();
-
         async move {
-            let venv = Self::ensure_venv(delegate.as_ref()).await?;
-            let pip_path = venv.join(BINARY_DIR).join("pip3");
+            Self::ensure_venv(delegate.as_ref(), &container_dir).await?;
+            let output = new_command(Self::venv_python(&container_dir))
+                .args([
+                    "-m",
+                    "pip",
+                    "install",
+                    "--upgrade",
+                    "python-lsp-server[all]",
+                    "pylsp-mypy",
+                ])
+                .output()
+                .await?;
             ensure!(
-                util::command::new_command(pip_path.as_path())
-                    .arg("install")
-                    .arg("python-lsp-server[all]")
-                    .arg("--upgrade")
-                    .output()
-                    .await?
-                    .status
-                    .success(),
-                "python-lsp-server[all] installation failed"
+                output.status.success(),
+                "pylsp installation failed: {}",
+                String::from_utf8_lossy(&output.stderr)
             );
-            ensure!(
-                util::command::new_command(pip_path)
-                    .arg("install")
-                    .arg("pylsp-mypy")
-                    .arg("--upgrade")
-                    .output()
-                    .await?
-                    .status
-                    .success(),
-                "pylsp-mypy installation failed"
-            );
-            let pylsp = venv.join(BINARY_DIR).join("pylsp");
-            ensure!(
-                delegate.which(pylsp.as_os_str()).await.is_some(),
-                "pylsp installation was incomplete"
-            );
+            let pylsp = Self::venv_pylsp(&container_dir);
+            delegate
+                .try_exec(LanguageServerBinary {
+                    path: pylsp.clone(),
+                    arguments: vec!["--version".into()],
+                    env: None,
+                })
+                .await?;
             Ok(LanguageServerBinary {
                 path: pylsp,
                 env: None,
-                arguments: vec![],
+                arguments: Vec::new(),
             })
         }
     }
 
     async fn cached_server_binary(
         &self,
-        _: PathBuf,
+        container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        let venv = self.base_venv(delegate).await.ok()?;
-        let pylsp = venv.join(BINARY_DIR).join("pylsp");
-        delegate.which(pylsp.as_os_str()).await?;
-        Some(LanguageServerBinary {
-            path: pylsp,
-            env: None,
-            arguments: vec![],
-        })
+        let pylsp = Self::venv_pylsp(&container_dir);
+        delegate
+            .fs()
+            .is_file(&pylsp)
+            .await
+            .then_some(LanguageServerBinary {
+                path: pylsp,
+                env: None,
+                arguments: Vec::new(),
+            })
     }
 }
 
@@ -2071,7 +2123,7 @@ impl BasedPyrightLspAdapter {
         let server_path = container_dir.join(Self::SERVER_PATH);
         if server_path.exists() {
             Some(LanguageServerBinary {
-                path: node.binary_path().await.log_err()?,
+                path: node.local_binary_path().await.log_err()?,
                 env: None,
                 arguments: vec![server_path.into(), "--stdio".into()],
             })
@@ -2084,6 +2136,10 @@ impl BasedPyrightLspAdapter {
 
 #[async_trait(?Send)]
 impl LspAdapter for BasedPyrightLspAdapter {
+    fn supports_background_updates(&self) -> bool {
+        true
+    }
+
     fn name(&self) -> LanguageServerName {
         Self::SERVER_NAME
     }
@@ -2255,9 +2311,8 @@ impl LspInstaller for BasedPyrightLspAdapter {
         &self,
         _latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
-        delegate: &Arc<dyn LspAdapterDelegate>,
+        _: &Arc<dyn LspAdapterDelegate>,
     ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
-        let delegate = delegate.clone();
         let node = self.node.clone();
 
         async move {
@@ -2265,10 +2320,9 @@ impl LspInstaller for BasedPyrightLspAdapter {
             node.npm_install_latest_packages(&container_dir, &[Self::SERVER_NAME.as_ref()])
                 .await?;
 
-            let env = delegate.shell_env().await;
             Ok(LanguageServerBinary {
                 path: node.binary_path().await?,
-                env: Some(env),
+                env: None,
                 arguments: vec![server_path.into(), "--stdio".into()],
             })
         }
@@ -2278,9 +2332,8 @@ impl LspInstaller for BasedPyrightLspAdapter {
         &self,
         version: &Self::BinaryVersion,
         container_dir: &PathBuf,
-        delegate: &Arc<dyn LspAdapterDelegate>,
+        _: &Arc<dyn LspAdapterDelegate>,
     ) -> impl Send + Future<Output = Option<LanguageServerBinary>> + use<> {
-        let delegate = delegate.clone();
         let node = self.node.clone();
         let version = version.clone();
         let container_dir = container_dir.clone();
@@ -2300,10 +2353,9 @@ impl LspInstaller for BasedPyrightLspAdapter {
             if should_install_language_server {
                 None
             } else {
-                let env = delegate.shell_env().await;
                 Some(LanguageServerBinary {
                     path: node.binary_path().await.ok()?,
-                    env: Some(env),
+                    env: None,
                     arguments: vec![server_path.into(), "--stdio".into()],
                 })
             }
@@ -2313,11 +2365,9 @@ impl LspInstaller for BasedPyrightLspAdapter {
     async fn cached_server_binary(
         &self,
         container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
+        _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        let mut binary = Self::get_cached_server_binary(container_dir, &self.node).await?;
-        binary.env = Some(delegate.shell_env().await);
-        Some(binary)
+        Self::get_cached_server_binary(container_dir, &self.node).await
     }
 }
 
@@ -2487,6 +2537,10 @@ impl RuffLspAdapter {
 
 #[async_trait(?Send)]
 impl LspAdapter for RuffLspAdapter {
+    fn supports_background_updates(&self) -> bool {
+        true
+    }
+
     fn name(&self) -> LanguageServerName {
         Self::SERVER_NAME
     }
@@ -2494,7 +2548,7 @@ impl LspAdapter for RuffLspAdapter {
     async fn initialization_options_schema(
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
-        cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        cached_binary: ServerBinaryCache,
         cx: &mut AsyncApp,
     ) -> Option<serde_json::Value> {
         let binary = self
@@ -2542,6 +2596,14 @@ impl LspAdapter for RuffLspAdapter {
 
 impl LspInstaller for RuffLspAdapter {
     type BinaryVersion = GitHubLspBinaryVersion;
+
+    fn version_key(&self, version: &Self::BinaryVersion) -> Option<String> {
+        Some(format!(
+            "{}:{}",
+            version.name,
+            version.digest.as_deref().unwrap_or_default()
+        ))
+    }
     async fn check_if_user_installed(
         &self,
         delegate: &Arc<dyn LspAdapterDelegate>,
@@ -2768,6 +2830,10 @@ impl PyreflyLspAdapter {
 
 #[async_trait(?Send)]
 impl LspAdapter for PyreflyLspAdapter {
+    fn supports_background_updates(&self) -> bool {
+        true
+    }
+
     fn name(&self) -> LanguageServerName {
         Self::SERVER_NAME
     }
@@ -2841,6 +2907,14 @@ impl LspAdapter for PyreflyLspAdapter {
 
 impl LspInstaller for PyreflyLspAdapter {
     type BinaryVersion = GitHubLspBinaryVersion;
+
+    fn version_key(&self, version: &Self::BinaryVersion) -> Option<String> {
+        Some(format!(
+            "{}:{}",
+            version.name,
+            version.digest.as_deref().unwrap_or_default()
+        ))
+    }
 
     async fn check_if_user_installed(
         &self,

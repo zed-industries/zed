@@ -137,6 +137,10 @@ impl LspInstaller for TailwindLspAdapter {
 
 #[async_trait(?Send)]
 impl LspAdapter for TailwindLspAdapter {
+    fn supports_background_updates(&self) -> bool {
+        true
+    }
+
     fn name(&self) -> LanguageServerName {
         Self::SERVER_NAME
     }
@@ -223,7 +227,7 @@ async fn get_cached_server_binary(
             "missing executable in directory {server_path:?}"
         );
         Ok(LanguageServerBinary {
-            path: node.binary_path().await?,
+            path: node.local_binary_path().await?,
             env: None,
             arguments: server_binary_arguments(&server_path),
         })

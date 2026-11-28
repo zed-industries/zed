@@ -295,10 +295,15 @@ impl LanguageRegistry {
             return;
         }
 
-        state.available_lsp_adapters.insert(
-            name,
-            Arc::new(move || CachedLspAdapter::new(adapter.clone())),
-        );
+        let cached = state
+            .all_lsp_adapters
+            .get(&name)
+            .filter(|cached| Arc::ptr_eq(&cached.adapter, &adapter))
+            .cloned()
+            .unwrap_or_else(|| CachedLspAdapter::new(adapter));
+        state
+            .available_lsp_adapters
+            .insert(name, Arc::new(move || cached.clone()));
     }
 
     /// Loads the language server adapter for the language server with the given name.
@@ -337,7 +342,12 @@ impl LanguageRegistry {
             return;
         }
 
-        let cached = CachedLspAdapter::new(adapter);
+        let cached = state
+            .all_lsp_adapters
+            .get(&adapter.name())
+            .filter(|cached| Arc::ptr_eq(&cached.adapter, &adapter))
+            .cloned()
+            .unwrap_or_else(|| CachedLspAdapter::new(adapter));
         state
             .lsp_adapters
             .entry(language_name)

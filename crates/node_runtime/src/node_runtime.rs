@@ -87,6 +87,10 @@ impl NodeRuntime {
     }
 
     async fn instance(&self) -> Box<dyn NodeRuntimeTrait> {
+        self.instance_with_download(true).await
+    }
+
+    async fn instance_with_download(&self, allow_download: bool) -> Box<dyn NodeRuntimeTrait> {
         let mut state = self.0.lock().await;
 
         let options = loop {
@@ -158,7 +162,7 @@ impl NodeRuntime {
                     "`node.ignore_system_version` is `true` in settings".to_string(),
                 ),
             };
-            match ManagedNodeRuntime::install_if_needed(&state.http).await {
+            match ManagedNodeRuntime::install_if_needed(&state.http, allow_download).await {
                 Ok(instance) => {
                     log::log!(
                         log_level,
@@ -169,6 +173,12 @@ impl NodeRuntime {
                     Box::new(instance) as Box<dyn NodeRuntimeTrait>
                 }
                 Err(err) => {
+                    if !allow_download {
+                        return Box::new(UnavailableNodeRuntime {
+                            error_message: format!("no usable local Node.js runtime: {err:#}")
+                                .into(),
+                        });
+                    }
                     // failure case is cached, since downloading + installing may be expensive. The
                     // downside of this is that it may fail due to an intermittent network issue.
                     //
@@ -215,6 +225,11 @@ impl NodeRuntime {
 
     pub async fn binary_path(&self) -> Result<PathBuf> {
         self.instance().await.binary_path()
+    }
+
+    /// Resolves a local runtime without initiating a download.
+    pub async fn local_binary_path(&self) -> Result<PathBuf> {
+        self.instance_with_download(false).await.binary_path()
     }
 
     pub async fn run_npm_subcommand(
@@ -618,7 +633,7 @@ impl ManagedNodeRuntime {
     #[cfg(windows)]
     const NPM_PATH: &str = "node_modules/npm/bin/npm-cli.js";
 
-    async fn install_if_needed(http: &Arc<dyn HttpClient>) -> Result<Self> {
+    async fn install_if_needed(http: &Arc<dyn HttpClient>, allow_download: bool) -> Result<Self> {
         log::info!("Node runtime install_if_needed");
 
         let os = match consts::OS {
@@ -680,6 +695,7 @@ impl ManagedNodeRuntime {
         };
 
         if !valid {
+            anyhow::ensure!(allow_download, "no usable managed Node.js installation");
             _ = fs::remove_dir_all(&node_containing_dir).await;
             fs::create_dir(&node_containing_dir)
                 .await

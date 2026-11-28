@@ -123,6 +123,7 @@ pub struct LanguageServer {
     version: Option<SharedString>,
     process_name: Arc<str>,
     binary: LanguageServerBinary,
+    installation_lease: Option<Arc<fs::FileLock>>,
     capabilities: RwLock<ServerCapabilities>,
     /// Configuration sent to the server, stored for display in the language server logs
     /// buffer. This is represented as the message sent to the LSP in order to avoid cloning it (can
@@ -708,6 +709,7 @@ impl LanguageServer {
                 .map(|name| Arc::from(name.to_string_lossy()))
                 .unwrap_or_default(),
             binary,
+            installation_lease: None,
             capabilities: Default::default(),
             configuration,
             code_action_kinds,
@@ -1200,6 +1202,11 @@ impl LanguageServer {
         })
     }
 
+    pub fn with_installation_lease(mut self, lease: Option<Arc<fs::FileLock>>) -> Self {
+        self.installation_lease = lease;
+        self
+    }
+
     /// Sends a shutdown request to the language server process and prepares the [`LanguageServer`] to be dropped.
     pub fn shutdown(&self) -> Option<impl 'static + Send + Future<Output = Option<()>> + use<>> {
         let tasks = self.io_tasks.lock().take()?;
@@ -1222,7 +1229,9 @@ impl LanguageServer {
         let name = self.name.clone();
         let server_id = self.server_id;
         let mut timer = self.executor.timer(SERVER_SHUTDOWN_TIMEOUT).fuse();
+        let installation_lease = self.installation_lease.clone();
         Some(async move {
+            let _installation_lease = installation_lease;
             log::debug!("language server shutdown started");
 
             let shutdown_timed_out = select! {
@@ -1260,10 +1269,21 @@ impl LanguageServer {
                 }
             }
             drop(tasks);
-            if let Some(mut child) = server.lock().take()
-                && let Err(error) = child.kill()
-            {
-                log::warn!("failed to kill language server {name} (id {server_id}): {error}");
+            let child = server.lock().take();
+            if let Some(mut child) = child {
+                if let Err(error) = child.kill() {
+                    log::warn!("failed to kill language server {name} (id {server_id}): {error}");
+                }
+                if _installation_lease.is_some() {
+                    // A kill request does not mean the process has exited yet.
+                    let lease = _installation_lease.clone();
+                    executor
+                        .spawn(async move {
+                            let _lease = lease;
+                            child.status().await.log_err();
+                        })
+                        .detach();
+                }
             }
             log::debug!("language server shutdown finished");
             Some(())

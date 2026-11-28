@@ -72,6 +72,10 @@ const BINARY: &str = if cfg!(target_os = "windows") {
 impl LspInstaller for GoLspAdapter {
     type BinaryVersion = Option<String>;
 
+    fn version_key(&self, version: &Self::BinaryVersion) -> Option<String> {
+        version.clone()
+    }
+
     async fn fetch_latest_server_version(
         &self,
         delegate: &Arc<dyn LspAdapterDelegate>,
@@ -140,7 +144,7 @@ impl LspInstaller for GoLspAdapter {
                 .context("failed to get go version via `go version` command`")?;
             let go_version = parse_version_output(&go_version_output)?;
 
-            if let Some(version) = version {
+            if let Some(version) = &version {
                 let binary_path = container_dir.join(format!("gopls_{version}_go_{go_version}"));
                 if let Ok(metadata) = fs::metadata(&binary_path).await
                     && metadata.is_file()
@@ -162,10 +166,14 @@ impl LspInstaller for GoLspAdapter {
 
             let gobin_dir = container_dir.join("gobin");
             fs::create_dir_all(&gobin_dir).await?;
+            let package = match version {
+                Some(version) => format!("golang.org/x/tools/gopls@v{version}"),
+                None => "golang.org/x/tools/gopls@latest".to_owned(),
+            };
             let install_output = util::command::new_command(go)
                 .env("GO111MODULE", "on")
                 .env("GOBIN", &gobin_dir)
-                .args(["install", "golang.org/x/tools/gopls@latest"])
+                .args(["install", &package])
                 .output()
                 .await?;
 
@@ -209,6 +217,10 @@ impl LspInstaller for GoLspAdapter {
 
 #[async_trait(?Send)]
 impl LspAdapter for GoLspAdapter {
+    fn supports_background_updates(&self) -> bool {
+        true
+    }
+
     fn name(&self) -> LanguageServerName {
         Self::SERVER_NAME
     }

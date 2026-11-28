@@ -81,6 +81,7 @@ zlog.workspace = true
 ztracing.workspace = true
 
 [dev-dependencies]
+fs = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
 grammars.workspace = true
