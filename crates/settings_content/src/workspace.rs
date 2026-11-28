@@ -229,6 +229,11 @@ pub struct PreviewTabsSettingsContent {
     ///
     /// Default: true
     pub enable_preview_from_multibuffer: Option<bool>,
+    /// Whether to open file diffs and history commits in preview mode when
+    /// opened from the git panel.
+    ///
+    /// Default: true
+    pub enable_preview_from_git_panel: Option<bool>,
     /// Whether to open tabs in preview mode when code navigation is used to open a multibuffer.
     ///
     /// Default: false

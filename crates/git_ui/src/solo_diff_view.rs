@@ -46,14 +46,18 @@ pub struct SoloDiffView {
     editor: Entity<SplittableEditor>,
     workspace: WeakEntity<Workspace>,
     showing_full_file: bool,
+    _editor_subscription: Subscription,
     _settings_subscription: Subscription,
 }
 
 impl SoloDiffView {
+    /// With `allow_preview`, a newly opened view replaces the pane's preview
+    /// tab. Without it, an already open view stops being a preview.
     pub fn open_or_focus(
         entry: GitStatusEntry,
         repository: Entity<Repository>,
         workspace: WeakEntity<Workspace>,
+        allow_preview: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
@@ -68,6 +72,11 @@ impl SoloDiffView {
         if let Some(existing) = existing {
             workspace_entity.update(cx, |workspace, cx| {
                 workspace.activate_item(&existing, true, true, window, cx);
+                if !allow_preview && let Some(pane) = workspace.pane_for(&existing) {
+                    pane.update(cx, |pane, _| {
+                        pane.unpreview_item_if_preview(existing.item_id())
+                    });
+                }
             });
             existing.focus_handle(cx).focus(window, cx);
             return Task::ready(Ok(existing));
@@ -98,6 +107,11 @@ impl SoloDiffView {
                 .await?;
 
             workspace_entity.update_in(cx, |workspace, window, cx| {
+                if allow_preview {
+                    // Only edits made from now on should end the preview, not
+                    // the ones the buffer already carries.
+                    buffer.update(cx, |buffer, _| buffer.refresh_preview());
+                }
                 let workspace_handle = cx.entity();
                 let view = cx.new(|cx| {
                     Self::new(
@@ -112,7 +126,23 @@ impl SoloDiffView {
                     )
                 });
 
-                workspace.add_item_to_active_pane(Box::new(view.clone()), None, true, window, cx);
+                let pane = workspace.active_pane().clone();
+                let destination_index = if allow_preview {
+                    pane.update(cx, |pane, cx| {
+                        pane.replace_preview_item_id(view.item_id(), window, cx)
+                    })
+                } else {
+                    None
+                };
+                workspace.add_item(
+                    pane,
+                    Box::new(view.clone()),
+                    destination_index,
+                    false,
+                    true,
+                    window,
+                    cx,
+                );
                 view
             })
         })
@@ -157,6 +187,10 @@ impl SoloDiffView {
             editor
         });
 
+        let editor_subscription = cx.subscribe(&editor, |_, _, event: &EditorEvent, cx| {
+            cx.emit(event.clone())
+        });
+
         let mut previous_diff_view_style = EditorSettings::get_global(cx).diff_view_style;
         let settings_subscription =
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
@@ -181,6 +215,7 @@ impl SoloDiffView {
             editor,
             workspace: workspace.downgrade(),
             showing_full_file,
+            _editor_subscription: editor_subscription,
             _settings_subscription: settings_subscription,
         }
     }
@@ -532,6 +567,20 @@ impl Item for SoloDiffView {
                 editor.added_to_workspace(workspace, window, cx)
             })
         });
+    }
+
+    fn is_dirty(&self, cx: &App) -> bool {
+        self.editor.read(cx).is_dirty(cx)
+    }
+
+    fn has_conflict(&self, cx: &App) -> bool {
+        self.editor.read(cx).has_conflict(cx)
+    }
+
+    // Loading the diff and changing the excerpts are reported as edits, so
+    // only edits to the file itself end the preview.
+    fn preserve_preview(&self, cx: &App) -> bool {
+        self.buffer.read(cx).preserve_preview()
     }
 
     fn can_save(&self, cx: &App) -> bool {

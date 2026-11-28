@@ -4570,6 +4570,7 @@ Examples:
     "enable_preview_from_project_panel": true,
     "enable_preview_from_file_finder": false,
     "enable_preview_from_multibuffer": true,
+    "enable_preview_from_git_panel": true,
     "enable_preview_multibuffer_from_code_navigation": false,
     "enable_preview_file_from_code_navigation": true,
     "enable_keep_preview_on_code_navigation": false
@@ -4601,6 +4602,16 @@ Examples:
 
 - Description: Determines whether to open files in preview mode when opened from a multibuffer.
 - Setting: `enable_preview_from_multibuffer`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+### Enable preview from git panel
+
+- Description: Determines whether to open file diffs and history commits in preview mode when opened from the git panel.
+- Setting: `enable_preview_from_git_panel`
 - Default: `true`
 
 **Options**
