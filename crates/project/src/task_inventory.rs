@@ -21,8 +21,8 @@ use lsp::{LanguageServerId, LanguageServerName};
 use paths::{debug_task_file_name, task_file_name};
 use settings::{InvalidSettingsError, parse_json_with_comments};
 use task::{
-    DebugScenario, ResolvedTask, SharedTaskContext, TaskContext, TaskHook, TaskId, TaskTemplate,
-    TaskTemplates, TaskVariables, VariableName,
+    DebugScenario, ImportedTaskTemplate, ResolvedTask, SharedTaskContext, TaskContext, TaskHook,
+    TaskId, TaskTemplate, TaskTemplates, TaskVariables, VariableName,
 };
 use text::{BufferId, Point, ToPoint};
 use util::{NumericPrefixWithSuffix, ResultExt as _, post_inc, rel_path::RelPath};
@@ -37,6 +37,7 @@ pub struct DebugScenarioContext {
     pub task_context: SharedTaskContext,
     pub worktree_id: Option<WorktreeId>,
     pub active_buffer: Option<WeakEntity<Buffer>>,
+    pub directory: Option<Arc<RelPath>>,
 }
 
 /// Inventory tracks available tasks for a given project.
@@ -44,7 +45,7 @@ pub struct Inventory {
     last_scheduled_tasks: VecDeque<(TaskSourceKind, ResolvedTask)>,
     last_scheduled_task_id: Option<TaskId>,
     last_scheduled_scenarios: VecDeque<(DebugScenario, DebugScenarioContext)>,
-    templates_from_settings: InventoryFor<TaskTemplate>,
+    templates_from_settings: InventoryFor<ImportedTaskTemplate>,
     scenarios_from_settings: InventoryFor<DebugScenario>,
 }
 
@@ -71,6 +72,11 @@ impl InventoryContents for TaskTemplate {
     const LABEL: &'static str = "tasks";
 }
 
+impl InventoryContents for ImportedTaskTemplate {
+    const GLOBAL_SOURCE_FILE: &'static str = "tasks.json";
+    const LABEL: &'static str = "tasks";
+}
+
 impl InventoryContents for DebugScenario {
     const GLOBAL_SOURCE_FILE: &'static str = "debug.json";
 
@@ -88,6 +94,21 @@ impl<T: InventoryContents> InventoryFor<T> {
         &self,
         worktree: WorktreeId,
     ) -> impl '_ + Iterator<Item = (TaskSourceKind, T)> {
+        self.worktree_scenarios_inner(worktree, false)
+    }
+
+    fn all_worktree_scenarios(
+        &self,
+        worktree: WorktreeId,
+    ) -> impl '_ + Iterator<Item = (TaskSourceKind, T)> {
+        self.worktree_scenarios_inner(worktree, true)
+    }
+
+    fn worktree_scenarios_inner(
+        &self,
+        worktree: WorktreeId,
+        include_vscode: bool,
+    ) -> impl '_ + Iterator<Item = (TaskSourceKind, T)> {
         let worktree_dirs = self.worktree.get(&worktree);
         let has_zed_dir = worktree_dirs
             .map(|dirs| {
@@ -100,7 +121,8 @@ impl<T: InventoryContents> InventoryFor<T> {
             .into_iter()
             .flatten()
             .filter(move |(directory, _)| {
-                !(has_zed_dir && directory.file_name().is_some_and(|name| name == ".vscode"))
+                include_vscode
+                    || !(has_zed_dir && directory.file_name().is_some_and(|name| name == ".vscode"))
             })
             .flat_map(|(directory, templates)| {
                 templates.iter().map(move |template| (directory, template))
@@ -327,6 +349,7 @@ impl Inventory {
         task_context: SharedTaskContext,
         worktree_id: Option<WorktreeId>,
         active_buffer: Option<WeakEntity<Buffer>>,
+        directory: Option<Arc<RelPath>>,
     ) {
         self.last_scheduled_scenarios
             .retain(|(s, _)| s.label != scenario.label);
@@ -336,6 +359,7 @@ impl Inventory {
                 task_context,
                 worktree_id,
                 active_buffer,
+                directory,
             },
         ));
         if self.last_scheduled_scenarios.len() > 5_000 {
@@ -417,9 +441,10 @@ impl Inventory {
         &self,
         buffer: Option<Entity<Buffer>>,
         worktree_id: Option<WorktreeId>,
+        directory: Option<Arc<RelPath>>,
         label: &str,
         cx: &App,
-    ) -> Task<Option<TaskTemplate>> {
+    ) -> Task<Option<(TaskTemplate, bool)>> {
         let (buffer_worktree_id, language) = buffer
             .as_ref()
             .map(|buffer| {
@@ -431,14 +456,46 @@ impl Inventory {
             })
             .unwrap_or((None, None));
 
-        let tasks = self.list_tasks(buffer, language, worktree_id.or(buffer_worktree_id), cx);
+        let include_vscode = directory
+            .as_ref()
+            .and_then(|directory| directory.file_name())
+            == Some(".vscode");
+        let tasks = self.list_imported_tasks(
+            buffer,
+            language,
+            worktree_id.or(buffer_worktree_id),
+            include_vscode,
+            cx,
+        );
         let label = label.to_owned();
         cx.background_spawn(async move {
-            tasks
-                .await
-                .into_iter()
-                .find(|(_, template)| template.label == label)
-                .map(|val| val.1)
+            let tasks = tasks.await;
+            let same_directory = directory.as_ref().and_then(|directory| {
+                tasks.iter().find(|(kind, imported)| {
+                    imported.template.label == label
+                        && matches!(
+                            kind,
+                            TaskSourceKind::Worktree {
+                                directory_in_worktree,
+                                ..
+                            } if directory_in_worktree.as_ref() == directory.as_ref()
+                        )
+                })
+            });
+            let found = same_directory.or_else(|| {
+                tasks.iter().find(|(kind, imported)| {
+                    imported.template.label == label
+                        && !(include_vscode
+                            && matches!(
+                                kind,
+                                TaskSourceKind::Worktree {
+                                    directory_in_worktree,
+                                    ..
+                                } if directory_in_worktree.file_name() == Some(".vscode")
+                            ))
+                })
+            });
+            found.map(|(_, imported)| (imported.template.clone(), imported.is_background))
         })
     }
 
@@ -452,10 +509,41 @@ impl Inventory {
         worktree: Option<WorktreeId>,
         cx: &App,
     ) -> Task<Vec<(TaskSourceKind, TaskTemplate)>> {
-        let global_tasks = self.global_templates_from_settings().collect::<Vec<_>>();
+        let tasks = self.list_imported_tasks(buffer, language, worktree, false, cx);
+        cx.background_spawn(async move {
+            tasks
+                .await
+                .into_iter()
+                .map(|(kind, imported)| (kind, imported.template))
+                .collect()
+        })
+    }
+
+    fn list_imported_tasks(
+        &self,
+        buffer: Option<Entity<Buffer>>,
+        language: Option<Arc<Language>>,
+        worktree: Option<WorktreeId>,
+        include_vscode: bool,
+        cx: &App,
+    ) -> Task<Vec<(TaskSourceKind, ImportedTaskTemplate)>> {
+        let global_tasks = self
+            .templates_from_settings
+            .global_scenarios()
+            .collect::<Vec<_>>();
         let mut worktree_tasks = worktree
             .into_iter()
-            .flat_map(|worktree| self.worktree_templates_from_settings(worktree))
+            .flat_map(|worktree| {
+                if include_vscode {
+                    self.templates_from_settings
+                        .all_worktree_scenarios(worktree)
+                        .collect::<Vec<_>>()
+                } else {
+                    self.templates_from_settings
+                        .worktree_scenarios(worktree)
+                        .collect::<Vec<_>>()
+                }
+            })
             .collect::<Vec<_>>();
 
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
@@ -479,10 +567,15 @@ impl Inventory {
         cx.background_spawn(async move {
             if let Some(t) = language_tasks {
                 worktree_tasks.extend(t.await.into_iter().flat_map(|tasks| {
-                    tasks
-                        .0
-                        .into_iter()
-                        .filter_map(|task| Some((task_source_kind.clone()?, task)))
+                    tasks.0.into_iter().filter_map(|task| {
+                        Some((
+                            task_source_kind.clone()?,
+                            ImportedTaskTemplate {
+                                template: task,
+                                is_background: false,
+                            },
+                        ))
+                    })
                 }));
             }
             worktree_tasks.extend(global_tasks);
@@ -721,17 +814,22 @@ impl Inventory {
     fn retain_unchanged_tasks(
         &mut self,
         is_updated_source: impl Fn(&TaskSourceKind) -> bool,
-        new_templates: &[TaskTemplate],
+        new_templates: &[ImportedTaskTemplate],
     ) {
         self.last_scheduled_tasks.retain(|(kind, task)| {
-            !is_updated_source(kind) || new_templates.contains(task.original_task())
+            !is_updated_source(kind)
+                || new_templates
+                    .iter()
+                    .any(|imported| &imported.template == task.original_task())
         });
     }
 
     fn global_templates_from_settings(
         &self,
     ) -> impl '_ + Iterator<Item = (TaskSourceKind, TaskTemplate)> {
-        self.templates_from_settings.global_scenarios()
+        self.templates_from_settings
+            .global_scenarios()
+            .map(|(kind, imported)| (kind, imported.template))
     }
 
     fn global_debug_scenarios_from_settings(
@@ -751,7 +849,9 @@ impl Inventory {
         &self,
         worktree: WorktreeId,
     ) -> impl '_ + Iterator<Item = (TaskSourceKind, TaskTemplate)> {
-        self.templates_from_settings.worktree_scenarios(worktree)
+        self.templates_from_settings
+            .worktree_scenarios(worktree)
+            .map(|(kind, imported)| (kind, imported.template))
     }
 
     /// Updates in-memory task metadata from the JSON string given.
@@ -780,9 +880,22 @@ impl Inventory {
             }
         };
 
+        let is_vscode_tasks = matches!(
+            &location,
+            TaskSettingsLocation::Worktree(settings_location)
+                if settings_location.path.file_name() == Some(".vscode")
+        );
         let mut validation_errors = Vec::new();
         let new_templates = raw_tasks.into_iter().filter_map(|raw_template| {
-            let template = serde_json::from_value::<TaskTemplate>(raw_template).log_err()?;
+            let imported = if is_vscode_tasks {
+                serde_json::from_value::<ImportedTaskTemplate>(raw_template).log_err()?
+            } else {
+                ImportedTaskTemplate {
+                    template: serde_json::from_value::<TaskTemplate>(raw_template).log_err()?,
+                    is_background: false,
+                }
+            };
+            let template = &imported.template;
 
             // Validate the variable names used in the `TaskTemplate`.
             let unknown_variables = template.unknown_variables();
@@ -803,7 +916,7 @@ impl Inventory {
                 return None;
             }
 
-            Some(template)
+            Some(imported)
         });
 
         let new_templates = new_templates.collect::<Vec<_>>();

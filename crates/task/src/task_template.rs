@@ -140,6 +140,21 @@ pub enum SaveStrategy {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TaskTemplates(pub Vec<TaskTemplate>);
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImportedTaskTemplate {
+    #[serde(flatten)]
+    pub template: TaskTemplate,
+    #[serde(
+        default,
+        rename = "isBackground",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub is_background: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImportedTaskTemplates(pub Vec<ImportedTaskTemplate>);
+
 impl TaskTemplates {
     pub const FILE_NAME: &str = "tasks.json";
     /// Generates JSON schema of Tasks JSON template format.

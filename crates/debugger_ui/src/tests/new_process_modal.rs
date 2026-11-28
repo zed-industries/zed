@@ -7,11 +7,12 @@ use serde_json::json;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use task::{
-    DebugRequest, DebugScenario, LaunchRequest, SharedTaskContext, TaskContext, VariableName,
-    ZedDebugConfig,
+    BuildTaskDefinition, DebugRequest, DebugScenario, LaunchRequest, SharedTaskContext,
+    TaskContext, VariableName, ZedDebugConfig,
 };
 use text::Point;
-use util::path;
+use util::{path, rel_path::RelPath};
+use workspace::notifications::NotificationId;
 
 use crate::NewProcessMode;
 use crate::new_process_modal::NewProcessModal;
@@ -153,6 +154,7 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
                         task_context.clone(),
                         None,
                         None,
+                        None,
                         window,
                         cx,
                     );
@@ -165,6 +167,378 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
         assert!(called_launch.load(Ordering::SeqCst));
         called_launch.store(false, Ordering::SeqCst);
     }
+}
+
+#[gpui::test]
+async fn test_missing_build_task_behavior_depends_on_scenario_source(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "main.rs": "fn main() {}"
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let warning_id = NotificationId::unique::<crate::session::running::DebugTaskWarning>();
+
+    for (directory, expected_launch) in [(".vscode", true), (".zed", false)] {
+        let called_launch = Arc::new(AtomicBool::new(false));
+        let _subscription = project::debugger::test::intercept_debug_sessions(cx, {
+            let called_launch = called_launch.clone();
+            move |client| {
+                client.on_request::<dap::requests::Launch, _>({
+                    let called_launch = called_launch.clone();
+                    move |_, _| {
+                        called_launch.store(true, Ordering::SeqCst);
+                        Ok(())
+                    }
+                });
+            }
+        });
+
+        let scenario = DebugScenario {
+            adapter: "fake-adapter".into(),
+            label: "missing build".into(),
+            build: Some(BuildTaskDefinition::ByName("missing-build".into())),
+            config: json!({
+                "request": "launch",
+                "program": "/project/main.rs",
+            }),
+            tcp_connection: None,
+        };
+
+        workspace
+            .update(cx, |multi, window, cx| {
+                multi.workspace().update(cx, |workspace, cx| {
+                    workspace.dismiss_notification(&warning_id, cx);
+                    workspace.start_debug_session(
+                        scenario,
+                        Default::default(),
+                        None,
+                        None,
+                        Some(Arc::from(RelPath::from_unix_str(directory).unwrap())),
+                        window,
+                        cx,
+                    );
+                })
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+        assert_eq!(
+            called_launch.load(Ordering::SeqCst),
+            expected_launch,
+            "unexpected launch result for {directory}"
+        );
+        let has_warning = workspace
+            .read_with(cx, |multi, cx| {
+                multi.workspace().read(cx).has_notification(&warning_id)
+            })
+            .unwrap();
+        assert_eq!(
+            has_warning, expected_launch,
+            "unexpected warning state for {directory}"
+        );
+    }
+}
+
+#[gpui::test]
+async fn test_vscode_pre_launch_background_task_skips_with_warning(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            ".vscode": {
+                "tasks.json": r#"{
+                    "version": "2.0.0",
+                    "tasks": [
+                        { "label": "watch", "type": "shell", "command": "echo", "args": ["watching"], "isBackground": true }
+                    ]
+                }"#,
+                "launch.json": r#"{
+                    "version": "0.2.0",
+                    "configurations": [
+                        {
+                            "name": "Run with watch",
+                            "type": "node",
+                            "request": "launch",
+                            "program": "${workspaceFolder}/app.js",
+                            "preLaunchTask": "watch"
+                        }
+                    ]
+                }"#
+            },
+            "app.js": "console.log('hi');"
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    cx.run_until_parked();
+
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+    let inventory = project.read_with(cx, |project, cx| {
+        project
+            .task_store()
+            .read(cx)
+            .task_inventory()
+            .unwrap()
+            .clone()
+    });
+    let mut contexts = project::TaskContexts::default();
+    contexts.active_worktree_context = Some((worktree_id, TaskContext::default()));
+    let (_, scenarios) = inventory
+        .update(cx, |inventory, cx| {
+            inventory.list_debug_scenarios(&contexts, Vec::new(), Vec::new(), false, cx)
+        })
+        .await;
+    let (kind, mut scenario) = scenarios
+        .into_iter()
+        .find(|(_, scenario)| scenario.label.as_ref() == "Run with watch")
+        .expect("launch.json scenario should be loaded");
+    assert_eq!(
+        scenario.build,
+        Some(BuildTaskDefinition::ByName("watch".into()))
+    );
+    scenario.adapter = "fake-adapter".into();
+
+    let directory = match kind {
+        project::TaskSourceKind::Worktree {
+            directory_in_worktree,
+            ..
+        } => Some(directory_in_worktree),
+        _ => None,
+    };
+
+    let warning_id = NotificationId::unique::<crate::session::running::DebugTaskWarning>();
+
+    for dir in [
+        directory,
+        Some(Arc::from(RelPath::from_unix_str(".zed").unwrap())),
+    ] {
+        let called_launch = Arc::new(AtomicBool::new(false));
+        let _subscription = project::debugger::test::intercept_debug_sessions(cx, {
+            let called_launch = called_launch.clone();
+            move |client| {
+                client.on_request::<dap::requests::Launch, _>({
+                    let called_launch = called_launch.clone();
+                    move |_, _| {
+                        called_launch.store(true, Ordering::SeqCst);
+                        Ok(())
+                    }
+                });
+            }
+        });
+
+        workspace
+            .update(cx, |multi, window, cx| {
+                multi.workspace().update(cx, |workspace, cx| {
+                    workspace.dismiss_notification(&warning_id, cx);
+                    workspace.start_debug_session(
+                        scenario.clone(),
+                        Default::default(),
+                        None,
+                        Some(worktree_id),
+                        dir.clone(),
+                        window,
+                        cx,
+                    );
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        assert!(
+            called_launch.load(Ordering::SeqCst),
+            "session should launch without waiting for background task (dir: {dir:?})"
+        );
+        let has_warning = workspace
+            .read_with(cx, |multi, cx| {
+                multi.workspace().read(cx).has_notification(&warning_id)
+            })
+            .unwrap();
+        assert!(
+            has_warning,
+            "background build task warning should be shown (dir: {dir:?})"
+        );
+    }
+}
+
+#[gpui::test]
+async fn test_vscode_pre_launch_task_runs_before_launch(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let temp_dir =
+        std::env::temp_dir().join(format!("zed-test-vscode-prelaunch-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    std::fs::create_dir_all(temp_dir.join(".vscode")).unwrap();
+    std::fs::write(temp_dir.join("app.js"), "console.log('hi');\n").unwrap();
+    std::fs::write(
+        temp_dir.join(".vscode/tasks.json"),
+        r#"{
+            "version": "2.0.0",
+            "tasks": [
+                { "label": "build", "type": "shell", "command": "echo", "args": ["built"] }
+            ]
+        }"#,
+    )
+    .unwrap();
+    std::fs::write(
+        temp_dir.join(".vscode/launch.json"),
+        r#"{
+            "version": "0.2.0",
+            "configurations": [
+                {
+                    "name": "Run",
+                    "type": "node",
+                    "request": "launch",
+                    "program": "${workspaceFolder}/app.js",
+                    "preLaunchTask": "build"
+                }
+            ]
+        }"#,
+    )
+    .unwrap();
+
+    let fs = project::RealFs::new(None, cx.executor());
+    let project = Project::test(fs, [temp_dir.as_path()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    cx.run_until_parked();
+
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+    let inventory = project.read_with(cx, |project, cx| {
+        project
+            .task_store()
+            .read(cx)
+            .task_inventory()
+            .unwrap()
+            .clone()
+    });
+    let mut contexts = project::TaskContexts::default();
+    contexts.active_worktree_context = Some((worktree_id, TaskContext::default()));
+    let (kind, mut scenario) = inventory
+        .update(cx, |inventory, cx| {
+            inventory.list_debug_scenarios(&contexts, Vec::new(), Vec::new(), false, cx)
+        })
+        .await
+        .1
+        .into_iter()
+        .find(|(_, scenario)| scenario.label.as_ref() == "Run")
+        .expect("launch.json scenario should be loaded");
+
+    assert_eq!(
+        scenario.build,
+        Some(BuildTaskDefinition::ByName("build".into()))
+    );
+    assert_eq!(scenario.config.get("preLaunchTask"), None);
+    scenario.adapter = "fake-adapter".into();
+
+    let directory = match kind {
+        project::TaskSourceKind::Worktree {
+            directory_in_worktree,
+            ..
+        } => Some(directory_in_worktree),
+        _ => None,
+    };
+
+    let launched_args = Arc::new(parking_lot::Mutex::new(None::<serde_json::Value>));
+    let _subscription = project::debugger::test::intercept_debug_sessions(cx, {
+        let launched_args = launched_args.clone();
+        move |client| {
+            client.on_request::<dap::requests::Launch, _>({
+                let launched_args = launched_args.clone();
+                move |_, args| {
+                    *launched_args.lock() = Some(args.raw);
+                    Ok(())
+                }
+            });
+        }
+    });
+
+    workspace
+        .update(cx, |multi, window, cx| {
+            multi.workspace().update(cx, |workspace, cx| {
+                workspace.start_debug_session(
+                    scenario,
+                    Default::default(),
+                    None,
+                    Some(worktree_id),
+                    directory,
+                    window,
+                    cx,
+                );
+            })
+        })
+        .unwrap();
+
+    for _ in 0..50 {
+        cx.run_until_parked();
+        if launched_args.lock().is_some() {
+            break;
+        }
+        cx.background_executor
+            .timer(std::time::Duration::from_millis(100))
+            .await;
+    }
+
+    let args = launched_args
+        .lock()
+        .clone()
+        .expect("debug session should launch after build task finishes");
+    assert_eq!(args.get("preLaunchTask"), None);
+
+    let has_terminal = workspace
+        .read_with(cx, |multi, cx| {
+            let panel = multi
+                .workspace()
+                .read(cx)
+                .panel::<crate::debugger_panel::DebugPanel>(cx)
+                .unwrap();
+            let session = panel.read(cx).active_session().unwrap();
+            session
+                .read(cx)
+                .running_state()
+                .read(cx)
+                .debug_terminal
+                .read(cx)
+                .terminal
+                .is_some()
+        })
+        .unwrap();
+    assert!(has_terminal, "build task terminal should have been spawned");
+
+    let warning_id = NotificationId::unique::<crate::session::running::DebugTaskWarning>();
+    let has_warning = workspace
+        .read_with(cx, |multi, cx| {
+            multi.workspace().read(cx).has_notification(&warning_id)
+        })
+        .unwrap();
+    assert!(!has_warning);
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
 }
 
 #[gpui::test]

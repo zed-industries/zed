@@ -33,7 +33,7 @@ use dap::{
 use futures::{SinkExt, channel::mpsc};
 use gpui::{
     Action as _, AnyView, App, AppContext, Axis, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, NoAction, Pixels, Point, Subscription, Task, TaskExt, WeakEntity,
+    Focusable, NoAction, Pixels, Point, SharedString, Subscription, Task, TaskExt, WeakEntity,
 };
 use language::Buffer;
 use loaded_source_list::LoadedSourceList;
@@ -55,15 +55,35 @@ use ui::{
     FluentBuilder, IntoElement, Render, StatefulInteractiveElement, Tab, Tooltip, VisibleOnHover,
     VisualContext, prelude::*,
 };
-use util::ResultExt;
+use util::{ResultExt, rel_path::RelPath};
 use variable_list::VariableList;
 use workspace::{
     ActivePaneDecorator, DraggedTab, Item, ItemHandle, Member, Pane, PaneGroup, SplitDirection,
-    Workspace, item::TabContentParams, move_item, pane::Event,
+    Workspace,
+    item::TabContentParams,
+    move_item,
+    pane::Event,
+    workspace_error::{ErrorAction, ErrorSeverity, WorkspaceError},
 };
 
 static PROCESS_ID_PLACEHOLDER: LazyLock<String> =
     LazyLock::new(|| task::VariableName::PickProcessId.template_value());
+
+pub(crate) struct DebugTaskWarning(pub(crate) SharedString);
+
+impl WorkspaceError for DebugTaskWarning {
+    fn primary_message(&self) -> SharedString {
+        self.0.clone()
+    }
+
+    fn primary_action(&self) -> ErrorAction {
+        ErrorAction::dismiss()
+    }
+
+    fn severity(&self) -> ErrorSeverity {
+        ErrorSeverity::Warning
+    }
+}
 
 pub struct RunningState {
     session: Entity<Session>,
@@ -1072,6 +1092,7 @@ impl RunningState {
         task_context: SharedTaskContext,
         buffer: Option<Entity<Buffer>>,
         worktree_id: Option<WorktreeId>,
+        directory: Option<Arc<RelPath>>,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<DebugTaskDefinition>> {
@@ -1090,6 +1111,10 @@ impl RunningState {
             .remote_client()
             .as_ref()
             .and_then(|remote| remote.read(cx).shell());
+        let is_vscode_scenario = directory
+            .as_ref()
+            .and_then(|directory| directory.file_name())
+            == Some(".vscode");
 
         cx.spawn_in(window, async move |this, cx| {
             let DebugScenario {
@@ -1137,30 +1162,63 @@ impl RunningState {
 
             let config_is_valid = request_type.is_ok();
             let mut extra_config = Value::Null;
-            let build_output = if let Some(build) = build {
-                let (task_template, locator_name) = match build {
+            let build_task = if let Some(build) = build {
+                match build {
                     BuildTaskDefinition::Template {
                         task_template,
                         locator_name,
-                    } => (task_template, locator_name),
+                    } => Some((task_template, locator_name)),
                     BuildTaskDefinition::ByName(ref label) => {
                         let task = task_store.update(cx, |this, cx| {
                             this.task_inventory().map(|inventory| {
                                 inventory.read(cx).task_template_by_label(
                                     buffer,
                                     worktree_id,
+                                    directory,
                                     label,
                                     cx,
                                 )
                             })
                         })?;
-                        let task = match task {
+                        let found = match task {
                             Some(task) => task.await,
                             None => None,
-                        }.with_context(|| format!("Couldn't find task template for {build:?}"))?;
-                        (task, None)
+                        };
+                        match found {
+                            Some((task_template, true)) => {
+                                let message = format!(
+                                    "Skipping background build task '{}'; Zed cannot wait for it to finish. Starting the debug session without it.",
+                                    task_template.label
+                                );
+                                weak_workspace
+                                    .update_in(cx, |workspace, _window, cx| {
+                                        workspace.show_error(DebugTaskWarning(message.into()), cx);
+                                    })
+                                    .ok();
+                                None
+                            }
+                            Some((task_template, false)) => Some((task_template, None)),
+                            None if is_vscode_scenario => {
+                                let message = format!(
+                                    "Couldn't find build task '{label}'. Starting the debug session without it."
+                                );
+                                weak_workspace
+                                    .update_in(cx, |workspace, _window, cx| {
+                                        workspace.show_error(DebugTaskWarning(message.into()), cx);
+                                    })
+                                    .ok();
+                                None
+                            }
+                            None => {
+                                return Err(anyhow!("Couldn't find task template for {build:?}"));
+                            }
+                        }
                     }
-                };
+                }
+            } else {
+                None
+            };
+            let build_output = if let Some((task_template, locator_name)) = build_task {
                 let Some(mut task) = task_template.resolve_task("debug-build-task", &task_context) else {
                     anyhow::bail!("Could not resolve task variables within a debug scenario");
                 };
@@ -1858,6 +1916,7 @@ impl RunningState {
                 task_context,
                 active_buffer,
                 worktree_id,
+                directory,
             } = context;
             let active_buffer = active_buffer.and_then(|buffer| buffer.upgrade());
 
@@ -1868,6 +1927,7 @@ impl RunningState {
                         task_context,
                         active_buffer,
                         worktree_id,
+                        directory,
                         window,
                         cx,
                     )

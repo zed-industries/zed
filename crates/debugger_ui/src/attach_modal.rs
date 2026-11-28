@@ -279,6 +279,7 @@ impl PickerDelegate for AttachModalDelegate {
                                 Default::default(),
                                 None,
                                 None,
+                                None,
                                 window,
                                 cx,
                             );

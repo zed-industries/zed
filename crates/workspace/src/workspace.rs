@@ -341,6 +341,7 @@ pub trait DebuggerProvider {
         task_context: SharedTaskContext,
         active_buffer: Option<Entity<Buffer>>,
         worktree_id: Option<WorktreeId>,
+        directory: Option<Arc<RelPath>>,
         window: &mut Window,
         cx: &mut App,
     );

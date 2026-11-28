@@ -6,7 +6,7 @@ use serde_json::json;
 use settings::SettingsLocation;
 use std::path::Path;
 use std::sync::Arc;
-use task::{ResolvedTask, TaskId};
+use task::{ResolvedTask, TaskId, TaskTemplate};
 use util::rel_path::rel_path;
 
 use project::task_store::{TaskSettingsLocation, TaskStore};
@@ -334,7 +334,7 @@ async fn test_reloading_debug_scenarios(cx: &mut TestAppContext) {
         .clone();
 
     inventory.update(cx, |this, _| {
-        this.scenario_scheduled(scenario.clone(), Default::default(), None, None);
+        this.scenario_scheduled(scenario.clone(), Default::default(), None, None, None);
     });
 
     assert_eq!(
@@ -787,6 +787,297 @@ async fn test_worktree_tasks_file_update_keeps_history_of_unchanged_tasks(cx: &m
     assert_eq!(
         task_by_id(&inventory, &task_id, cx).map(|task| task.id),
         None,
+    );
+}
+
+#[gpui::test]
+async fn test_vscode_background_flag_survives_project_round_trip(
+    executor: gpui::BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    cx.update(|cx| {
+        let settings_store = settings::SettingsStore::test(cx);
+        cx.set_global(settings_store);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+    });
+
+    let fs = fs::FakeFs::new(executor);
+    fs.insert_tree(
+        util::path!("/project"),
+        json!({
+            ".vscode": {
+                "tasks.json": r#"{
+                    "version": "2.0.0",
+                    "tasks": [
+                        {"label": "watch", "type": "shell", "command": "sleep", "isBackground": true},
+                        {"label": "build", "type": "shell", "command": "cargo"}
+                    ]
+                }"#
+            }
+        }),
+    )
+    .await;
+
+    let project = project::Project::test(fs, [util::path!("/project").as_ref()], cx).await;
+    cx.run_until_parked();
+
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+    let inventory = project.read_with(cx, |project, cx| {
+        project
+            .task_store()
+            .read(cx)
+            .task_inventory()
+            .unwrap()
+            .clone()
+    });
+
+    let watch = inventory
+        .update(cx, |inventory, cx| {
+            inventory.task_template_by_label(
+                None,
+                Some(worktree_id),
+                Some(Arc::from(rel_path(".vscode"))),
+                "watch",
+                cx,
+            )
+        })
+        .await;
+    assert_eq!(
+        watch,
+        Some((
+            TaskTemplate {
+                label: "watch".into(),
+                command: "sleep".into(),
+                ..Default::default()
+            },
+            true,
+        ))
+    );
+
+    let build = inventory
+        .update(cx, |inventory, cx| {
+            inventory.task_template_by_label(
+                None,
+                Some(worktree_id),
+                Some(Arc::from(rel_path(".vscode"))),
+                "build",
+                cx,
+            )
+        })
+        .await;
+    assert_eq!(
+        build,
+        Some((
+            TaskTemplate {
+                label: "build".into(),
+                command: "cargo".into(),
+                ..Default::default()
+            },
+            false,
+        ))
+    );
+}
+
+#[gpui::test]
+async fn test_native_task_file_ignores_is_background(cx: &mut TestAppContext) {
+    init_test(cx);
+    let inventory = cx.update(|cx| Inventory::new(cx));
+    let worktree_id = WorktreeId::from_usize(0);
+    inventory.update(cx, |inventory, _| {
+        inventory
+            .update_file_based_tasks(
+                TaskSettingsLocation::Worktree(SettingsLocation {
+                    worktree_id,
+                    path: rel_path(".zed"),
+                }),
+                Some(r#"[{"label": "watch", "command": "sleep", "isBackground": true}]"#),
+            )
+            .unwrap();
+    });
+
+    let watch = inventory
+        .update(cx, |inventory, cx| {
+            inventory.task_template_by_label(None, Some(worktree_id), None, "watch", cx)
+        })
+        .await;
+    assert_eq!(
+        watch,
+        Some((
+            TaskTemplate {
+                label: "watch".into(),
+                command: "sleep".into(),
+                show_summary: true,
+                show_command: true,
+                ..Default::default()
+            },
+            false,
+        ))
+    );
+}
+
+#[gpui::test]
+async fn test_task_template_lookup_scopes_vscode_directories(cx: &mut TestAppContext) {
+    init_test(cx);
+    let inventory = cx.update(|cx| Inventory::new(cx));
+    let worktree_id = WorktreeId::from_usize(0);
+    for (directory, command) in [("a/.vscode", "from-a"), ("b/.vscode", "from-b")] {
+        let tasks = json!([{"label": "build", "command": command}]).to_string();
+        inventory.update(cx, |inventory, _| {
+            inventory
+                .update_file_based_tasks(
+                    TaskSettingsLocation::Worktree(SettingsLocation {
+                        worktree_id,
+                        path: rel_path(directory),
+                    }),
+                    Some(&tasks),
+                )
+                .unwrap();
+        });
+    }
+
+    let found = inventory
+        .update(cx, |inventory, cx| {
+            inventory.task_template_by_label(
+                None,
+                Some(worktree_id),
+                Some(Arc::from(rel_path("a/.vscode"))),
+                "build",
+                cx,
+            )
+        })
+        .await;
+    assert_eq!(found.map(|(task, _)| task.command), Some("from-a".into()));
+
+    let missing_in_c = inventory
+        .update(cx, |inventory, cx| {
+            inventory.task_template_by_label(
+                None,
+                Some(worktree_id),
+                Some(Arc::from(rel_path("c/.vscode"))),
+                "build",
+                cx,
+            )
+        })
+        .await;
+    assert_eq!(missing_in_c, None);
+}
+
+#[gpui::test]
+async fn test_vscode_build_task_available_with_zed_tasks(cx: &mut TestAppContext) {
+    init_test(cx);
+    let inventory = cx.update(|cx| Inventory::new(cx));
+    let worktree_id = WorktreeId::from_usize(0);
+    for (directory, tasks) in [
+        (".zed", json!([{"label": "other", "command": "noop"}])),
+        (
+            ".vscode",
+            json!([{"label": "build", "command": "from-vscode"}]),
+        ),
+    ] {
+        let tasks = tasks.to_string();
+        inventory.update(cx, |inventory, _| {
+            inventory
+                .update_file_based_tasks(
+                    TaskSettingsLocation::Worktree(SettingsLocation {
+                        worktree_id,
+                        path: rel_path(directory),
+                    }),
+                    Some(&tasks),
+                )
+                .unwrap();
+        });
+    }
+
+    let native_lookup = inventory
+        .update(cx, |inventory, cx| {
+            inventory.task_template_by_label(
+                None,
+                Some(worktree_id),
+                Some(Arc::from(rel_path(".zed"))),
+                "build",
+                cx,
+            )
+        })
+        .await;
+    assert_eq!(native_lookup, None);
+
+    let vscode_lookup = inventory
+        .update(cx, |inventory, cx| {
+            inventory.task_template_by_label(
+                None,
+                Some(worktree_id),
+                Some(Arc::from(rel_path(".vscode"))),
+                "build",
+                cx,
+            )
+        })
+        .await;
+    assert_eq!(
+        vscode_lookup.map(|(task, _)| task.command),
+        Some("from-vscode".into())
+    );
+}
+
+#[gpui::test]
+async fn test_native_build_lookup_surfaces_background_vscode_task(
+    executor: gpui::BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    cx.update(|cx| {
+        let settings_store = settings::SettingsStore::test(cx);
+        cx.set_global(settings_store);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+    });
+
+    let fs = fs::FakeFs::new(executor);
+    fs.insert_tree(
+        util::path!("/project"),
+        json!({
+            ".vscode": {
+                "tasks.json": r#"{
+                    "version": "2.0.0",
+                    "tasks": [
+                        {"label": "watch", "type": "shell", "command": "sleep", "isBackground": true}
+                    ]
+                }"#
+            }
+        }),
+    )
+    .await;
+
+    let project = project::Project::test(fs, [util::path!("/project").as_ref()], cx).await;
+    cx.run_until_parked();
+
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+    let inventory = project.read_with(cx, |project, cx| {
+        project
+            .task_store()
+            .read(cx)
+            .task_inventory()
+            .unwrap()
+            .clone()
+    });
+
+    let native_lookup = inventory
+        .update(cx, |inventory, cx| {
+            inventory.task_template_by_label(
+                None,
+                Some(worktree_id),
+                Some(Arc::from(rel_path(".zed"))),
+                "watch",
+                cx,
+            )
+        })
+        .await;
+    assert_eq!(
+        native_lookup.map(|(task, is_background)| (task.label, is_background)),
+        Some(("watch".into(), true))
     );
 }
 

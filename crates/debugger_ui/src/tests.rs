@@ -123,6 +123,7 @@ pub fn start_debug_session_with<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
                 SharedTaskContext::default(),
                 None,
                 None,
+                None,
                 window,
                 cx,
             )

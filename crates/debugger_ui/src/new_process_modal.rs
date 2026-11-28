@@ -75,6 +75,19 @@ fn suggested_label(request: &DebugRequest, debugger: &str) -> SharedString {
     }
 }
 
+fn scenario_directory(
+    context: &DebugScenarioContext,
+    kind: Option<&TaskSourceKind>,
+) -> Option<Arc<RelPath>> {
+    context.directory.clone().or_else(|| match kind {
+        Some(TaskSourceKind::Worktree {
+            directory_in_worktree,
+            ..
+        }) => Some(directory_in_worktree.clone()),
+        _ => None,
+    })
+}
+
 impl NewProcessModal {
     pub(super) fn show(
         workspace: &mut Workspace,
@@ -386,7 +399,7 @@ impl NewProcessModal {
 
             debug_panel.update_in(cx, |debug_panel, window, cx| {
                 send_telemetry(&config, TelemetrySpawnLocation::Custom, cx);
-                debug_panel.start_session(config, task_context, None, worktree_id, window, cx)
+                debug_panel.start_session(config, task_context, None, worktree_id, None, window, cx)
             })?;
             this.update(cx, |_, cx| {
                 cx.emit(DismissEvent);
@@ -1390,6 +1403,7 @@ impl PickerDelegate for DebugDelegate {
                             task_context,
                             None,
                             worktree_id,
+                            None,
                             window,
                             cx,
                         );
@@ -1425,14 +1439,17 @@ impl PickerDelegate for DebugDelegate {
                         task_context: task_contexts.active_context().cloned()?.into(),
                         active_buffer: None,
                         worktree_id: task_contexts.worktree(),
+                        directory: None,
                     })
                 })
                 .unwrap_or_default()
         });
+        let directory = scenario_directory(&context, kind.as_ref());
         let DebugScenarioContext {
             task_context,
             active_buffer: _,
             worktree_id,
+            directory: _,
         } = context;
 
         if secondary {
@@ -1457,6 +1474,7 @@ impl PickerDelegate for DebugDelegate {
                         task_context,
                         None,
                         worktree_id,
+                        directory,
                         window,
                         cx,
                     );
@@ -1661,5 +1679,56 @@ impl NewProcessModal {
                 })
                 .collect()
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use project::WorktreeId;
+
+    fn worktree_kind(directory: &str) -> TaskSourceKind {
+        TaskSourceKind::Worktree {
+            id: WorktreeId::from_usize(1),
+            directory_in_worktree: Arc::from(RelPath::from_unix_str(directory).unwrap()),
+            id_base: Cow::Borrowed("worktree"),
+        }
+    }
+
+    #[test]
+    fn test_scenario_directory_prefers_context() {
+        let from_context: Arc<RelPath> =
+            Arc::from(RelPath::from_unix_str("context/.vscode").unwrap());
+        let context = DebugScenarioContext {
+            directory: Some(from_context.clone()),
+            ..Default::default()
+        };
+        let kind = worktree_kind("kind/.vscode");
+
+        assert_eq!(
+            scenario_directory(&context, Some(&kind)),
+            Some(from_context)
+        );
+    }
+
+    #[test]
+    fn test_scenario_directory_falls_back_to_kind() {
+        let from_kind: Arc<RelPath> = Arc::from(RelPath::from_unix_str("a/.vscode").unwrap());
+        let context = DebugScenarioContext::default();
+
+        assert_eq!(
+            scenario_directory(&context, Some(&worktree_kind("a/.vscode"))),
+            Some(from_kind)
+        );
+    }
+
+    #[test]
+    fn test_scenario_directory_is_none_without_source() {
+        let context = DebugScenarioContext::default();
+
+        assert_eq!(
+            scenario_directory(&context, Some(&TaskSourceKind::UserInput)),
+            None
+        );
     }
 }

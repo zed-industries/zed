@@ -187,6 +187,7 @@ impl DebugPanel {
         task_context: SharedTaskContext,
         active_buffer: Option<Entity<Buffer>>,
         worktree_id: Option<WorktreeId>,
+        directory: Option<Arc<RelPath>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -238,6 +239,7 @@ impl DebugPanel {
                     task_context.clone(),
                     worktree_id,
                     active_buffer.as_ref().map(|buffer| buffer.downgrade()),
+                    directory.clone(),
                 );
             })
         }
@@ -257,6 +259,7 @@ impl DebugPanel {
                                         .map(|entity| entity.downgrade()),
                                     task_context: task_context.clone(),
                                     worktree_id,
+                                    directory: directory.clone(),
                                 });
                             };
                             running.resolve_scenario(
@@ -264,6 +267,7 @@ impl DebugPanel {
                                 task_context,
                                 active_buffer,
                                 worktree_id,
+                                directory,
                                 window,
                                 cx,
                             )
@@ -336,6 +340,7 @@ impl DebugPanel {
             task_context,
             worktree_id,
             active_buffer,
+            directory,
         } = context;
 
         let active_buffer = active_buffer.and_then(|buffer| buffer.upgrade());
@@ -345,6 +350,7 @@ impl DebugPanel {
             task_context,
             active_buffer,
             worktree_id,
+            directory,
             window,
             cx,
         );
@@ -1944,12 +1950,21 @@ impl workspace::DebuggerProvider for DebuggerProvider {
         context: SharedTaskContext,
         buffer: Option<Entity<Buffer>>,
         worktree_id: Option<WorktreeId>,
+        directory: Option<Arc<RelPath>>,
         window: &mut Window,
         cx: &mut App,
     ) {
         self.0.update(cx, |_, cx| {
             cx.defer_in(window, move |this, window, cx| {
-                this.start_session(definition, context, buffer, worktree_id, window, cx);
+                this.start_session(
+                    definition,
+                    context,
+                    buffer,
+                    worktree_id,
+                    directory,
+                    window,
+                    cx,
+                );
             })
         })
     }

@@ -286,6 +286,7 @@ impl Editor {
                         context,
                         Some(buffer),
                         None,
+                        None,
                         window,
                         cx,
                     );

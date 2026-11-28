@@ -27,7 +27,7 @@ use settings::{
     SettingsStore, parse_json_with_comments, watch_config_file,
 };
 use std::{cell::OnceCell, collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
-use task::{DebugTaskFile, TaskTemplates, VsCodeDebugTaskFile, VsCodeTaskFile};
+use task::{DebugTaskFile, ImportedTaskTemplates, VsCodeDebugTaskFile, VsCodeTaskFile};
 use util::{ResultExt, rel_path::RelPath, serde::default_true};
 use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 
@@ -1367,7 +1367,7 @@ impl SettingsObserver {
                                             .with_context(|| {
                                                 format!("parsing VSCode tasks, file {abs_path:?}")
                                             })?;
-                                    let zed_tasks = TaskTemplates::try_from(vscode_tasks)
+                                    let zed_tasks = ImportedTaskTemplates::try_from(vscode_tasks)
                                         .with_context(|| {
                                             format!(
                                         "converting VSCode tasks into Zed ones, file {abs_path:?}"
