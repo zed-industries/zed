@@ -1,4 +1,5 @@
 use super::*;
+use gpui::{Image, ImageFormat};
 use util::rel_path::RelPath;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -265,12 +266,70 @@ impl Editor {
             return;
         }
 
-        let clipboard_image = item.entries().iter().find_map(|entry| match entry {
-            ClipboardEntry::Image(image) if !image.bytes.is_empty() => Some(image),
+        let external_paths = item.entries().iter().find_map(|entry| match entry {
+            ClipboardEntry::ExternalPaths(paths) => Some(paths),
             _ => None,
         });
 
-        if let Some(image) = clipboard_image {
+        if let Some(extern_paths) = external_paths {
+            let images: Vec<(PathBuf, ImageFormat)> = extern_paths
+                .paths()
+                .iter()
+                .filter_map(|path| {
+                    let ext = path.extension()?.to_str()?;
+                    let format = ImageFormat::from_file_extension(ext)?;
+
+                    Some((path.clone(), format))
+                })
+                .collect();
+
+            if !images.is_empty() {
+                cx.spawn_in(window, async move |this, cx| {
+                    let loaded: Vec<(ImageFormat, Vec<u8>)> = cx
+                        .background_spawn(async move {
+                            let mut out = Vec::new();
+                            for (path, format) in images {
+                                match std::fs::read(&path) {
+                                    Ok(bytes) => out.push((format, bytes)),
+                                    Err(err) => log::error!("failed to read {path:?}: {err}"),
+                                }
+                            }
+                            out
+                        })
+                        .await;
+
+                    if loaded.is_empty() {
+                        return Ok(());
+                    }
+
+                    let entries = loaded
+                        .into_iter()
+                        .map(|(format, bytes)| {
+                            ClipboardEntry::Image(Image::from_bytes(format, bytes))
+                        })
+                        .collect::<Vec<_>>();
+                    let item = ClipboardItem { entries };
+
+                    this.update_in(cx, |this, window, cx| {
+                        this.paste_item(&item, window, cx);
+                    })
+                })
+                .detach_and_log_err(cx);
+
+                return;
+            }
+        }
+
+        let clipboard_images: Vec<Image> = item
+            .entries()
+            .iter()
+            .filter_map(|entry| match entry {
+                ClipboardEntry::Image(image) if !image.bytes.is_empty() => Some(image.clone()),
+                _ => None,
+            })
+            .collect();
+
+        if !clipboard_images.is_empty() {
             let is_markdown = {
                 let display_map = self.display_snapshot(cx);
                 let selections = self.selections.all::<MultiBufferOffset>(&display_map);
@@ -293,27 +352,45 @@ impl Editor {
                         .read(cx)
                         .worktree_for_id(worktree_id, cx)?;
 
-                    let extension = image.format.extension();
                     let snapshot = worktree.read(cx).snapshot();
-                    let (filename, file_path) =
-                        unused_image_path(&dir_rel_path, extension, |path| {
-                            snapshot.entry_for_path(path).is_some()
-                        })?;
-
-                    let create_task = worktree.update(cx, |worktree, cx| {
-                        worktree.create_entry(file_path, false, Some(image.bytes.clone()), cx)
-                    });
 
                     cx.spawn_in(window, async move |editor, cx| {
-                        create_task.await?;
+                        let mut claimed = std::collections::HashSet::new();
+                        let mut filenames = Vec::new();
+                        for image in clipboard_images {
+                            let extension = image.format.extension();
+
+                            let (filename, file_path) =
+                                unused_image_path(&dir_rel_path, extension, |path| {
+                                    snapshot.entry_for_path(path).is_some()
+                                        || claimed.contains(path)
+                                })
+                                .context("no unused image path")?;
+                            claimed.insert(file_path.clone());
+
+                            let create_task = worktree.update(cx, |worktree, cx| {
+                                worktree.create_entry(
+                                    file_path,
+                                    false,
+                                    Some(image.bytes.clone()),
+                                    cx,
+                                )
+                            });
+
+                            create_task.await?;
+
+                            filenames.push(filename);
+                        }
                         editor.update_in(cx, |editor, window, cx| {
-                            editor.insert_image_snippet(&filename, window, cx)
-                        })
+                            editor.insert_image_snippet(&filenames, window, cx)
+                        })?;
+                        anyhow::Ok(())
                     })
                     .detach_and_log_err(cx);
 
                     Some(())
                 });
+
                 if handled.is_some() {
                     // stop clipboard handling when the snippet is inserted
                     return;
@@ -339,11 +416,18 @@ impl Editor {
 
     fn insert_image_snippet(
         &mut self,
-        filename: &str,
+        filenames: &[String],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(snippet) = Snippet::parse(&format!("![$1]({filename})$0")).log_err() else {
+        let body = filenames
+            .iter()
+            .enumerate()
+            .map(|(i, filename)| format!("![${}]({filename})", i + 1))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let Some(snippet) = Snippet::parse(&format!("{body}$0")).log_err() else {
             return;
         };
         let display_map = self.display_snapshot(cx);
