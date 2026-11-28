@@ -2703,6 +2703,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                             let input = PlatformInput::Scroll(ScrollEvent {
                                 position: state.mouse_location.unwrap(),
                                 delta: ScrollDelta::Pixels(continuous),
+                                wheel_notches: None,
                                 modifiers: state.modifiers,
                                 touch_phase: TouchPhase::Moved,
                                 source: ScrollSource::Pointer,
@@ -2716,6 +2717,8 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                         let input = PlatformInput::Scroll(ScrollEvent {
                             position: state.mouse_location.unwrap(),
                             delta: ScrollDelta::Lines(discrete),
+                            // One wheel notch is scaled to SCROLL_LINES lines.
+                            wheel_notches: Some(discrete.map(|lines| lines / SCROLL_LINES)),
                             modifiers: state.modifiers,
                             touch_phase: TouchPhase::Moved,
                             source: ScrollSource::Pointer,

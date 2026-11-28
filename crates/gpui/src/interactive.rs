@@ -527,6 +527,13 @@ pub struct ScrollEvent {
     /// The change in scroll position for this event.
     pub delta: ScrollDelta,
 
+    /// How many mouse wheel notches this event represents, on the same axes as `delta`.
+    /// Fractional for high-resolution wheels. Platforms scale `delta` by a number of
+    /// lines per notch (e.g. the Windows "lines to scroll" setting); this is the
+    /// unscaled count. `None` when the platform doesn't report notches, e.g. for
+    /// trackpads.
+    pub wheel_notches: Option<Point<f32>>,
+
     /// The modifiers that were held down when the scroll happened.
     pub modifiers: Modifiers,
 

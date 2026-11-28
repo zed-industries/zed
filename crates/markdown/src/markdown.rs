@@ -5738,6 +5738,7 @@ mod tests {
         cx.simulate_event(ScrollEvent {
             position: visible_position,
             delta: ScrollDelta::Pixels(point(px(-400.), px(0.))),
+            wheel_notches: None,
             modifiers: Modifiers::default(),
             touch_phase: TouchPhase::Moved,
             source: gpui::ScrollSource::Pointer,
@@ -8221,6 +8222,7 @@ mod tests {
         cx.simulate_event(ScrollEvent {
             position: event_position,
             delta: ScrollDelta::Pixels(point(px(-100.), px(0.))),
+            wheel_notches: None,
             modifiers: Modifiers::default(),
             touch_phase: TouchPhase::Moved,
             source: gpui::ScrollSource::Pointer,
@@ -8318,6 +8320,7 @@ mod tests {
         cx.simulate_event(ScrollEvent {
             position: event_position,
             delta: ScrollDelta::Pixels(point(px(-100.), px(0.))),
+            wheel_notches: None,
             modifiers: Modifiers::default(),
             touch_phase: TouchPhase::Moved,
             source: gpui::ScrollSource::Pointer,
