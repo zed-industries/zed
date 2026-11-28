@@ -4105,7 +4105,7 @@ See [Choosing Language Servers](../configuring-languages.md#choosing-language-se
     },
     "openai_compatible": {},
     "opencode": {
-      "api_url": "https://opencode.ai/zen"
+      "api_url": "https://opencode.ai/inference"
     },
     "open_router": {
       "api_url": "https://openrouter.ai/api/v1"

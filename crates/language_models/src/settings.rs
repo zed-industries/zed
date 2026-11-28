@@ -149,7 +149,7 @@ impl settings::Settings for AllLanguageModelSettings {
                 custom_headers: custom_headers_from("Ollama", ollama.custom_headers, &[]),
             },
             opencode: OpenCodeSettings {
-                api_url: opencode.api_url.unwrap(),
+                api_url: opencode.api_url.unwrap_or_default(),
                 available_models: opencode.available_models.unwrap_or_default(),
                 custom_headers: custom_headers_from(
                     "OpenCode",

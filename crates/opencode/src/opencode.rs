@@ -16,7 +16,16 @@ use serde::{Deserialize, Serialize};
 pub mod catalog;
 pub mod completion;
 
-pub const OPENCODE_API_URL: &str = "https://opencode.ai/zen";
+/// Keychain key for OpenCode API keys.
+///
+/// This is a stable credential-storage identifier, not an API endpoint. It
+/// retains the legacy `/zen` value so existing keychain entries continue to
+/// resolve; changing it requires migrating existing credentials.
+pub const OPENCODE_CREDENTIALS_KEY: &str = "https://opencode.ai/zen";
+
+/// Base URL for OpenCode's inference API. Subscription and protocol paths are
+/// appended to it.
+pub const OPENCODE_INFERENCE_BASE_URL: &str = "https://opencode.ai/inference";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
@@ -35,6 +44,17 @@ pub enum ApiProtocol {
 pub enum OpenCodeSubscription {
     Zen,
     Go,
+}
+
+impl ApiProtocol {
+    /// Path appended to an OpenCode inference base for this protocol.
+    pub fn api_path(self) -> &'static str {
+        match self {
+            Self::Anthropic => "/anthropic/v1",
+            Self::OpenAiResponses | Self::OpenAiChat => "/openai/v1",
+            Self::Google => "/google/v1beta",
+        }
+    }
 }
 
 impl OpenCodeSubscription {
@@ -134,6 +154,9 @@ impl Model {
 }
 
 /// Streams Google generate-content responses through OpenCode.
+///
+/// `api_url` is the Google API base including its version path, such as
+/// `https://opencode.ai/inference/go/google/v1beta`.
 pub async fn stream_generate_content(
     client: &dyn HttpClient,
     api_url: &str,
@@ -144,8 +167,9 @@ pub async fn stream_generate_content(
     BoxStream<'static, Result<google_ai::GenerateContentResponse, LanguageModelCompletionError>>,
 > {
     let api_key = api_key.trim();
+    let api_url = api_url.trim_end_matches('/');
     let model_id = &request.model.model_id;
-    let uri = format!("{api_url}/v1/models/{model_id}:streamGenerateContent?alt=sse");
+    let uri = format!("{api_url}/models/{model_id}:streamGenerateContent?alt=sse");
     let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
