@@ -522,6 +522,7 @@ impl WindowsWindow {
         }
         .or_else(WindowsDisplay::primary_monitor)
         .context("failed to find any monitor")?;
+        let initial_bounds = initial_device_bounds(display, params.bounds);
         let appearance = system_appearance().unwrap_or_default();
         let mut context = WindowCreateContext {
             inner: None,
@@ -552,10 +553,10 @@ impl WindowsWindow {
                 WINDOW_CLASS_NAME,
                 &window_name,
                 dwstyle,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
+                initial_bounds.origin.x.0,
+                initial_bounds.origin.y.0,
+                initial_bounds.size.width.0,
+                initial_bounds.size.height.0,
                 parent_hwnd,
                 None,
                 Some(hinstance.into()),
@@ -573,8 +574,7 @@ impl WindowsWindow {
         set_non_rude_hwnd(hwnd, true);
         configure_dwm_dark_mode(hwnd, appearance);
         this.state.border_offset.update(hwnd)?;
-        let placement =
-            retrieve_window_placement(hwnd, display, params.bounds, &this.state.border_offset)?;
+        let placement = retrieve_window_placement(hwnd, initial_bounds, &this.state.border_offset)?;
         if params.show {
             let mut placement = placement;
             if !params.focus {
@@ -1572,10 +1572,29 @@ fn calculate_client_rect(
     }
 }
 
+/// Where a new window is created, in device pixels on `display`.
+///
+/// The window is created at these bounds rather than at `CW_USEDEFAULT`, so it
+/// starts out on its target monitor with that monitor's DPI. A window created on
+/// another monitor and moved to a monitor with a different DPI receives
+/// `WM_DPICHANGED`, whose suggested rect scales the already converted size a
+/// second time.
+fn initial_device_bounds(
+    display: WindowsDisplay,
+    requested_bounds: Bounds<Pixels>,
+) -> Bounds<DevicePixels> {
+    // the bounds may be not inside the display
+    let bounds = if display.check_given_bounds(requested_bounds) {
+        requested_bounds
+    } else {
+        display.default_bounds()
+    };
+    bounds.to_device_pixels(display.scale_factor())
+}
+
 fn retrieve_window_placement(
     hwnd: HWND,
-    display: WindowsDisplay,
-    initial_bounds: Bounds<Pixels>,
+    bounds: Bounds<DevicePixels>,
     border_offset: &WindowBorderOffset,
 ) -> Result<WINDOWPLACEMENT> {
     let mut placement = WINDOWPLACEMENT {
@@ -1583,20 +1602,6 @@ fn retrieve_window_placement(
         ..Default::default()
     };
     unsafe { GetWindowPlacement(hwnd, &mut placement)? };
-    // the bounds may be not inside the display
-    let bounds = if display.check_given_bounds(initial_bounds) {
-        initial_bounds
-    } else {
-        display.default_bounds()
-    };
-    // `bounds` is expressed in logical pixels for `display`, so it must be converted
-    // to device pixels using that display's own scale factor. The window's current
-    // scale factor can't be used here: `CreateWindowExW` was called with
-    // `CW_USEDEFAULT`, so at this point the window may still be sitting on whichever
-    // monitor Windows picked by default, which can have a different DPI than `display`
-    // and would otherwise throw off the physical position (e.g. leaving the window
-    // partially off-screen when moved to a monitor with a different scale factor).
-    let bounds = bounds.to_device_pixels(display.scale_factor());
     placement.rcNormalPosition = calculate_window_rect(bounds, border_offset);
     Ok(placement)
 }
