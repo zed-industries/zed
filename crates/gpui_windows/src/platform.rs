@@ -1231,8 +1231,9 @@ impl WindowsPlatformInner {
             | WM_GPUI_DOCK_MENU_ACTION
             | WM_GPUI_KEYBOARD_LAYOUT_CHANGED
             | WM_GPUI_DISPLAYS_CHANGED
+            | WM_GPUI_POWER_EVENT
             | WM_GPUI_GPU_DEVICE_LOST => self.handle_gpui_events(msg, wparam, lparam),
-            WM_POWERBROADCAST => self.handle_power_broadcast(wparam, lparam),
+            WM_POWERBROADCAST => self.handle_power_broadcast(handle, wparam, lparam),
             WM_DISPLAYCHANGE => self.handle_display_change(handle),
             WM_QUERYENDSESSION => Some(1),
             WM_ENDSESSION if wparam.0 != 0 => self.handle_end_session(),
@@ -1259,6 +1260,7 @@ impl WindowsPlatformInner {
             WM_GPUI_DOCK_MENU_ACTION => self.handle_dock_action_event(lparam.0 as _),
             WM_GPUI_KEYBOARD_LAYOUT_CHANGED => self.handle_keyboard_layout_change(),
             WM_GPUI_DISPLAYS_CHANGED => self.handle_displays_changed(),
+            WM_GPUI_POWER_EVENT => self.handle_power_event(lparam),
             WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
             _ => unreachable!(),
         }
@@ -1414,8 +1416,53 @@ impl WindowsPlatformInner {
         Some(0)
     }
 
-    fn handle_power_broadcast(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
-        match wparam.0 as u32 {
+    fn handle_power_broadcast(
+        &self,
+        handle: HWND,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> Option<isize> {
+        let event = wparam.0 as u32;
+        let previous_low_power_mode = self.state.low_power_mode_enabled.get();
+        let notify = match event {
+            PBT_APMSUSPEND | PBT_APMRESUMEAUTOMATIC => true,
+            // The setting behind `lparam` is only valid during this broadcast, so it
+            // has to be read here, not when the posted message is handled.
+            PBT_POWERSETTINGCHANGE => match unsafe { power_saving_status(lparam) } {
+                Some(enabled) if enabled != previous_low_power_mode => {
+                    self.state.low_power_mode_enabled.set(enabled);
+                    true
+                }
+                _ => false,
+            },
+            _ => false,
+        };
+        if !notify {
+            return Some(1);
+        }
+        // Broadcasts can be delivered while the app is mid-update, e.g. inside a
+        // COM call, so run the callbacks from the message loop instead. As on
+        // macOS, this means the system no longer waits for the sleep callback.
+        let posted = unsafe {
+            PostMessageW(
+                Some(handle),
+                WM_GPUI_POWER_EVENT,
+                WPARAM(self.validation_number),
+                LPARAM(event as isize),
+            )
+        };
+        if let Err(error) = posted {
+            log::error!("Failed to post power event {event:#x}: {error}");
+            // Otherwise the next broadcast with the new value would not count as a change.
+            self.state
+                .low_power_mode_enabled
+                .set(previous_low_power_mode);
+        }
+        Some(1)
+    }
+
+    fn handle_power_event(&self, lparam: LPARAM) -> Option<isize> {
+        match lparam.0 as u32 {
             PBT_APMSUSPEND => {
                 self.with_callback(|callbacks| &callbacks.system_sleep, |callback| callback());
             }
@@ -1423,18 +1470,14 @@ impl WindowsPlatformInner {
                 self.with_callback(|callbacks| &callbacks.system_wake, |callback| callback());
             }
             PBT_POWERSETTINGCHANGE => {
-                if let Some(enabled) = unsafe { power_saving_status(lparam) } {
-                    if self.state.low_power_mode_enabled.replace(enabled) != enabled {
-                        self.with_callback(
-                            |callbacks| &callbacks.low_power_mode_change,
-                            |callback| callback(),
-                        );
-                    }
-                }
+                self.with_callback(
+                    |callbacks| &callbacks.low_power_mode_change,
+                    |callback| callback(),
+                );
             }
             _ => {}
         }
-        Some(1)
+        Some(0)
     }
 
     fn handle_device_lost(&self, lparam: LPARAM) -> Option<isize> {
@@ -1997,6 +2040,94 @@ mod tests {
         unsafe { CredFree(credentials as *const _ as _) };
         unsafe { CredDeleteW(target_name, CRED_TYPE_GENERIC, None) }.unwrap();
         result.unwrap()
+    }
+
+    #[test]
+    fn test_power_broadcasts_run_callbacks_from_message_loop() {
+        use super::WindowsPlatform;
+        use gpui::{Platform as _, PowerMode};
+        use std::{cell::RefCell, rc::Rc};
+        use windows::{
+            Win32::{
+                Foundation::{LPARAM, WPARAM},
+                System::SystemServices::GUID_POWER_SAVING_STATUS,
+                UI::WindowsAndMessaging::{
+                    DispatchMessageW, MSG, PBT_APMRESUMEAUTOMATIC, PBT_APMSUSPEND,
+                    PBT_POWERSETTINGCHANGE, PM_REMOVE, PeekMessageW, SendMessageW,
+                    WM_POWERBROADCAST,
+                },
+            },
+            core::GUID,
+        };
+
+        // `POWERBROADCAST_SETTING` with room for the 4-byte power saving status.
+        #[repr(C)]
+        struct PowerSavingStatus {
+            power_setting: GUID,
+            data_length: u32,
+            data: u32,
+        }
+        let power_saving_status = |enabled: bool| PowerSavingStatus {
+            power_setting: GUID_POWER_SAVING_STATUS,
+            data_length: 4,
+            data: enabled as u32,
+        };
+
+        let platform = WindowsPlatform::new(true).unwrap();
+        let events = Rc::new(RefCell::new(Vec::new()));
+        // Set directly rather than through `Platform`, so no real power
+        // notifications are registered while the test runs.
+        let callbacks = &platform.inner.state.callbacks;
+        for (callback, name) in [
+            (&callbacks.system_sleep, "sleep"),
+            (&callbacks.system_wake, "wake"),
+            (&callbacks.low_power_mode_change, "power mode"),
+        ] {
+            let events = events.clone();
+            callback.set(Some(Box::new(move || events.borrow_mut().push(name))));
+        }
+
+        let broadcast = |event: u32, lparam: isize| unsafe {
+            SendMessageW(
+                platform.handle,
+                WM_POWERBROADCAST,
+                Some(WPARAM(event as usize)),
+                Some(LPARAM(lparam)),
+            )
+            .0
+        };
+        let initially_low_power = platform.power_mode() == PowerMode::LowPower;
+        assert_eq!(broadcast(PBT_APMSUSPEND, 0), 1);
+        assert_eq!(broadcast(PBT_APMRESUMEAUTOMATIC, 0), 1);
+        let mut status = power_saving_status(!initially_low_power);
+        assert_eq!(
+            broadcast(PBT_POWERSETTINGCHANGE, &raw const status as isize),
+            1
+        );
+        // The setting is only valid during the broadcast, so a later read
+        // would see this instead.
+        std::hint::black_box(&mut status).data = u32::MAX;
+        let unchanged = power_saving_status(!initially_low_power);
+        assert_eq!(
+            broadcast(PBT_POWERSETTINGCHANGE, &raw const unchanged as isize),
+            1
+        );
+
+        assert!(events.borrow().is_empty());
+        assert_eq!(
+            platform.power_mode() == PowerMode::LowPower,
+            !initially_low_power
+        );
+
+        let mut message = MSG::default();
+        while unsafe { PeekMessageW(&mut message, None, 0, 0, PM_REMOVE) }.as_bool() {
+            unsafe { DispatchMessageW(&message) };
+        }
+        assert_eq!(*events.borrow(), ["sleep", "wake", "power mode"]);
+        assert_eq!(
+            platform.power_mode() == PowerMode::LowPower,
+            !initially_low_power
+        );
     }
 
     #[test]
