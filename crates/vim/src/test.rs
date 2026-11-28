@@ -1683,6 +1683,33 @@ async fn test_undo(cx: &mut gpui::TestAppContext) {
 
 #[perf]
 #[gpui::test]
+async fn test_redo_after_undoing_linewise_comment(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    let language = std::sync::Arc::new(language::Language::new(
+        language::LanguageConfig {
+            line_comments: vec!["// ".into()],
+            ..Default::default()
+        },
+        Some(language::tree_sitter_rust::LANGUAGE.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    cx.set_state("ˇone\ntwo\nthree\n", Mode::Normal);
+    cx.simulate_keystrokes("shift-v j");
+    cx.simulate_keystrokes("cmd-/");
+    cx.simulate_keystrokes("escape");
+    cx.simulate_keystrokes("u");
+    cx.assert_state("ˇone\ntwo\nthree\n", Mode::Normal);
+
+    // Redoing a transaction that was created from a linewise selection restores
+    // that selection. Vim must collapse it and stay in normal mode;
+    cx.simulate_keystrokes("ctrl-r");
+    cx.assert_state("ˇ// one\n// two\nthree\n", Mode::Normal);
+}
+
+#[perf]
+#[gpui::test]
 async fn test_lsp_completions_undo(cx: &mut gpui::TestAppContext) {
     use editor::test::editor_lsp_test_context::EditorLspTestContext;
     VimTestContext::init(cx);
