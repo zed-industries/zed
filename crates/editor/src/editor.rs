@@ -5985,7 +5985,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.manipulate_immutable_lines(window, cx, |lines| {
-            lines.sort_by_key(|&line| line.chars().count())
+            lines.sort_by_cached_key(|&line| line.chars().count())
         })
     }
 
@@ -5996,7 +5996,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.manipulate_immutable_lines(window, cx, |lines| {
-            lines.sort_by_key(|line| line.to_lowercase())
+            lines.sort_by_cached_key(|line| line.to_lowercase())
         })
     }
 
