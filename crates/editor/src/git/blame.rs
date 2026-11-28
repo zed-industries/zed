@@ -418,9 +418,13 @@ impl GitBlame {
         rows: &'a [RowInfo],
         cx: &'a mut App,
     ) -> impl Iterator<Item = Option<(BufferId, BlameEntry)>> + use<'a> {
+        let mut last_synced_buffer_id = None;
         rows.iter().map(move |info| {
             let buffer_id = info.buffer_id?;
-            self.sync(cx, buffer_id);
+            if last_synced_buffer_id != Some(buffer_id) {
+                self.sync(cx, buffer_id);
+                last_synced_buffer_id = Some(buffer_id);
+            }
 
             let buffer_row = info.buffer_row?;
             let mut cursor = self.buffers.get(&buffer_id)?.entries.cursor::<u32>(());
