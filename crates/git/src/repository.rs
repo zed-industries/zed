@@ -775,6 +775,20 @@ pub fn delete_branch_flag(is_remote_tracking_ref: bool, force: bool) -> &'static
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum GitAccess {
+    /// Either:
+    /// - the user owns `.git`
+    /// - the user doesn't own `.git`, but has both of:
+    ///   - OS-level read permissions
+    ///   - the directory is marked as safe (git config safe.directory)
+    Yes,
+
+    /// The user is not the owner of `.git`, and one of the following is true:
+    /// - the directory is not marked as safe (git config safe.directory)
+    No,
+}
+
 pub trait GitRepository: Send + Sync {
     /// Returns the contents of an entry in the repository's index, or None if there is no entry for the given path.
     ///
@@ -836,8 +850,8 @@ pub trait GitRepository: Send + Sync {
 
     fn stash_entries(&self) -> BoxFuture<'static, Result<GitStash>>;
 
-    fn check_access(&self) -> BoxFuture<'_, Result<()>> {
-        async move { Ok(()) }.boxed()
+    fn check_access(&self) -> BoxFuture<'_, Result<GitAccess>> {
+        async move { Ok(GitAccess::Yes) }.boxed()
     }
 
     fn branches(&self) -> BoxFuture<'_, Result<BranchesScanResult>>;
@@ -1196,7 +1210,7 @@ impl RealGitRepository {
         let any_git_binary_path = system_git_binary_path
             .clone()
             .or(bundled_git_binary_path)
-            .context("no git binary available")?;
+            .context("no git binary found in PATH")?;
         log::info!(
             "opening git repository at {dotgit_path:?} using git binary {any_git_binary_path:?}"
         );
@@ -1907,13 +1921,10 @@ impl GitRepository for RealGitRepository {
         })
     }
 
-    fn check_access(&self) -> BoxFuture<'_, Result<()>> {
+    fn check_access(&self) -> BoxFuture<'_, Result<GitAccess>> {
         let git = self.git_binary_in_worktree();
         self.executor
-            .spawn(async move {
-                git?.run(&["rev-parse"]).await?;
-                Ok(())
-            })
+            .spawn(async move { git?.check_access().await })
             .boxed()
     }
 
@@ -3984,6 +3995,19 @@ impl GitBinary {
 
         run_askpass_command(ask_pass, git_process).await
     }
+
+    async fn check_access(&self) -> Result<GitAccess> {
+        let output = self.build_command(&["rev-parse"]).output().await?;
+        if output.status.success() {
+            Ok(GitAccess::Yes)
+        } else {
+            access_from_failed_rev_parse(GitBinaryCommandError {
+                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+                status: output.status,
+            })
+        }
+    }
 }
 
 /// Composes batch mode onto the ssh command git would otherwise pick, or returns
@@ -4021,6 +4045,14 @@ fn remote_command_output(output: Output) -> Result<RemoteCommandOutput> {
         stdout: String::from_utf8_lossy(&output.stdout).to_string(),
         stderr: String::from_utf8_lossy(&output.stderr).to_string(),
     })
+}
+
+fn access_from_failed_rev_parse(error: GitBinaryCommandError) -> Result<GitAccess> {
+    if error.stderr.contains("--add safe.directory") {
+        Ok(GitAccess::No)
+    } else {
+        Err(anyhow::Error::from(error))
+    }
 }
 
 #[derive(Error, Debug)]
@@ -4971,7 +5003,55 @@ mod tests {
 
         assert!(repository.check_access().await.is_err());
         git_init_repo(repo_dir.path());
-        assert!(repository.check_access().await.is_ok());
+        assert_eq!(repository.check_access().await.unwrap(), GitAccess::Yes);
+        assert_eq!(
+            repository
+                .git_binary_in_worktree()
+                .unwrap()
+                .envs(HashMap::from_iter([(
+                    "GIT_TEST_ASSUME_DIFFERENT_OWNER".to_owned(),
+                    "1".to_owned(),
+                )]))
+                .check_access()
+                .await
+                .unwrap(),
+            GitAccess::No,
+            "GIT_TEST_ASSUME_DIFFERENT_OWNER needs git 2.35.3 or newer",
+        );
+    }
+
+    #[test]
+    fn test_access_from_failed_rev_parse() {
+        assert_eq!(
+            [
+                "fatal : propriétaire douteux détecté dans le dépôt à '/repo'\n\
+                 Pour ajouter une exception pour ce dépôt, lancez :\n\
+                 \n\
+                 \tgit config --global --add safe.directory /repo\n",
+                "fatal: unsafe repository ('/repo' is owned by someone else)\n\
+                 To add an exception for this directory, call:\n\
+                 \n\
+                 \tgit config --global --add safe.directory /repo\n",
+                "fatal: not a git repository: '/home/user/safe.directory/.git'\n",
+                "",
+            ]
+            .map(|stderr| {
+                access_from_failed_rev_parse(GitBinaryCommandError {
+                    stdout: String::new(),
+                    stderr: stderr.to_owned(),
+                    status: ExitStatus::default(),
+                })
+                .map_err(|error| error.to_string())
+            }),
+            [
+                Ok(GitAccess::No),
+                Ok(GitAccess::No),
+                Err("Git command failed:\n\
+                     fatal: not a git repository: '/home/user/safe.directory/.git'\n\n"
+                    .to_owned()),
+                Err("Git command failed:\n\n".to_owned()),
+            ],
+        );
     }
 
     #[gpui::test]

@@ -389,7 +389,10 @@ impl BranchList {
         let load_remote_provider_icons = remote_urls_request.map(|remote_urls_request| {
             cx.spawn(async move |this, cx| {
                 maybe!(async move {
-                    let remote_urls = remote_urls_request.await??;
+                    let Ok(remote_urls) = remote_urls_request.await else {
+                        return Ok(());
+                    };
+                    let remote_urls = remote_urls?;
                     let remote_provider_icons =
                         cx.update(|cx| remote_provider_icons(&remote_urls, cx));
                     this.update(cx, |this, cx| {

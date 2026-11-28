@@ -14,8 +14,8 @@ use git::{
     repository::{
         AskPassDelegate, Branch, CommitData, CommitDataReader, CommitDetails, CommitOptions,
         CreateWorktreeTarget, FetchOptions, FileHistoryChangedFileSets, GRAPH_CHUNK_SIZE,
-        GitRepository, InitialGraphCommitData, LogOrder, LogSource, PushOptions, RefEdit, Remote,
-        RepoPath, ResetMode, SearchCommitArgs, Worktree, commit_hash_search_query,
+        GitAccess, GitRepository, InitialGraphCommitData, LogOrder, LogSource, PushOptions,
+        RefEdit, Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree, commit_hash_search_query,
         original_repo_path_from_common_dir,
     },
     stash::GitStash,
@@ -75,6 +75,7 @@ pub struct FakeGitRepositoryState {
     pub remotes: HashMap<String, String>,
     pub simulated_index_write_error_message: Option<String>,
     pub simulated_graph_error: Option<String>,
+    pub access: GitAccess,
     /// Revisions that fail any `load_revisions` call that includes them.
     pub simulated_unreadable_revisions: HashSet<String>,
     /// The revisions passed to each `load_revisions` call.
@@ -105,6 +106,7 @@ impl FakeGitRepositoryState {
             branch_upstreams: Default::default(),
             simulated_index_write_error_message: Default::default(),
             simulated_graph_error: None,
+            access: GitAccess::Yes,
             simulated_unreadable_revisions: HashSet::default(),
             load_revisions_calls: Vec::new(),
             branches_requiring_force_delete: Default::default(),
@@ -688,6 +690,10 @@ impl GitRepository for FakeGitRepository {
 
     fn stash_entries(&self) -> BoxFuture<'static, Result<git::stash::GitStash>> {
         self.with_state_async(false, |state| Ok(state.stash_entries.clone()))
+    }
+
+    fn check_access(&self) -> BoxFuture<'_, Result<GitAccess>> {
+        self.with_state_async(false, |state| Ok(state.access))
     }
 
     fn branches(&self) -> BoxFuture<'_, Result<git::repository::BranchesScanResult>> {

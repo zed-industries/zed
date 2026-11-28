@@ -40,9 +40,9 @@ use git::{
     repository::{
         Branch, BranchesScanResult, CommitData, CommitDetails, CommitFileStatus, CommitOptions,
         CreateWorktreeTarget, DiffStatType, DiffType, FetchOptions, FileHistoryChangedFileSets,
-        GitCommitTemplate, GitRepository, InitialGraphCommitData, LogOrder, LogSource, PushOptions,
-        Remote, RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs, UpstreamTrackingStatus,
-        Worktree as GitWorktree, delete_branch_flag, is_binary_content,
+        GitAccess, GitCommitTemplate, GitRepository, InitialGraphCommitData, LogOrder, LogSource,
+        PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs,
+        UpstreamTrackingStatus, Worktree as GitWorktree, delete_branch_flag, is_binary_content,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -51,15 +51,15 @@ use git::{
     },
 };
 use gpui::{
-    App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, SharedString,
-    Subscription, Task, TaskExt, WeakEntity,
+    App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, Global,
+    SharedString, Subscription, Task, TaskExt, WeakEntity,
 };
 use language::{
     Anchor, Buffer, BufferEvent, Capability, Language, LanguageRegistry,
     proto::{deserialize_version, serialize_version},
 };
 use parking_lot::Mutex;
-use paths::{config_dir, home_dir};
+use paths::home_dir;
 use pending_op::{PendingOp, PendingOpId, PendingOps, PendingOpsSummary};
 use postage::stream::Stream as _;
 use rpc::{
@@ -74,7 +74,7 @@ use std::{
     cell::RefCell,
     cmp::Ordering,
     collections::{BTreeSet, HashSet, VecDeque, hash_map::Entry},
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     future::Future,
     mem,
     ops::Range,
@@ -614,20 +614,9 @@ impl language::File for IndexTextFile {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum GitAccess {
-    /// Either:
-    /// - the user owns `.git`
-    /// - the user doesn't own `.git`, but has both of:
-    ///   - OS-level read permissions
-    ///   - the directory is marked as safe (git config safe.directory)
-    Yes,
+struct GlobalGitConfigWritten;
 
-    /// The user is not the owner of `.git`, and one of the following is true:
-    /// - the directory is not marked as safe (git config safe.directory)
-    /// - the user does not have OS-level read permissions to `.git`
-    No,
-}
+impl Global for GlobalGitConfigWritten {}
 
 enum GitStoreState {
     Local {
@@ -1077,7 +1066,7 @@ impl GitStore {
             Box::new([])
         } else {
             [
-                config_dir().join("git/config"),
+                git_xdg_config_path(std::env::var_os("XDG_CONFIG_HOME")),
                 home_dir().join(".gitconfig"),
             ]
             .into_iter()
@@ -1190,6 +1179,11 @@ impl GitStore {
             this.set_diff_base(setting, cx);
             this.activate_parked_repositories_where_parking_disabled(cx);
         }));
+        _subscriptions.push(
+            cx.observe_global::<GlobalGitConfigWritten>(|git_store, cx| {
+                git_store.rescan_repositories(cx)
+            }),
+        );
 
         let diff_base_setting = ProjectSettings::get_global(cx).git.diff_base;
         GitStore {
@@ -1279,6 +1273,25 @@ impl GitStore {
 
     pub fn is_local(&self) -> bool {
         matches!(self.state, GitStoreState::Local { .. })
+    }
+
+    pub fn rescan_after_global_config_write(cx: &mut App) {
+        cx.set_global(GlobalGitConfigWritten);
+    }
+
+    fn rescan_repositories(&mut self, cx: &mut Context<Self>) {
+        let GitStoreState::Local { downstream, .. } = &self.state else {
+            return;
+        };
+        let updates_tx = downstream
+            .as_ref()
+            .map(|downstream| downstream.updates_tx.clone());
+        for repository in self.repositories.values() {
+            repository.update(cx, |repository, cx| {
+                repository.schedule_scan(updates_tx.clone(), cx);
+            });
+        }
+        cx.emit(GitStoreEvent::GlobalConfigurationUpdated);
     }
 
     fn set_active_repo_id(&mut self, repo_id: RepositoryId, cx: &mut Context<Self>) {
@@ -4712,7 +4725,8 @@ impl GitStore {
             .update(&mut cx, |repository, cx| {
                 repository.open_commit_buffer(None, this.read(cx).buffer_store.clone(), cx)
             })
-            .await?;
+            .await?
+            .context("opening the commit message buffer was canceled")?;
 
         let buffer_id = buffer.read_with(&cx, |buffer, _| buffer.remote_id());
         this.update(&mut cx, |this, cx| {
@@ -4894,7 +4908,7 @@ impl GitStore {
                 Some(repository.update(cx, |repo, _| repo.load_commit_template_text()))
             })
             .context("missing repository")?;
-        let template = rx.await??;
+        let template = rx.await.unwrap_or(Ok(None))?;
         Ok(proto::LoadCommitTemplateResponse {
             template: template.map(|t| t.template),
         })
@@ -6649,7 +6663,7 @@ impl Repository {
                     cx,
                 )
                 .await
-                .map_err(|err| err.to_string())
+                .map_err(|err| format!("{err:#}"))
             })
             .shared();
         self.job_sender.close_channel();
@@ -7158,10 +7172,10 @@ impl Repository {
         languages: Option<Arc<LanguageRegistry>>,
         buffer_store: Entity<BufferStore>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<Buffer>>> {
+    ) -> Task<Result<Option<Entity<Buffer>>>> {
         let id = self.id;
         if let Some(buffer) = self.commit_message_buffer.clone() {
-            return Task::ready(Ok(buffer));
+            return Task::ready(Ok(Some(buffer)));
         }
         let this = cx.weak_entity();
 
@@ -7207,7 +7221,7 @@ impl Repository {
             },
         );
 
-        cx.spawn(|_, _: &mut AsyncApp| async move { rx.await? })
+        cx.background_spawn(async move { rx.await.map_or(Ok(None), |buffer| buffer.map(Some)) })
     }
 
     fn open_local_commit_buffer(
@@ -10847,18 +10861,16 @@ impl Repository {
         ids
     }
 
-    pub fn access(&mut self, _cx: &App) -> oneshot::Receiver<GitAccess> {
-        self.send_job("access", None, move |git_repo, _cx| async move {
-            match git_repo {
+    pub fn access(&self, cx: &App) -> Task<Result<GitAccess>> {
+        let repository_state = self.repository_state.clone();
+        cx.background_spawn(async move {
+            match repository_state.await.map_err(|error| anyhow!(error))? {
                 // TODO: Correctly handle remote repositories, where the user
                 // that's running the Zed remote may not own the `.git/`
                 // directory. For now we just return `GitAccess::Yes` so that
                 // remoting continues working as expected.
-                RepositoryState::Remote(..) => GitAccess::Yes,
-                RepositoryState::Local(state) => match state.backend.check_access().await {
-                    Ok(_) => GitAccess::Yes,
-                    Err(_) => GitAccess::No,
-                },
+                RepositoryState::Remote(..) => Ok(GitAccess::Yes),
+                RepositoryState::Local(state) => state.backend.check_access().await,
             }
         })
     }
@@ -11839,6 +11851,15 @@ async fn append_pattern_to_ignore_file(
         text::LineEnding::Unix,
     )
     .await
+}
+
+fn git_xdg_config_path(xdg_config_home: Option<OsString>) -> PathBuf {
+    xdg_config_home
+        .filter(|config_home| !config_home.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home_dir().join(".config"))
+        .join("git")
+        .join("config")
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -13845,6 +13866,105 @@ mod tests {
         ]));
 
         assert_eq!(coalesced, repo_paths(&["src", "tests/test.rs"]));
+    }
+
+    #[gpui::test]
+    async fn test_rescan_after_global_config_write(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            util::path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": "a",
+            }),
+        )
+        .await;
+        let projects = [
+            Project::test(fs.clone(), [Path::new(util::path!("/project"))], cx).await,
+            Project::test(fs.clone(), [Path::new(util::path!("/project"))], cx).await,
+        ];
+        cx.run_until_parked();
+        let repositories = projects.each_ref().map(|project| {
+            project.read_with(cx, |project, cx| project.active_repository(cx).unwrap())
+        });
+        let statuses = |cx: &mut TestAppContext| {
+            repositories.each_ref().map(|repository| {
+                repository.read_with(cx, |repository, _| {
+                    repository
+                        .status()
+                        .map(|entry| entry.status)
+                        .collect::<Vec<_>>()
+                })
+            })
+        };
+        assert_eq!(
+            statuses(cx),
+            [[FileStatus::Untracked], [FileStatus::Untracked]]
+        );
+
+        fs.with_git_state(Path::new(util::path!("/project/.git")), false, |state| {
+            state
+                .head_contents
+                .insert(repo_path("a.txt"), b"a".to_vec());
+            state
+                .index_contents
+                .insert(repo_path("a.txt"), b"a".to_vec());
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            statuses(cx),
+            [[FileStatus::Untracked], [FileStatus::Untracked]]
+        );
+
+        cx.update(GitStore::rescan_after_global_config_write);
+        cx.run_until_parked();
+        assert_eq!(statuses(cx), [Vec::new(), Vec::new()]);
+    }
+
+    #[gpui::test]
+    async fn test_open_commit_buffer_when_repository_fails_to_open(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            util::path!("/project"),
+            json!({
+                ".git": "gitdir: ./missing\n",
+                "a.txt": "a",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [Path::new(util::path!("/project"))], cx).await;
+        cx.run_until_parked();
+        let repository =
+            project.read_with(cx, |project, cx| project.active_repository(cx).unwrap());
+        let buffer_store = project.read_with(cx, |project, _| project.buffer_store().clone());
+        let buffer = repository
+            .update(cx, |repository, cx| {
+                repository.open_commit_buffer(None, buffer_store, cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(buffer, None);
+    }
+
+    #[test]
+    fn test_git_xdg_config_path() {
+        let default_path = home_dir().join(".config").join("git").join("config");
+        assert_eq!(
+            [
+                Some(OsString::from(util::path!("/xdg"))),
+                Some(OsString::new()),
+                None,
+            ]
+            .map(git_xdg_config_path),
+            [
+                Path::new(util::path!("/xdg")).join("git").join("config"),
+                default_path.clone(),
+                default_path,
+            ],
+        );
     }
 
     #[test]
