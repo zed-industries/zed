@@ -32,6 +32,7 @@ fn load_linux_repo_snapshot() -> Vec<GitEntry> {
                 is_external: false,
                 is_private: false,
                 is_hidden: false,
+                exclusions: Default::default(),
                 char_bag: Default::default(),
                 is_fifo: false,
             };
