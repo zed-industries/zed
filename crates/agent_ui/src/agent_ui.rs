@@ -16,6 +16,7 @@ mod external_source_prompt;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod mention_set;
+pub use mention_set::set_app_quitting;
 mod message_editor;
 mod mode_selector;
 mod model_search;
