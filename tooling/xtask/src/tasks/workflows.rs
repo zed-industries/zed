@@ -23,6 +23,7 @@ mod extension_workflow_rollout;
 mod extensions;
 mod nix_build;
 mod publish_extension_cli;
+mod publish_gpui;
 mod release_nightly;
 mod run_bundling;
 
@@ -138,12 +139,7 @@ impl WorkflowFile {
             .name
             .as_ref()
             .expect("Workflow must have a name at this point");
-        let filename = format!(
-            "{workflow_name}.yml",
-            workflow_name = workflow_name.rsplit("::").next().unwrap_or(workflow_name)
-        );
-
-        let workflow_path = workflow_folder.join(filename);
+        let workflow_path = workflow_folder.join(workflow_filename(workflow_name));
 
         let content = workflow
             .to_string()
@@ -154,6 +150,24 @@ impl WorkflowFile {
         let content = [disclaimer, content].join("\n");
         fs::write(&workflow_path, content).map_err(Into::into)
     }
+}
+
+fn workflow_filename(workflow_name: &str) -> String {
+    let basename = workflow_name.rsplit("::").next().unwrap_or(workflow_name);
+    format!("{basename}.yml")
+}
+
+pub(crate) fn gpui_publish_filename() -> &'static str {
+    static FILENAME: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        let workflow = publish_gpui::publish_gpui();
+        workflow_filename(
+            workflow
+                .name
+                .as_deref()
+                .expect("the GPUI publish workflow must have a name"),
+        )
+    });
+    FILENAME.as_str()
 }
 
 #[derive(PartialEq, Eq, strum::EnumIter)]
@@ -239,6 +253,7 @@ pub fn run_workflows(args: GenerateWorkflowArgs) -> Result<()> {
         WorkflowFile::zed(extension_workflow_rollout::extension_workflow_rollout),
         WorkflowFile::zed(nix_build::nix_build),
         WorkflowFile::zed(publish_extension_cli::publish_extension_cli),
+        WorkflowFile::zed(publish_gpui::publish_gpui),
         WorkflowFile::zed(release::release),
         WorkflowFile::zed(release_nightly::release_nightly),
         WorkflowFile::zed(run_bundling::run_bundling),

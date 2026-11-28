@@ -12,7 +12,6 @@ use crates_io_client::{
 use super::{ReleaseBump, publish_plan::PublishPlanEntry};
 
 const TEAM_ID: TeamId = TeamId(12586);
-const WORKFLOW: &str = "publish_gpui.yml";
 
 const REQUIRED_OWNERS: &[OwnerLogin] = &[
     OwnerLogin::CratesIoUser(Cow::Borrowed("maxbrunsfeld")),
@@ -80,7 +79,7 @@ fn expected_workflow(name: &CrateName) -> NewGitHubConfig {
         crate_name: name.clone(),
         repository_owner: "zed-industries".into(),
         repository_name: "zed".into(),
-        workflow_filename: WORKFLOW.into(),
+        workflow_filename: crate::tasks::workflows::gpui_publish_filename().into(),
         environment: None,
     }
 }

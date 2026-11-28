@@ -1,0 +1,219 @@
+# Generated from xtask::workflows::publish_gpui
+# Rebuild with `cargo xtask workflows`.
+name: publish_gpui
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version component to bump: major, minor, or patch'
+        type: string
+        default: patch
+permissions:
+  contents: read
+jobs:
+  plan:
+    if: github.repository == 'zed-industries/zed' && github.ref == 'refs/heads/main'
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
+    - id: plan
+      name: publish_gpui::plan
+      run: |
+        cargo xtask gpui plan --sha "$GITHUB_SHA" --bump "$BUMP" \
+            --workflow-output "$GITHUB_OUTPUT"
+        sed -n 's/^release_plan=//p' "$GITHUB_OUTPUT" > release.json
+        test -s release.json
+      env:
+        BUMP: ${{ inputs.bump }}
+        CARGO_REGISTRY_TOKEN: ${{ secrets.GPUI_CRATES_IO_TOKEN }}
+    - name: publish_gpui::plan
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: gpui-release
+        path: release.json
+    outputs:
+      repositories: ${{ steps.plan.outputs.repositories }}
+      crates: ${{ steps.plan.outputs.crates }}
+  prepare:
+    needs:
+    - plan
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    strategy:
+      matrix:
+        release: ${{ fromJSON(needs.plan.outputs.repositories) }}
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+    - id: generate-token
+      name: steps::authenticate_as_zippy
+      uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
+      with:
+        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+        owner: zed-industries
+        repositories: ${{ matrix.release.repo }}
+        permission-contents: read
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+        path: source
+        repository: ${{ matrix.release.repository }}
+        ref: ${{ matrix.release.revision }}
+        token: ${{ steps.generate-token.outputs.token }}
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
+    - name: publish_gpui::prepare
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: gpui-release
+    - name: publish_gpui::prepare
+      run: |
+        mkdir prepared
+        refs=$(git -C source ls-remote origin refs/heads/GPUI "refs/tags/$TAG")
+        if grep -Fq "refs/tags/$TAG" <<< "$refs"; then
+            echo "Tag $TAG already exists in $REPOSITORY" >&2
+            exit 1
+        fi
+        awk '$2 == "refs/heads/GPUI" { print $1 }' <<< "$refs" > prepared/previous
+        cargo xtask gpui prepare --plan release.json --repository "$REPOSITORY" --checkout source
+        git -C source diff --binary HEAD > prepared/release.patch
+        test -s prepared/release.patch
+      env:
+        TAG: ${{ matrix.release.tag }}
+        REPOSITORY: ${{ matrix.release.repository }}
+    - name: publish_gpui::prepare
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: gpui-prepared-${{ matrix.release.repo }}
+        path: prepared/
+  publish:
+    needs:
+    - plan
+    - prepare
+    runs-on: ${{ matrix.release.runner }}
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      matrix:
+        release: ${{ fromJSON(needs.plan.outputs.crates) }}
+      fail-fast: true
+      max-parallel: 1
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+        path: zed
+    - id: generate-token
+      name: steps::authenticate_as_zippy
+      if: matrix.release.prepare_ref
+      uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
+      with:
+        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+        owner: zed-industries
+        repositories: ${{ matrix.release.repo }}
+        permission-contents: write
+        permission-workflows: write
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+        path: source
+        repository: ${{ matrix.release.repository }}
+        ref: ${{ matrix.release.prepare_ref && matrix.release.revision || format('refs/tags/{0}', matrix.release.tag) }}
+        token: ${{ matrix.release.prepare_ref && steps.generate-token.outputs.token || github.token }}
+    - name: steps::setup_linux
+      if: runner.os == 'Linux'
+      run: ./script/linux
+      working-directory: zed
+    - name: publish_gpui::setup_toolchain
+      run: |
+        cargo --version
+        toolchain=$(rustup show active-toolchain)
+        echo "RUSTUP_TOOLCHAIN=${toolchain%% *}" >> "$GITHUB_ENV"
+      working-directory: zed
+    - name: publish_gpui::publish
+      if: matrix.release.prepare_ref
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: gpui-prepared-${{ matrix.release.repo }}
+        path: prepared
+    - name: publish_gpui::update_refs
+      if: matrix.release.prepare_ref
+      run: |
+        previous=$(cat ../prepared/previous)
+        git switch -c GPUI
+        git apply --index ../prepared/release.patch
+        cargo update --workspace
+        git add -u
+        git add -f Cargo.lock
+        git push --force-with-lease="refs/heads/GPUI:$previous" origin HEAD:refs/heads/GPUI
+      working-directory: source
+    - id: commit
+      name: steps::bot_commit
+      if: matrix.release.prepare_ref
+      uses: IAreKyleW00t/verified-bot-commit@126a6a11889ab05bcff72ec2403c326cd249b84c
+      with:
+        message: Prepare ${{ matrix.release.tag }} release
+        ref: refs/heads/GPUI
+        files: '**'
+        token: ${{ steps.generate-token.outputs.token }}
+        repository: ${{ matrix.release.repository }}
+        workspace: ${{ github.workspace }}/source
+        auto-stage: false
+        update-local: false
+        if-no-commit: error
+    - name: steps::create_tag
+      if: matrix.release.prepare_ref
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+      with:
+        script: |
+          github.rest.git.createRef({
+              owner: process.env.TARGET_REPOSITORY.split('/')[0],
+              repo: process.env.TARGET_REPOSITORY.split('/')[1],
+              ref: 'refs/tags/${{ matrix.release.tag }}',
+              sha: '${{ steps.commit.outputs.commit }}'
+          })
+        github-token: ${{ steps.generate-token.outputs.token }}
+      env:
+        TARGET_REPOSITORY: ${{ matrix.release.repository }}
+    - name: publish_gpui::checkout_commit
+      if: matrix.release.prepare_ref
+      run: |
+        git fetch --depth 1 origin "$COMMIT"
+        git reset --hard "$COMMIT"
+      env:
+        COMMIT: ${{ steps.commit.outputs.commit }}
+      working-directory: source
+    - id: crates-io
+      name: publish_gpui::publish
+      if: '!matrix.release.first_publish'
+      uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9
+    - name: publish_gpui::publish_crate
+      run: cargo publish --manifest-path "$MANIFEST" -p "$CRATE_NAME"
+      env:
+        MANIFEST: ${{ matrix.release.manifest }}
+        CRATE_NAME: ${{ matrix.release.name }}
+        CARGO_REGISTRY_TOKEN: ${{ matrix.release.first_publish && secrets.GPUI_CRATES_IO_TOKEN || steps.crates-io.outputs.token }}
+      working-directory: source
+concurrency:
+  group: publish-gpui
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

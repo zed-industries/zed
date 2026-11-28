@@ -1005,6 +1005,7 @@ struct RefOp {
     operation: RefOperation,
     sha: RefSha,
     token: String,
+    repository: Option<String>,
 }
 
 impl<T: ToString> From<T> for RefSha {
@@ -1029,21 +1030,26 @@ impl From<RefOp> for Step<Use> {
         };
         let script = indoc::formatdoc! {r#"
             github.rest.git.{api_method}({{
-                owner: context.repo.owner,
-                repo: context.repo.repo,
+                owner: {owner},
+                repo: {repo},
                 ref: '{ref_path}',
                 sha: {sha}{force_line}
             }})
             "#,
+            owner = if op.repository.is_some() { "process.env.TARGET_REPOSITORY.split('/')[0]" } else { "context.repo.owner" },
+            repo = if op.repository.is_some() { "process.env.TARGET_REPOSITORY.split('/')[1]" } else { "context.repo.repo" },
             sha = match &op.sha {
                 RefSha::Context => "context.sha".to_string(),
                 RefSha::Custom(sha) => format!("'{sha}'"),
             }
         };
-        github_script(script)
+        let mut step = github_script(script)
             .custom_name(&step_name)
-            .token(op.token)
-            .into()
+            .token(op.token);
+        if let Some(repository) = op.repository {
+            step = step.env("TARGET_REPOSITORY", repository);
+        }
+        step.into()
     }
 }
 
@@ -1057,7 +1063,24 @@ pub(crate) fn create_ref(
         operation: RefOperation::Create,
         sha: sha.into(),
         token: token.to_string(),
+        repository: None,
     }
+}
+
+pub(crate) fn create_ref_in_repository(
+    repository: &str,
+    git_ref: GitRef,
+    sha: impl Into<RefSha>,
+    token: &StepOutput,
+) -> Step<Use> {
+    RefOp {
+        git_ref,
+        operation: RefOperation::Create,
+        sha: sha.into(),
+        token: token.to_string(),
+        repository: Some(repository.to_owned()),
+    }
+    .into()
 }
 
 pub(crate) fn update_ref(
@@ -1071,6 +1094,7 @@ pub(crate) fn update_ref(
         operation: RefOperation::Update { force },
         sha: sha.into(),
         token: token.to_string(),
+        repository: None,
     }
 }
 
