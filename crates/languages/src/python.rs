@@ -2819,11 +2819,8 @@ impl LspAdapter for PyreflyLspAdapter {
             })
             .unwrap_or_default();
 
-        // Pyrefly reads the interpreter from the `python` section and has no
-        // `venvPath` setting, unlike Pyright.
         if let Some(toolchain) = toolchain
-            && let Ok(env) = serde_json::from_value::<PythonToolchainData>(toolchain.as_json)
-            && let Some(interpreter_path) = env.environment.executable
+            && serde_json::from_value::<PythonToolchainData>(toolchain.as_json.clone()).is_ok()
         {
             if !user_settings.is_object() {
                 user_settings = Value::Object(serde_json::Map::default());
@@ -2838,13 +2835,10 @@ impl LspAdapter for PyreflyLspAdapter {
                     })
                     .or_insert_with(|| Value::Object(serde_json::Map::default()));
 
-                if let Some(python) = python.as_object_mut()
-                    && !python.contains_key("pythonPath")
-                {
-                    python.insert(
-                        "pythonPath".to_owned(),
-                        Value::String(interpreter_path.to_string_lossy().into_owned()),
-                    );
+                if let Some(python) = python.as_object_mut() {
+                    python
+                        .entry("pythonPath")
+                        .or_insert_with(|| Value::String(toolchain.path.to_string()));
                 }
             }
         }
