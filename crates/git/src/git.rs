@@ -43,6 +43,9 @@ actions!(
         // per-hunk
         /// Toggles the staged state of the hunk or status entry at cursor.
         ToggleStaged,
+        /// Toggles the staged state of individual lines under the cursor within
+        /// their hunk, leaving the rest of the hunk's staging state unchanged.
+        ToggleStagedSelectedLines,
         /// Stage status entries between an anchor entry and the cursor.
         StageRange,
         /// Stages the current hunk and moves to the next one.
