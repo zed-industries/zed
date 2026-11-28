@@ -1578,6 +1578,39 @@ impl Editor {
         }
     }
 
+    pub(super) fn record_change_location(&mut self, cx: &mut Context<Self>) {
+        if !self.buffer.read(cx).is_singleton() {
+            return;
+        }
+        let Some(workspace) = self.workspace() else {
+            return;
+        };
+        let project_path = self.active_project_path(cx);
+        let mut data = self.navigation_data(self.selections.newest_anchor().head(), cx);
+        data.is_change_jump = true;
+        let item_id = cx.entity_id();
+        // The position is read now, before the cursor moves on (e.g. Replace Next), but the
+        // workspace may already be updating, so only the delivery is deferred.
+        cx.defer(move |cx| {
+            workspace.update(cx, |workspace, _| {
+                // Like the change list, consecutive edits on one line count as one change.
+                let replace_last = workspace.last_change_location().is_some_and(
+                    |(last_item_id, last_path, last_data)| {
+                        is_on_change_line(
+                            item_id,
+                            project_path.as_ref(),
+                            data.cursor_position.row,
+                            last_item_id,
+                            last_path,
+                            last_data,
+                        )
+                    },
+                );
+                workspace.push_change_location(item_id, project_path, Arc::new(data), replace_last);
+            });
+        });
+    }
+
     pub(super) fn expand_excerpt(
         &mut self,
         excerpt_anchor: Anchor,
@@ -1643,19 +1676,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(selections) = self
-            .change_list
-            .next_change(1, Direction::Next)
-            .map(|s| s.to_vec())
-        {
-            self.change_selections(Default::default(), window, cx, |s| {
-                let map = s.display_snapshot();
-                s.select_display_ranges(selections.iter().map(|a| {
-                    let point = a.to_display_point(&map);
-                    point..point
-                }))
-            })
-        }
+        self.go_to_change(Direction::Next, window, cx);
     }
 
     pub(super) fn go_to_previous_change(
@@ -1664,9 +1685,52 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.go_to_change(Direction::Prev, window, cx);
+    }
+
+    fn go_to_change(&mut self, direction: Direction, window: &mut Window, cx: &mut Context<Self>) {
+        if self.buffer.read(cx).is_singleton()
+            && let Some(workspace) = self.workspace()
+        {
+            let direction = match direction {
+                Direction::Prev => workspace::searchable::Direction::Prev,
+                Direction::Next => workspace::searchable::Direction::Next,
+            };
+            let item_id = cx.entity_id();
+            let project_path = self.active_project_path(cx);
+            let row = self
+                .selections
+                .newest_anchor()
+                .head()
+                .to_point(&self.buffer.read(cx).snapshot(cx))
+                .row;
+            // Deferred because navigating may update this editor, which is already being updated.
+            window.defer(cx, move |window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    workspace
+                        .go_to_change(
+                            direction,
+                            |change_item_id, change_path, change_data| {
+                                is_on_change_line(
+                                    item_id,
+                                    project_path.as_ref(),
+                                    row,
+                                    change_item_id,
+                                    change_path,
+                                    change_data,
+                                )
+                            },
+                            window,
+                            cx,
+                        )
+                        .detach_and_log_err(cx);
+                });
+            });
+            return;
+        }
         if let Some(selections) = self
             .change_list
-            .next_change(1, Direction::Prev)
+            .next_change(1, direction)
             .map(|s| s.to_vec())
         {
             self.change_selections(Default::default(), window, cx, |s| {
@@ -2346,6 +2410,7 @@ impl Editor {
             cursor_position,
             scroll_anchor,
             scroll_top_row,
+            is_change_jump: false,
         }
     }
 
@@ -2570,4 +2635,18 @@ impl Editor {
             });
         }
     }
+}
+
+fn is_on_change_line(
+    item_id: EntityId,
+    project_path: Option<&ProjectPath>,
+    row: u32,
+    change_item_id: EntityId,
+    change_path: Option<&ProjectPath>,
+    change_data: &Arc<dyn Any + Send + Sync>,
+) -> bool {
+    (change_item_id == item_id || (project_path.is_some() && change_path == project_path))
+        && change_data
+            .downcast_ref::<NavigationData>()
+            .is_some_and(|change| change.cursor_position.row == row)
 }
