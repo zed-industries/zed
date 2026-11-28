@@ -6238,4 +6238,239 @@ mod tests {
             "Expected text to start with 'prefix text\\n\\n', got: {text:?}"
         );
     }
+
+    fn fake_symbol(name: &str, path: &str, row: u32) -> lsp::SymbolInformation {
+        #[allow(deprecated)]
+        lsp::SymbolInformation {
+            name: name.into(),
+            location: lsp::Location {
+                uri: lsp::Uri::from_file_path(path).unwrap(),
+                range: lsp::Range::new(lsp::Position::new(row, 0), lsp::Position::new(row, 0)),
+            },
+            kind: lsp::SymbolKind::CONSTANT,
+            tags: None,
+            container_name: None,
+            deprecated: None,
+        }
+    }
+
+    /// Types `@symbol ` into a real message editor backed by a fake language server
+    /// that answers `workspace/symbol` with `fake_symbols`, and returns the popup's
+    /// labels, sorted.
+    ///
+    /// `trees` is a list of `(worktree root, file tree)` pairs; each root becomes a
+    /// worktree of the project. `buffer_path` is a file in one of them, opened so
+    /// that the fake language server starts.
+    async fn symbol_completion_labels(
+        cx: &mut TestAppContext,
+        trees: Vec<(&str, Value)>,
+        buffer_path: &str,
+        fake_symbols: Vec<lsp::SymbolInformation>,
+    ) -> Vec<String> {
+        init_test(cx);
+        let app_state = cx.update(AppState::test);
+        cx.update(|cx| {
+            editor::init(cx);
+            workspace::init(app_state.clone(), cx);
+        });
+
+        for (root, tree) in &trees {
+            app_state.fs.as_fake().insert_tree(root, tree.clone()).await;
+        }
+        let roots: Vec<&Path> = trees.iter().map(|(root, _)| Path::new(*root)).collect();
+        let project = Project::test(app_state.fs.clone(), roots.iter().copied(), cx).await;
+
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::from_acp_commands(
+            acp_v2::PromptCapabilities::default(),
+            vec![],
+        )));
+
+        // The message editor has to live in a pane item of the workspace, as it does
+        // in the app: the completion menu reads the workspace to find the project.
+        let editor = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let workspace_handle = cx.weak_entity();
+            let message_editor = cx.new(|cx| {
+                MessageEditor::new(
+                    workspace_handle,
+                    project.downgrade(),
+                    Some(thread_store),
+                    session_capabilities.clone(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        max_lines: None,
+                        min_lines: 1,
+                    },
+                    window,
+                    cx,
+                )
+            });
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.add_item(
+                    Box::new(cx.new(|_| MessageEditorItem(message_editor.clone()))),
+                    true,
+                    true,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+            // Typed input only reaches the editor if it has focus.
+            message_editor.read(cx).focus_handle(cx).focus(window, cx);
+            message_editor.read(cx).editor().clone()
+        });
+
+        // A language that matches the test files, so that opening one of them starts
+        // a language server for it.
+        let language_registry = project.read_with(&cx, |project, _| project.languages().clone());
+        language_registry.add(Arc::new(language::Language::new(
+            language::LanguageConfig {
+                name: "Plain Text".into(),
+                matcher: (language::LanguageMatcher {
+                    path_suffixes: vec!["txt".into()],
+                    ..Default::default()
+                })
+                .into(),
+                ..Default::default()
+            },
+            None,
+        )));
+        let mut fake_language_servers = language_registry.register_fake_lsp(
+            "Plain Text",
+            language::FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    // Without this capability the project never sends workspace/symbol.
+                    workspace_symbol_provider: Some(lsp::OneOf::Left(true)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        // Opening a buffer is what makes the project start the fake server.
+        let buffer = project
+            .update(&mut cx, |project, cx| {
+                project.open_local_buffer(buffer_path, cx)
+            })
+            .await
+            .unwrap();
+        let _handle = project.update(&mut cx, |project, cx| {
+            project.register_buffer_with_language_servers(&buffer, cx)
+        });
+        // Let the server finish starting before the first request is made.
+        cx.run_until_parked();
+
+        // The handler ignores the query and always returns every fake symbol, so the
+        // test depends on the label logic and not on how the server matches names.
+        let fake_language_server = fake_language_servers.next().await.unwrap();
+        fake_language_server.set_request_handler::<lsp::WorkspaceSymbolRequest, _, _>(
+            move |_, _| {
+                let fake_symbols = fake_symbols.clone();
+                async move { Ok(Some(lsp::WorkspaceSymbolResponse::Flat(fake_symbols))) }
+            },
+        );
+
+        cx.simulate_input("@symbol ");
+
+        editor.update(&mut cx, |editor, _cx| {
+            assert!(editor.has_visible_completions_menu());
+            let mut labels = current_completion_labels(editor);
+            // `search_symbols` sorts with an unstable sort, so equal matches have no
+            // guaranteed order. Sorting here keeps the assertions order-independent.
+            labels.sort();
+            labels
+        })
+    }
+
+    #[gpui::test]
+    async fn test_symbol_completion_adds_directory_for_same_file_names(cx: &mut TestAppContext) {
+        let labels = symbol_completion_labels(
+            cx,
+            vec![(
+                path!("/dir"),
+                json!({ "a": { "one.txt": "1", "two.txt": "2" }, "b": { "one.txt": "1" } }),
+            )],
+            path!("/dir/a/one.txt"),
+            vec![
+                fake_symbol("MySymbol", path!("/dir/a/one.txt"), 0),
+                fake_symbol("MySymbol", path!("/dir/b/one.txt"), 0),
+                fake_symbol("OtherSymbol", path!("/dir/a/two.txt"), 0),
+            ],
+        )
+        .await;
+
+        assert_eq!(
+            labels,
+            [
+                "MySymbol a/one.txt L1",
+                "MySymbol b/one.txt L1",
+                "OtherSymbol two.txt L1"
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_symbol_completion_keeps_short_label_for_same_file(cx: &mut TestAppContext) {
+        let labels = symbol_completion_labels(
+            cx,
+            vec![(path!("/dir"), json!({ "one.txt": "1\n2\n3" }))],
+            path!("/dir/one.txt"),
+            vec![
+                fake_symbol("MySymbol", path!("/dir/one.txt"), 0),
+                fake_symbol("MySymbol", path!("/dir/one.txt"), 2),
+            ],
+        )
+        .await;
+
+        assert_eq!(labels, ["MySymbol one.txt L1", "MySymbol one.txt L3"]);
+    }
+
+    #[gpui::test]
+    async fn test_symbol_completion_disambiguates_outside_project_symbols(cx: &mut TestAppContext) {
+        let labels = symbol_completion_labels(
+            cx,
+            vec![(path!("/dir"), json!({ "a": { "one.txt": "1" } }))],
+            path!("/dir/a/one.txt"),
+            vec![
+                fake_symbol("MySymbol", path!("/dir/a/one.txt"), 0),
+                fake_symbol("MySymbol", path!("/external/one.txt"), 0),
+            ],
+        )
+        .await;
+
+        assert_eq!(
+            labels,
+            ["MySymbol a/one.txt L1", "MySymbol external/one.txt L1"]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_symbol_completion_disambiguates_across_worktrees(cx: &mut TestAppContext) {
+        let labels = symbol_completion_labels(
+            cx,
+            vec![
+                (path!("/a/proj1"), json!({ "src": { "x.txt": "1" } })),
+                (path!("/b/proj2"), json!({ "src": { "x.txt": "1" } })),
+            ],
+            path!("/a/proj1/src/x.txt"),
+            vec![
+                fake_symbol("MySymbol", path!("/a/proj1/src/x.txt"), 0),
+                fake_symbol("MySymbol", path!("/b/proj2/src/x.txt"), 0),
+            ],
+        )
+        .await;
+
+        assert_eq!(
+            labels,
+            ["MySymbol proj1/src/x.txt L1", "MySymbol proj2/src/x.txt L1"]
+        );
+    }
 }

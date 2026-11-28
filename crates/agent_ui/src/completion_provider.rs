@@ -15,6 +15,7 @@ use fuzzy::{PathMatch, StringMatch, StringMatchCandidate};
 use gpui::{
     App, BackgroundExecutor, Entity, Focusable, Hsla, SharedString, Task, WeakEntity, Window,
 };
+use itertools::Itertools;
 use language::{Buffer, CodeLabel, CodeLabelBuilder, HighlightId};
 use lsp::CompletionContext;
 use multi_buffer::ToOffset as _;
@@ -710,6 +711,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 
     fn completion_for_symbol(
         symbol: Symbol,
+        symbol_path_detail: usize,
         source_range: Range<Anchor>,
         source: Arc<T>,
         editor: WeakEntity<Editor>,
@@ -720,23 +722,21 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
     ) -> Option<Completion> {
         let project = workspace.read(cx).project().clone();
 
-        let (abs_path, file_name) = match &symbol.path {
-            SymbolLocation::InProject(project_path) => (
-                project.read(cx).absolute_path(&project_path, cx)?,
-                project_path.path.file_name()?.to_string().into(),
-            ),
+        let abs_path = match &symbol.path {
+            SymbolLocation::InProject(project_path) => {
+                project.read(cx).absolute_path(&project_path, cx)?
+            }
             SymbolLocation::OutsideProject {
                 abs_path,
                 signature: _,
-            } => (
-                PathBuf::from(abs_path.as_ref()),
-                abs_path.file_name().map(|f| f.to_string_lossy())?,
-            ),
+            } => PathBuf::from(abs_path.as_ref()),
         };
+
+        let display_path = project::path_suffix(&abs_path, symbol_path_detail);
 
         let label = build_code_label_for_path(
             &symbol.name,
-            Some(&file_name),
+            Some(&display_path),
             Some(symbol.range.start.0.row + 1),
             label_max_chars,
             cx,
@@ -1734,9 +1734,35 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                     }
 
                     let completions = cx.update(|cx| {
+                        let indexed_symbols: Vec<(usize, &Symbol)> = matches
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(ix, mat)| match mat {
+                                Match::Symbol(SymbolMatch { symbol }) => Some((ix, symbol)),
+                                _ => None,
+                            })
+                            .collect();
+
+                        let path_details = symbol_path_details(
+                            &indexed_symbols
+                                .iter()
+                                .map(|(_, symbol)| *symbol)
+                                .collect::<Vec<_>>(),
+                            project.read(cx),
+                            cx,
+                        );
+
+                        let symbol_path_detail_by_index: collections::HashMap<usize, usize> =
+                            indexed_symbols
+                                .iter()
+                                .map(|(ix, _)| *ix)
+                                .zip(path_details)
+                                .collect();
+
                         matches
                             .into_iter()
-                            .filter_map(|mat| {
+                            .enumerate()
+                            .filter_map(|(ix, mat)| {
                                 let group = if show_section_headers {
                                     match &mat {
                                         Match::File(FileMatch {
@@ -1792,8 +1818,13 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                         )
                                     }
                                     Match::Symbol(SymbolMatch { symbol, .. }) => {
+                                        let symbol_path_detail = symbol_path_detail_by_index
+                                            .get(&ix)
+                                            .copied()
+                                            .unwrap_or(0);
                                         Self::completion_for_symbol(
                                             symbol,
+                                            symbol_path_detail,
                                             source_range.clone(),
                                             source.clone(),
                                             editor.clone(),
@@ -2339,6 +2370,45 @@ pub(crate) fn search_files(
             .collect::<Vec<_>>()
         })
     }
+}
+
+fn symbol_path_details(symbols: &[&Symbol], project: &Project, cx: &App) -> Vec<usize> {
+    let symbol_paths: Vec<(&str, PathBuf)> = symbols
+        .iter()
+        .map(|symbol| {
+            let abs_path = match &symbol.path {
+                SymbolLocation::InProject(project_path) => project.absolute_path(project_path, cx),
+                SymbolLocation::OutsideProject { abs_path, .. } => Some(abs_path.to_path_buf()),
+            };
+            (symbol.name.as_str(), abs_path.unwrap_or_default())
+        })
+        .collect();
+    path_details(&symbol_paths)
+}
+
+fn path_details(symbol_paths: &[(&str, PathBuf)]) -> Vec<usize> {
+    let unique_symbol_paths: Vec<&(&str, PathBuf)> = symbol_paths.iter().unique().collect();
+
+    let unique_details = util::disambiguate::compute_disambiguation_details(
+        &unique_symbol_paths,
+        |(name, path), detail| (name.to_string(), project::path_suffix(path, detail)),
+    );
+
+    let detail_by_symbol_path: collections::HashMap<&(&str, PathBuf), usize> = unique_symbol_paths
+        .into_iter()
+        .zip(unique_details)
+        .collect();
+
+    // unwrap_or(0) can never fire since every item is a key; the fallback only avoids a panic
+    symbol_paths
+        .iter()
+        .map(|symbol_path| {
+            detail_by_symbol_path
+                .get(&symbol_path)
+                .copied()
+                .unwrap_or(0)
+        })
+        .collect()
 }
 
 pub(crate) fn search_symbols(
@@ -3253,6 +3323,75 @@ mod tests {
             }),
             "Should parse mention immediately after '{{'"
         );
+    }
+
+    #[test]
+    fn test_path_details_empty_input() {
+        let symbol_paths = vec![];
+        assert!(path_details(&symbol_paths).is_empty());
+    }
+
+    #[test]
+    fn test_path_details_one_symbol() {
+        let symbol_paths = vec![("run", PathBuf::from("/dir/a.rs"))];
+        assert_eq!(path_details(&symbol_paths), &[0]);
+    }
+
+    #[test]
+    fn test_path_details_same_name_in_one_file() {
+        let symbol_paths = vec![
+            ("run", PathBuf::from("/dir/a.rs")),
+            ("run", PathBuf::from("/dir/a.rs")),
+        ];
+        assert_eq!(path_details(&symbol_paths), &[0, 0]);
+    }
+
+    #[test]
+    fn test_path_details_same_name_in_different_directories() {
+        let symbol_paths = vec![
+            ("run", PathBuf::from("/dir1/a.rs")),
+            ("run", PathBuf::from("/dir2/a.rs")),
+        ];
+        assert_eq!(path_details(&symbol_paths), &[1, 1]);
+    }
+
+    #[test]
+    fn test_path_details_different_names_same_file_name() {
+        let symbol_paths = vec![
+            ("run", PathBuf::from("/dir1/a.rs")),
+            ("other", PathBuf::from("/dir2/a.rs")),
+        ];
+        assert_eq!(path_details(&symbol_paths), &[0, 0]);
+    }
+
+    #[test]
+    fn test_path_details_preserves_input_order_with_duplicates() {
+        let symbol_paths = vec![
+            ("run", PathBuf::from("/dir/src/a.rs")),
+            ("other", PathBuf::from("/dir/x/c.rs")),
+            ("run", PathBuf::from("/dir/lib/a.rs")),
+            ("run", PathBuf::from("/dir/src/a.rs")),
+        ];
+        assert_eq!(path_details(&symbol_paths), [1, 0, 1, 1]);
+    }
+
+    #[test]
+    fn test_path_details_needs_two_parents() {
+        let symbol_paths = vec![
+            ("run", PathBuf::from("/dir1/x/foo.rs")),
+            ("run", PathBuf::from("/dir2/x/foo.rs")),
+        ];
+        assert_eq!(path_details(&symbol_paths), &[2, 2]);
+    }
+
+    #[test]
+    fn test_path_details_items_resolve_independently() {
+        let symbol_paths = vec![
+            ("run", PathBuf::from("/a/x/foo.rs")),
+            ("run", PathBuf::from("/b/x/foo.rs")),
+            ("run", PathBuf::from("/c/y/foo.rs")),
+        ];
+        assert_eq!(path_details(&symbol_paths), &[2, 2, 1]);
     }
 
     #[gpui::test]
