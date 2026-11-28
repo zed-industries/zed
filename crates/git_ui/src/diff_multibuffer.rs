@@ -532,8 +532,16 @@ impl DiffMultibuffer {
         let buffer_id = snapshot.text.remote_id();
         let mut needs_fold = false;
 
+        // Restoring every hunk without saving leaves no ranges, but the unsaved
+        // buffer must stay in the multibuffer so it can still be seen and saved.
+        let keep_existing_excerpts =
+            excerpt_ranges.is_empty() && display_buffer.read(cx).is_dirty();
+
         let (was_empty, is_excerpt_newly_added) = self.editor.update(cx, |editor, cx| {
             let was_empty = editor.rhs_editor().read(cx).buffer().read(cx).is_empty();
+            if keep_existing_excerpts {
+                return (was_empty, false);
+            }
             let is_newly_added = editor.update_excerpts_for_path(
                 path_key.clone(),
                 display_buffer,
