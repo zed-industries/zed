@@ -144,18 +144,24 @@ impl LineLayout {
         let mut right_runs = Vec::new();
 
         for run in &self.runs {
-            let split_pos = run.glyphs.partition_point(|g| g.index < byte_index);
+            // Glyphs of right-to-left text are in visual order, so their byte
+            // indices are not necessarily ascending; test each glyph rather than
+            // binary searching for a split position.
+            let (left_glyphs, right_glyphs): (Vec<_>, Vec<_>) = run
+                .glyphs
+                .iter()
+                .partition(|glyph| glyph.index < byte_index);
 
-            if split_pos > 0 {
+            if !left_glyphs.is_empty() {
                 left_runs.push(ShapedRun {
                     font_id: run.font_id,
-                    glyphs: run.glyphs[..split_pos].to_vec(),
+                    glyphs: left_glyphs.into_iter().cloned().collect(),
                 });
             }
 
-            if split_pos < run.glyphs.len() {
-                let right_glyphs = run.glyphs[split_pos..]
-                    .iter()
+            if !right_glyphs.is_empty() {
+                let right_glyphs = right_glyphs
+                    .into_iter()
                     .map(|g| ShapedGlyph {
                         id: g.id,
                         position: point(g.position.x - x_offset, g.position.y),
