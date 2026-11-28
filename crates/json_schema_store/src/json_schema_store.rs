@@ -426,11 +426,22 @@ pub fn all_schema_file_associations(
         .flat_map(|(_, glob_strings)| glob_strings.iter().map(SharedString::from));
     let jsonc_globs = extension_globs.chain(override_globs).collect::<Vec<_>>();
 
+    let mut tasks_file_matches = schema_file_matches(paths::tasks_file());
+    tasks_file_matches.push(
+        paths::local_tasks_file_relative_path()
+            .as_unix_str()
+            .to_string(),
+    );
+    let mut debug_file_matches = schema_file_matches(paths::debug_scenarios_file());
+    debug_file_matches.push(
+        paths::local_debug_file_relative_path()
+            .as_unix_str()
+            .to_string(),
+    );
+
     let mut file_associations = serde_json::json!([
         {
-            "fileMatch": [
-                schema_file_match(paths::settings_file()),
-            ],
+            "fileMatch": schema_file_matches(paths::settings_file()),
             "url": format!("{SCHEMA_URI_PREFIX}settings"),
         },
         {
@@ -439,21 +450,15 @@ pub fn all_schema_file_associations(
             "url": format!("{SCHEMA_URI_PREFIX}project_settings"),
         },
         {
-            "fileMatch": [schema_file_match(paths::keymap_file())],
+            "fileMatch": schema_file_matches(paths::keymap_file()),
             "url": format!("{SCHEMA_URI_PREFIX}keymap"),
         },
         {
-            "fileMatch": [
-                schema_file_match(paths::tasks_file()),
-                paths::local_tasks_file_relative_path()
-            ],
+            "fileMatch": tasks_file_matches,
             "url": format!("{SCHEMA_URI_PREFIX}tasks"),
         },
         {
-            "fileMatch": [
-                schema_file_match(paths::debug_scenarios_file()),
-                paths::local_debug_file_relative_path()
-            ],
+            "fileMatch": debug_file_matches,
             "url": format!("{SCHEMA_URI_PREFIX}debug_tasks"),
         },
         {
@@ -617,6 +622,29 @@ fn schema_file_match(path: &std::path::Path) -> String {
         .replace('\\', "/")
 }
 
+/// Like [`schema_file_match`], but when the file lives directly in Zed's config
+/// directory, matches both casings of the directory name.
+///
+/// The config directory is `Zed` on Windows and `zed` elsewhere, and the JSON
+/// language server matches these globs case-sensitively. Without both, the
+/// association breaks when the server runs on one platform and the file comes
+/// from the other, e.g. Windows settings opened from a WSL project.
+fn schema_file_matches(path: &std::path::Path) -> Vec<String> {
+    let file_match = schema_file_match(path);
+    let Some((dir, rest)) = file_match.split_once('/') else {
+        return vec![file_match];
+    };
+    if !dir.eq_ignore_ascii_case(paths::APP_NAME) {
+        return vec![file_match];
+    }
+    let mut file_matches = vec![
+        format!("{}/{rest}", paths::APP_NAME_LOWERCASE),
+        format!("{}/{rest}", paths::APP_NAME),
+    ];
+    file_matches.dedup();
+    file_matches
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -625,6 +653,33 @@ mod tests {
     use language::FakeLspAdapter;
     use project::Project;
     use settings::SettingsStore;
+    use std::path::Path;
+
+    #[test]
+    fn test_schema_file_matches_both_config_dir_casings() {
+        let expected = vec![
+            "zed/settings.json".to_string(),
+            "Zed/settings.json".to_string(),
+        ];
+        assert_eq!(
+            schema_file_matches(Path::new("/home/user/.config/zed/settings.json")),
+            expected,
+        );
+        assert_eq!(
+            schema_file_matches(Path::new(
+                "/mnt/c/Users/user/AppData/Roaming/Zed/settings.json"
+            )),
+            expected,
+        );
+        assert_eq!(
+            schema_file_matches(Path::new("/tmp/custom-data/config/settings.json")),
+            vec!["config/settings.json".to_string()],
+        );
+        assert_eq!(
+            schema_file_matches(Path::new("/home/user/.config/zed/snippets/*.json")),
+            vec!["snippets/*.json".to_string()],
+        );
+    }
 
     #[gpui::test]
     async fn test_project_settings_schema_includes_available_lsp_adapters(cx: &mut TestAppContext) {
