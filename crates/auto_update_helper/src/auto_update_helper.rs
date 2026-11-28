@@ -59,8 +59,8 @@ mod windows_impl {
 
         log::info!("======= Starting Zed update =======");
         let (tx, rx) = std::sync::mpsc::channel();
-        let hwnd = create_dialog_window(rx)?.0 as isize;
         let args = parse_args(std::env::args_os().skip(1));
+        let hwnd = create_dialog_window(rx, args.launch)?.0 as isize;
         std::thread::spawn(move || {
             let result = perform_update(
                 app_dir.as_path(),

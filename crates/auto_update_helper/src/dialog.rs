@@ -27,7 +27,7 @@ use windows::{
 };
 
 use crate::{
-    updater::JOBS,
+    updater::{JOBS, UpdateDeferred},
     windows_impl::{WM_JOB_UPDATED, WM_TERMINATE, show_error},
 };
 
@@ -36,9 +36,12 @@ use crate::{
 struct DialogInfo {
     rx: Receiver<Result<()>>,
     progress_bar: isize,
+    /// Whether Zed will be launched afterwards (from --launch); used to decide whether a
+    /// failure is worth a system-modal dialog.
+    launch: bool,
 }
 
-pub(crate) fn create_dialog_window(receiver: Receiver<Result<()>>) -> Result<HWND> {
+pub(crate) fn create_dialog_window(receiver: Receiver<Result<()>>, launch: bool) -> Result<HWND> {
     unsafe {
         let class_name = windows::core::w!("Zed-Auto-Updater-Dialog-Class");
         let module = GetModuleHandleW(None).context("unable to get module handle")?;
@@ -67,6 +70,7 @@ pub(crate) fn create_dialog_window(receiver: Receiver<Result<()>>) -> Result<HWN
         let info = Box::new(RefCell::new(DialogInfo {
             rx: receiver,
             progress_bar: 0,
+            launch,
         }));
 
         let hwnd = CreateWindowExW(
@@ -186,11 +190,16 @@ unsafe extern "system" fn wnd_proc(
         }),
         WM_TERMINATE => {
             with_dialog_data(hwnd, |data| {
-                if let Ok(result) = data.borrow_mut().rx.recv()
+                let info = data.borrow();
+                if let Ok(result) = info.rx.recv()
                     && let Err(e) = result
                 {
                     log::error!("Failed to update Zed: {:?}", e);
-                    show_error(format!("Error: {:?}", e));
+                    // A deferral is expected and will be retried when Zed exits next, so at
+                    // quit time it is only logged; real failures still surface.
+                    if info.launch || !e.is::<UpdateDeferred>() {
+                        show_error(format!("Error: {:?}", e));
+                    }
                 }
             });
             unsafe { PostQuitMessage(0) };
