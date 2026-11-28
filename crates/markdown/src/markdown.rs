@@ -21,7 +21,7 @@ use theme_settings::ThemeSettings;
 use util::maybe;
 
 use std::borrow::Cow;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::mem;
 use std::ops::Range;
@@ -526,6 +526,33 @@ pub struct Markdown {
     context_menu_selected_markdown: Option<SharedString>,
     search_highlights: Rc<[Range<usize>]>,
     active_search_highlight: Option<usize>,
+    root_block_layout: Rc<RefCell<RootBlockLayout>>,
+}
+
+/// Measured sizes of root blocks, used to skip laying out blocks that are far
+/// outside the scroll viewport. See [`MarkdownElement::cull_offscreen_root_blocks`].
+#[derive(Default)]
+struct RootBlockLayout {
+    /// Container width, rem size and font the sizes were measured with.
+    inputs: Option<(Pixels, Pixels, SharedString)>,
+    /// Size of each root block, keyed by the previous root block's key and its own
+    /// (see [`root_block_key`]). The gap above a block depends on both blocks' margins.
+    sizes: HashMap<(Option<u64>, u64), RootBlockSize>,
+    /// The element's top edge in window coordinates minus the scroll offset, from the
+    /// last prepaint. Adding the current scroll offset gives the element's current top.
+    unscrolled_top: Option<Pixels>,
+    /// During prepaint, the element's top edge in window coordinates.
+    element_top: Pixels,
+    /// During prepaint, the key and bottom edge of the root block prepainted last.
+    previous_block: Option<(u64, Pixels)>,
+}
+
+#[derive(Clone, Copy)]
+struct RootBlockSize {
+    height: Pixels,
+    /// Distance from the previous root block's bottom edge (or the element's top edge,
+    /// for the first block) to this block's top edge, after margins collapse.
+    gap_before: Pixels,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -737,6 +764,7 @@ impl Markdown {
             copied_code_blocks: HashSet::default(),
             wrapped_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
+            root_block_layout: Rc::default(),
             context_menu_link: None,
             context_menu_selected_text: None,
             context_menu_selected_markdown: None,
@@ -1859,6 +1887,7 @@ pub struct MarkdownElement {
     on_mermaid_zoom: Option<MermaidZoomCallback>,
     image_resolver: Option<Box<dyn Fn(&str, &App) -> Option<ImageSource>>>,
     show_root_block_markers: bool,
+    cull_offscreen_root_blocks: bool,
     autoscroll: AutoscrollBehavior,
     /// Test-only hook to observe the laid-out text when this element is
     /// rendered beneath a view, where the layout state isn't otherwise
@@ -1886,6 +1915,7 @@ impl MarkdownElement {
             on_mermaid_zoom: None,
             image_resolver: None,
             show_root_block_markers: false,
+            cull_offscreen_root_blocks: false,
             autoscroll: AutoscrollBehavior::Propagate,
             #[cfg(test)]
             on_render: None,
@@ -1989,6 +2019,15 @@ impl MarkdownElement {
 
     pub fn show_root_block_markers(mut self) -> Self {
         self.show_root_block_markers = true;
+        self
+    }
+
+    /// Replaces root blocks that are more than a viewport away from the visible area
+    /// with empty spacers of their last measured height, so scrolling a long document
+    /// only lays out and paints what is near the viewport. Requires
+    /// [`Self::show_root_block_markers`] and [`Self::scroll_handle`].
+    pub fn cull_offscreen_root_blocks(mut self) -> Self {
+        self.cull_offscreen_root_blocks = true;
         self
     }
 
@@ -2624,6 +2663,77 @@ impl MarkdownElement {
         });
     }
 
+    /// Decides which root blocks can be skipped this frame. Returns `None` when culling
+    /// is off; otherwise root blocks are measured, and skipped only when it is safe.
+    fn root_block_culling(&self, window: &Window, cx: &App) -> Option<RootBlockCulling> {
+        if !self.cull_offscreen_root_blocks || !self.show_root_block_markers {
+            return None;
+        }
+        let AutoscrollBehavior::Controlled(scroll_handle) = &self.autoscroll else {
+            return None;
+        };
+        let markdown = self.markdown.read(cx);
+        let layout = markdown.root_block_layout.clone();
+        let viewport = scroll_handle.bounds();
+        let inputs = (
+            viewport.size.width,
+            window.rem_size(),
+            self.style.base_text_style.font_family.clone(),
+        );
+        let unscrolled_top = {
+            let mut layout = layout.borrow_mut();
+            if layout.inputs.as_ref() != Some(&inputs) {
+                layout.inputs = Some(inputs);
+                layout.sizes.clear();
+                layout.unscrolled_top = None;
+            }
+            layout.unscrolled_top
+        };
+
+        // Autoscroll, heading links, selections and copying all need the text of
+        // every block, so lay out the whole document while any of them is active.
+        let needs_full_text = markdown.autoscroll_request.is_some()
+            || markdown.pending_autoscroll.is_some()
+            || markdown.pending_heading_scroll.is_some()
+            || markdown.selection.pending
+            || markdown.selection.start < markdown.selection.end;
+        let visible = match unscrolled_top {
+            Some(unscrolled_top) if !needs_full_text && viewport.size.height > Pixels::ZERO => {
+                let top = unscrolled_top + scroll_handle.offset().y;
+                let margin = viewport.size.height;
+                Some((viewport.top() - margin - top)..(viewport.bottom() + margin - top))
+            }
+            _ => None,
+        };
+
+        let parsed_markdown = &markdown.parsed_markdown;
+        let first_block_start = parsed_markdown.first_rendered_block_start();
+        let markdown_end = parsed_markdown
+            .events
+            .last()
+            .map_or(0, |(range, _)| range.end);
+        let blocks = parsed_markdown
+            .events
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, event))| matches!(event, MarkdownEvent::RootStart))
+            .map(|(event_index, (range, _))| {
+                let key = root_block_key(
+                    &parsed_markdown.source[range.clone()],
+                    range.start == first_block_start,
+                    range.end == markdown_end,
+                );
+                (event_index, key)
+            })
+            .collect::<Vec<_>>();
+        let plan = plan_root_blocks(&blocks, &layout.borrow().sizes, visible);
+        Some(RootBlockCulling {
+            layout,
+            plan,
+            current: None,
+        })
+    }
+
     fn autoscroll(
         &self,
         rendered_text: &RenderedText,
@@ -2770,8 +2880,16 @@ impl Element for MarkdownElement {
         let mut handled_html_block = false;
         let mut rendered_mermaid_block = false;
         let mut rendered_metadata_block = false;
+        let mut culling = self.root_block_culling(window, cx);
+        let mut skipping_root_block = false;
         for (index, (range, event)) in parsed_markdown.events.iter().enumerate() {
             let event_index = MarkdownEventIndex(index);
+            if skipping_root_block {
+                if matches!(event, MarkdownEvent::RootEnd(_)) {
+                    skipping_root_block = false;
+                }
+                continue;
+            }
             // Skip alt text for images that rendered
             if let Some(current_img_block_range) = &current_img_block_range
                 && current_img_block_range.end > range.end
@@ -2804,15 +2922,36 @@ impl Element for MarkdownElement {
             match event {
                 MarkdownEvent::RootStart => {
                     if self.show_root_block_markers {
+                        if let Some(culling) = culling.as_mut() {
+                            match culling.plan.get(&index) {
+                                Some(RootBlockPlan::Render(measure)) => {
+                                    culling.current = Some(*measure);
+                                }
+                                Some(RootBlockPlan::Spacer(spacer)) => {
+                                    builder.push_root_spacer(*spacer);
+                                    skipping_root_block = true;
+                                    continue;
+                                }
+                                Some(RootBlockPlan::Skip) => {
+                                    skipping_root_block = true;
+                                    continue;
+                                }
+                                None => {}
+                            }
+                        }
                         builder.push_root_block(range, markdown_end);
                     }
                 }
                 MarkdownEvent::RootEnd(root_block_index) => {
                     if self.show_root_block_markers {
+                        let measure = culling.as_mut().and_then(|culling| {
+                            Some((culling.current.take()?, culling.layout.clone()))
+                        });
                         builder.pop_root_block(
                             active_root_block == Some(*root_block_index),
                             cx.theme().colors().border,
                             cx.theme().colors().border_variant,
+                            measure,
                         );
                     }
                 }
@@ -3540,6 +3679,15 @@ impl Element for MarkdownElement {
         window.set_view_id(self.markdown.entity_id());
 
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+        if self.cull_offscreen_root_blocks
+            && let AutoscrollBehavior::Controlled(scroll_handle) = &self.autoscroll
+        {
+            let markdown = self.markdown.read(cx);
+            let mut layout = markdown.root_block_layout.borrow_mut();
+            layout.unscrolled_top = Some(bounds.origin.y - scroll_handle.offset().y);
+            layout.element_top = bounds.origin.y;
+            layout.previous_block = None;
+        }
         rendered_markdown.element.prepaint(window, cx);
         self.autoscroll(&rendered_markdown.text, window, cx);
         hitbox
@@ -4190,11 +4338,26 @@ impl MarkdownElementBuilder {
         }
     }
 
+    /// Stands in for skipped root blocks. Its margins equal the gaps around them, so
+    /// they collapse with the neighbors' margins into the same gaps as before.
+    fn push_root_spacer(&mut self, spacer: RootBlockSpacer) {
+        self.flush_text();
+        self.append_child(
+            div()
+                .w_full()
+                .h(spacer.height)
+                .mt(spacer.gap_before)
+                .mb(spacer.gap_after)
+                .into_any_element(),
+        );
+    }
+
     fn pop_root_block(
         &mut self,
         is_active: bool,
         active_gutter_color: Hsla,
         hovered_gutter_color: Hsla,
+        measure: Option<(RootBlockMeasure, Rc<RefCell<RootBlockLayout>>)>,
     ) {
         self.pop_div();
         self.modify_current_div(|el| {
@@ -4216,7 +4379,20 @@ impl MarkdownElementBuilder {
                     .top_0(),
             )
         });
-        self.pop_div();
+        let Some((measure, layout)) = measure else {
+            self.pop_div();
+            return;
+        };
+        self.flush_text();
+        let child = self.div_stack.pop().unwrap().div.into_any_element();
+        self.append_child(
+            MeasuredRootBlock {
+                measure,
+                layout,
+                child,
+            }
+            .into_any_element(),
+        );
     }
 
     fn pop_div(&mut self) {
@@ -4508,6 +4684,208 @@ impl MarkdownElementBuilder {
                 footnote_refs: self.rendered_footnote_refs.into(),
             },
         }
+    }
+}
+
+struct RootBlockCulling {
+    layout: Rc<RefCell<RootBlockLayout>>,
+    /// What to do with each root block, keyed by the index of its `RootStart` event.
+    plan: HashMap<usize, RootBlockPlan>,
+    /// The root block being built, if it is laid out.
+    current: Option<RootBlockMeasure>,
+}
+
+enum RootBlockPlan {
+    Render(RootBlockMeasure),
+    /// The first of a run of skipped root blocks, replaced by one spacer.
+    Spacer(RootBlockSpacer),
+    /// A later block in a run of skipped root blocks.
+    Skip,
+}
+
+#[derive(Clone, Copy)]
+struct RootBlockMeasure {
+    previous_key: Option<u64>,
+    key: u64,
+    /// Whether the previous root block is laid out in the same frame, so the gap
+    /// between the two can be measured.
+    measure_gap: bool,
+}
+
+#[derive(Clone, Copy)]
+struct RootBlockSpacer {
+    gap_before: Pixels,
+    height: Pixels,
+    gap_after: Pixels,
+}
+
+/// Chooses which root blocks to skip, given each block's `RootStart` event index and
+/// key. Blocks are skipped only when they lie outside `visible` and the positions of
+/// every block above them and the size of the block below them are known.
+fn plan_root_blocks(
+    blocks: &[(usize, u64)],
+    sizes: &HashMap<(Option<u64>, u64), RootBlockSize>,
+    visible: Option<Range<Pixels>>,
+) -> HashMap<usize, RootBlockPlan> {
+    let previous_key = |ix: usize| ix.checked_sub(1).map(|previous| blocks[previous].1);
+    let known_sizes = (0..blocks.len())
+        .map(|ix| sizes.get(&(previous_key(ix), blocks[ix].1)).copied())
+        .collect::<Vec<_>>();
+
+    let mut tops = vec![Pixels::ZERO; blocks.len()];
+    let mut skipped = vec![false; blocks.len()];
+    if let Some(visible) = visible {
+        let mut bottom = Pixels::ZERO;
+        for (ix, size) in known_sizes.iter().enumerate() {
+            // Positions below an unmeasured block are unknown until it is laid out.
+            let Some(size) = size else {
+                break;
+            };
+            let top = bottom + size.gap_before;
+            bottom = top + size.height;
+            tops[ix] = top;
+            // A spacer needs the gap below the last block it replaces.
+            let next_known = known_sizes.get(ix + 1).is_none_or(Option::is_some);
+            skipped[ix] = next_known
+                && size.height > Pixels::ZERO
+                && (bottom < visible.start || top > visible.end);
+        }
+    }
+
+    let mut plan = HashMap::default();
+    let mut ix = 0;
+    while ix < blocks.len() {
+        if !skipped[ix] {
+            let measure = RootBlockMeasure {
+                previous_key: previous_key(ix),
+                key: blocks[ix].1,
+                measure_gap: ix == 0 || !skipped[ix - 1],
+            };
+            plan.insert(blocks[ix].0, RootBlockPlan::Render(measure));
+            ix += 1;
+            continue;
+        }
+        let first = ix;
+        while skipped.get(ix + 1).copied().unwrap_or(false) {
+            ix += 1;
+            plan.insert(blocks[ix].0, RootBlockPlan::Skip);
+        }
+        let last = ix;
+        let last_size = known_sizes[last].unwrap_or(RootBlockSize {
+            height: Pixels::ZERO,
+            gap_before: Pixels::ZERO,
+        });
+        let spacer = RootBlockSpacer {
+            // The first block's top margin is removed, so the spacer starts at the top.
+            gap_before: if first == 0 {
+                Pixels::ZERO
+            } else {
+                known_sizes[first].map_or(Pixels::ZERO, |size| size.gap_before)
+            },
+            height: tops[last] + last_size.height - tops[first],
+            gap_after: known_sizes
+                .get(last + 1)
+                .copied()
+                .flatten()
+                .map_or(Pixels::ZERO, |size| size.gap_before),
+        };
+        plan.insert(blocks[first].0, RootBlockPlan::Spacer(spacer));
+        ix += 1;
+    }
+    plan
+}
+
+fn root_block_key(source: &str, is_first: bool, is_last: bool) -> u64 {
+    use std::hash::{Hash as _, Hasher as _};
+    let mut hasher = collections::FxHasher::default();
+    source.hash(&mut hasher);
+    is_first.hash(&mut hasher);
+    is_last.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Records the laid-out size of a root block for [`RootBlockCulling`].
+struct MeasuredRootBlock {
+    measure: RootBlockMeasure,
+    layout: Rc<RefCell<RootBlockLayout>>,
+    child: AnyElement,
+}
+
+impl Element for MeasuredRootBlock {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+        (self.child.request_layout(window, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self::PrepaintState {
+        {
+            let RootBlockMeasure {
+                previous_key,
+                key,
+                measure_gap,
+            } = self.measure;
+            let mut layout = self.layout.borrow_mut();
+            let size_key = (previous_key, key);
+            let previous_bottom = match previous_key {
+                None => Some(layout.element_top),
+                Some(previous_key) if measure_gap => layout
+                    .previous_block
+                    .filter(|(key, _)| *key == previous_key)
+                    .map(|(_, bottom)| bottom),
+                Some(_) => None,
+            };
+            let gap_before = previous_bottom
+                .map(|bottom| bounds.top() - bottom)
+                .or_else(|| layout.sizes.get(&size_key).map(|size| size.gap_before));
+            if let Some(gap_before) = gap_before {
+                layout.sizes.insert(
+                    size_key,
+                    RootBlockSize {
+                        height: bounds.size.height,
+                        gap_before,
+                    },
+                );
+            }
+            layout.previous_block = Some((key, bounds.bottom()));
+        }
+        self.child.prepaint(window, cx);
+    }
+
+    fn paint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        _prepaint: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.child.paint(window, cx);
     }
 }
 
@@ -5892,6 +6270,150 @@ mod tests {
             markdown.toggle_code_block_wrap(0);
             assert!(markdown.code_block_scroll_handle(0).is_some());
         });
+    }
+
+    #[gpui::test]
+    fn test_cull_offscreen_root_blocks(cx: &mut TestAppContext) {
+        use gpui::{
+            InteractiveElement as _, ParentElement as _, StatefulInteractiveElement as _,
+            Styled as _, div,
+        };
+
+        struct CullingTestView {
+            markdown: Entity<Markdown>,
+            scroll_handle: ScrollHandle,
+            rendered_text: Rc<RefCell<Option<RenderedText>>>,
+        }
+
+        impl Render for CullingTestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let rendered_text = self.rendered_text.clone();
+                div()
+                    .id("scroll")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll_handle)
+                    .child(
+                        MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
+                            .show_root_block_markers()
+                            .cull_offscreen_root_blocks()
+                            .scroll_handle(self.scroll_handle.clone())
+                            .on_render(move |text| *rendered_text.borrow_mut() = Some(text)),
+                    )
+            }
+        }
+
+        ensure_theme_initialized(cx);
+        // Headings and paragraphs have different margins, which collapse between blocks.
+        let source = (0..100)
+            .map(|ix| format!("# Heading {ix}\n\nParagraph {ix}\n\n"))
+            .collect::<String>();
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        cx.run_until_parked();
+
+        let scroll_handle = ScrollHandle::new();
+        let rendered_text = Rc::new(RefCell::new(None));
+        let (view, cx) = cx.add_window_view({
+            let scroll_handle = scroll_handle.clone();
+            let rendered_text = rendered_text.clone();
+            let markdown = markdown.clone();
+            move |_, _| CullingTestView {
+                markdown,
+                scroll_handle,
+                rendered_text,
+            }
+        });
+        cx.simulate_resize(size(px(600.), px(400.)));
+        cx.run_until_parked();
+
+        let redraw = |cx: &mut VisualTestContext| {
+            cx.update(|_, cx| view.update(cx, |_, cx| cx.notify()));
+            cx.run_until_parked();
+        };
+        let is_rendered = |paragraph: usize| {
+            let expected = format!("Paragraph {paragraph}");
+            rendered_text
+                .borrow()
+                .as_ref()
+                .expect("markdown should be rendered")
+                .lines
+                .iter()
+                .any(|line| line.layout.wrapped_text() == expected)
+        };
+        // The source range and top edge of the first line laid out in the last frame.
+        let first_rendered_line = || {
+            let rendered_text = rendered_text.borrow();
+            let rendered_text = rendered_text.as_ref().expect("markdown should be rendered");
+            let line = rendered_text
+                .lines
+                .iter()
+                .find(|line| !line.source_mappings.is_empty())
+                .expect("some text should be rendered");
+            let range = line.source_mappings[0].source_index..line.source_end;
+            let top = rendered_text.bounds_for_source_range(range.clone())[0].top();
+            (range, top)
+        };
+        let top_of = |range: Range<usize>| {
+            rendered_text
+                .borrow()
+                .as_ref()
+                .expect("markdown should be rendered")
+                .bounds_for_source_range(range)[0]
+                .top()
+        };
+        let assert_same_height = |expected: Point<Pixels>| {
+            let actual = scroll_handle.max_offset();
+            assert!(
+                (actual.y - expected.y).abs() < px(0.5),
+                "scroll height changed: {actual:?} != {expected:?}"
+            );
+        };
+
+        // The first frame lays out every block to measure it.
+        redraw(cx);
+        let full_max_offset = scroll_handle.max_offset();
+        assert!(full_max_offset.y > px(2000.));
+
+        // Later frames skip blocks far below the viewport but keep the same total height.
+        redraw(cx);
+        assert!(is_rendered(0));
+        assert!(!is_rendered(99));
+        assert_same_height(full_max_offset);
+
+        // In the middle, blocks on both sides are skipped and the visible ones stay where
+        // a full layout puts them. Scroll in small steps so that headings and paragraphs
+        // (whose margins differ) both end up next to the spacers.
+        for step in 0..8 {
+            let offset = full_max_offset.y / 2. + px(step as f32 * 20.);
+            markdown.update(cx, |markdown, cx| {
+                markdown.selection.start = 0;
+                markdown.selection.end = 0;
+                cx.notify();
+            });
+            scroll_handle.set_offset(point(px(0.), -offset));
+            redraw(cx);
+            redraw(cx);
+            assert!(!is_rendered(0));
+            assert!(!is_rendered(99));
+            assert_same_height(full_max_offset);
+            let (range, culled_top) = first_rendered_line();
+
+            // A selection needs the text of every block, so nothing is skipped.
+            markdown.update(cx, |markdown, cx| {
+                markdown.selection.start = 0;
+                markdown.selection.end = markdown.source().len();
+                cx.notify();
+            });
+            redraw(cx);
+            assert!(is_rendered(0));
+            assert!(is_rendered(99));
+            assert_same_height(full_max_offset);
+            let full_top = top_of(range);
+            assert!(
+                (culled_top - full_top).abs() < px(0.5),
+                "visible text moved at step {step}: {culled_top:?} != {full_top:?}"
+            );
+        }
     }
 
     #[gpui::test]

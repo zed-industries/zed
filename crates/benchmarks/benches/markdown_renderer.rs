@@ -1,6 +1,7 @@
 use benchmarks::bench_utils::random_rust_file;
 use gpui::{
-    AppContext as _, BenchAppContext, Context, Entity, IntoElement, Render, SharedString, Window,
+    AppContext as _, BenchAppContext, Context, Entity, IntoElement, Render, ScrollHandle,
+    SharedString, Window, point, size,
 };
 use language::LanguageRegistry;
 use markdown::{
@@ -37,6 +38,119 @@ fn markdown_render(target_size: &usize, cx: &mut BenchAppContext) {
     });
 
     cx.bench_renderer(view, |_, _, cx| cx.notify());
+}
+
+/// Mirrors the Markdown preview: the whole document is a single `MarkdownElement`
+/// inside a fixed-size `overflow_y_scroll` container. Each iteration scrolls down by
+/// one wheel step and notifies, as a scroll-wheel event does in the preview.
+#[gpui::bench(
+    inputs = markdown_sizes(),
+    group = "Markdown preview scroll",
+    input_name = "min_bytes",
+    sample_size = 10
+)]
+fn markdown_preview_scroll(target_size: &usize, cx: &mut BenchAppContext) {
+    init_context(cx);
+    let source = SharedString::from(generate_markdown(SEED, *target_size));
+    bench_preview_scroll(source, preview_options(), cx);
+}
+
+/// Same as `markdown_preview_scroll`, for a real document: set
+/// `ZED_BENCH_MARKDOWN_FILE=/path/to/file.md`.
+#[gpui::bench(
+    inputs = markdown_files(),
+    group = "Markdown preview scroll (file)",
+    input_name = "file",
+    sample_size = 10
+)]
+fn markdown_preview_scroll_file(file_name: &String, cx: &mut BenchAppContext) {
+    init_context(cx);
+    let path = std::env::var("ZED_BENCH_MARKDOWN_FILE").expect("ZED_BENCH_MARKDOWN_FILE");
+    assert!(path.ends_with(file_name.as_str()));
+    let source = std::fs::read_to_string(&path).expect("read markdown file");
+    bench_preview_scroll(SharedString::from(source), preview_options(), cx);
+}
+
+fn markdown_files() -> Vec<String> {
+    std::env::var("ZED_BENCH_MARKDOWN_FILE")
+        .ok()
+        .and_then(|path| {
+            std::path::Path::new(&path)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .into_iter()
+        .collect()
+}
+
+/// The options `MarkdownPreviewView::new` uses.
+fn preview_options() -> MarkdownOptions {
+    MarkdownOptions {
+        parse_html: true,
+        render_mermaid_diagrams: true,
+        parse_heading_slugs: true,
+        render_metadata_blocks: true,
+        ..Default::default()
+    }
+}
+
+fn bench_preview_scroll(source: SharedString, options: MarkdownOptions, cx: &mut BenchAppContext) {
+    let language_registry = markdown_language_registry(cx);
+
+    let mut window = cx.add_empty_window();
+    window.simulate_resize(size(px(900.), px(700.)));
+    let view = window.update(|window, cx| {
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(source, Some(language_registry), None, options, cx)
+        });
+        window.replace_root(cx, |_window, _cx| MarkdownScrollBenchView {
+            markdown,
+            scroll_handle: ScrollHandle::new(),
+        })
+    });
+
+    cx.bench_renderer(view, |view, _, cx| {
+        const WHEEL_STEP: f32 = 48.;
+        let offset = view.scroll_handle.offset();
+        let max_y = view.scroll_handle.max_offset().y;
+        let mut next_y = offset.y - px(WHEEL_STEP);
+        if -next_y > max_y {
+            next_y = px(0.);
+        }
+        view.scroll_handle.set_offset(point(offset.x, next_y));
+        cx.notify();
+    });
+}
+
+struct MarkdownScrollBenchView {
+    markdown: Entity<Markdown>,
+    scroll_handle: ScrollHandle,
+}
+
+impl Render for MarkdownScrollBenchView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let style = MarkdownStyle::themed(MarkdownFont::Preview, window, cx);
+
+        div()
+            .id("markdown-preview-scroll-container")
+            .size_full()
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll_handle)
+            .p_4()
+            .child(
+                MarkdownElement::new(self.markdown.clone(), style)
+                    .code_block_renderer(CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::VisibleOnHover,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
+                        border: false,
+                    })
+                    .scroll_handle(self.scroll_handle.clone())
+                    .show_root_block_markers()
+                    .when(std::env::var("ZED_BENCH_NO_CULLING").is_err(), |this| {
+                        this.cull_offscreen_root_blocks()
+                    }),
+            )
+    }
 }
 
 struct MarkdownBenchView {
@@ -344,5 +458,10 @@ fn markdown_sizes() -> Vec<usize> {
     sizes
 }
 
-gpui::bench_group!(benches, markdown_render);
+gpui::bench_group!(
+    benches,
+    markdown_render,
+    markdown_preview_scroll,
+    markdown_preview_scroll_file
+);
 gpui::bench_main!(benches);
