@@ -1,12 +1,11 @@
 use crate::{PlatformDispatcher, RunnableMeta};
 use async_task::Runnable;
-use chrono::{DateTime, Utc};
 use futures::channel::oneshot;
-use scheduler::Instant;
 use scheduler::{
     Clock, LocalExecutor, Priority, Scheduler, SessionId, Task, TestScheduler, Timer,
     spawn_dedicated_thread,
 };
+use scheduler::{Instant, SystemTime};
 #[cfg(not(target_family = "wasm"))]
 use std::task::{Context, Poll};
 use std::{
@@ -180,8 +179,8 @@ struct PlatformClock {
 }
 
 impl Clock for PlatformClock {
-    fn utc_now(&self) -> DateTime<Utc> {
-        Utc::now()
+    fn utc_now(&self) -> SystemTime {
+        SystemTime::now()
     }
 
     fn now(&self) -> Instant {
