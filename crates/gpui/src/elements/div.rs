@@ -3190,6 +3190,17 @@ impl Interactivity {
                 }
 
                 window.on_mouse_event({
+                    let pending_mouse_down = pending_mouse_down.clone();
+                    move |_: &crate::MouseCaptureLostEvent, phase, window, _cx| {
+                        if phase == DispatchPhase::Capture
+                            && pending_mouse_down.borrow_mut().take().is_some()
+                        {
+                            window.refresh();
+                        }
+                    }
+                });
+
+                window.on_mouse_event({
                     let mut captured_mouse_down = None;
                     let hitbox = hitbox.clone();
                     move |event: &MouseUpEvent, phase, window, cx| match phase {
@@ -3348,6 +3359,15 @@ impl Interactivity {
 
             {
                 let active_state = active_state.clone();
+                window.on_mouse_event({
+                    let active_state = active_state.clone();
+                    move |_: &crate::MouseCaptureLostEvent, phase, window, _cx| {
+                        if phase == DispatchPhase::Capture && active_state.borrow().is_clicked() {
+                            *active_state.borrow_mut() = ElementClickedState::default();
+                            window.refresh();
+                        }
+                    }
+                });
                 window.on_mouse_event(move |_: &MouseUpEvent, phase, window, _cx| {
                     if phase == DispatchPhase::Capture && active_state.borrow().is_clicked() {
                         *active_state.borrow_mut() = ElementClickedState::default();

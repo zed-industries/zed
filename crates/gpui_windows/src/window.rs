@@ -91,6 +91,8 @@ pub struct WindowsWindowState {
     hwnd: HWND,
     pub(crate) a11y: RefCell<Option<A11yState>>,
     pub mouse_position: Cell<Point<Pixels>>,
+    pub(crate) releasing_mouse_capture: Cell<bool>,
+    pub(crate) mouse_capture_loss_pending: Cell<bool>,
 }
 
 pub(crate) struct WindowsWindowInner {
@@ -193,6 +195,8 @@ impl WindowsWindowState {
             direct_manipulation,
             a11y: RefCell::new(None),
             mouse_position: Cell::new(Point::default()),
+            releasing_mouse_capture: Cell::new(false),
+            mouse_capture_loss_pending: Cell::new(false),
         })
     }
 
