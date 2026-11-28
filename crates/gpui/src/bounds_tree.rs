@@ -1,82 +1,261 @@
-use crate::{Bounds, Half, scene::PrimitiveKind};
+use crate::{Bounds, ScaledPixels, scene::PrimitiveKind};
 use std::{
     cmp::{self, Ordering},
     fmt::Debug,
-    ops::{Add, Sub},
-    ptr::NonNull,
+    ops::Add,
 };
 
-/// Maximum children per internal node (R-tree style branching factor).
-/// Higher values = shorter tree = fewer cache misses, but more work per node.
-const MAX_CHILDREN: usize = 12;
+/// Maximum entries per page. Eight lanes of each coordinate fit in two 16-byte
+/// aligned vectors for 32-bit coordinates.
+const PAGE_CAPACITY: usize = 8;
 
-/// A spatial tree optimized for finding maximum ordering among intersecting bounds.
-///
-/// This is an R-tree variant specifically designed for the use case of assigning
-/// z-order to overlapping UI elements. Each bounds has an ordering and a kind;
-/// bounds sharing an ordering are drawn in the order of their kinds. Key
-/// optimizations:
-/// - Tracks the leaf with global max key for O(1) fast-path queries
-/// - Uses higher branching factor (4) for lower tree height
-/// - Aggressive pruning during search based on max_key metadata
-#[derive(Debug)]
-pub(crate) struct BoundsTree<U>
-where
-    U: Clone + Debug + Default + PartialEq,
+/// When a full page receives a ninth entry, this many entries stay in the
+/// original page and the rest move to a new sibling page.
+const SPLIT_LEFT_LEN: usize = 4;
+
+/// Bounds are stored in separate trees by size relative to everything inserted
+/// so far, so that large bounds don't inflate the pages holding small ones.
+const TIER_COUNT: usize = 3;
+const LARGE_TIER_MIN_FRACTION: f32 = 0.25;
+const MEDIUM_TIER_MIN_FRACTION: f32 = 0.0625;
+
+/// A coordinate type that [`BoundsTree`] can store.
+pub(crate) trait BoundsScalar:
+    Clone + Debug + Default + PartialEq + Add<Output = Self>
 {
-    /// All nodes stored contiguously for cache efficiency.
-    nodes: Vec<Node<U>>,
-    /// Index of the root node, if any.
-    root: Option<usize>,
-    /// Index of the leaf with the highest key (for fast-path lookups).
-    max_leaf: Option<usize>,
-    /// Reusable stack for tree traversal during insertion.
-    insert_path: Vec<usize>,
-    /// Reusable stack for search operations.
-    search_stack: Vec<NonNull<Node<U>>>,
+    /// A cheaply comparable encoding of the coordinate whose order is exactly
+    /// the coordinate's `PartialOrd`.
+    type OrderKey: Copy + Debug + Default + PartialOrd;
+
+    fn to_order_key(&self) -> Self::OrderKey;
+
+    /// The approximate length from `min` to `max`, or zero if `max` isn't
+    /// greater. Only used to decide where bounds are stored.
+    fn heuristic_extent(min: Self::OrderKey, max: Self::OrderKey) -> f32;
+
+    /// The approximate midpoint of `min` and `max`. Only used to decide where
+    /// bounds are stored.
+    fn heuristic_center(min: Self::OrderKey, max: Self::OrderKey) -> f32;
 }
 
-/// A node in the bounds tree.
-#[derive(Debug, Clone)]
-struct Node<U>
-where
-    U: Clone + Debug + Default + PartialEq,
-{
-    /// Bounding box containing this node and all descendants.
-    bounds: NodeBounds<U>,
-    /// Maximum key in this subtree.
-    max_key: Key,
-    /// Node-specific data.
-    kind: NodeKind,
+fn clamped_extent(min: f32, max: f32) -> f32 {
+    let extent = max - min;
+    if extent > 0.0 { extent } else { 0.0 }
+}
+
+impl BoundsScalar for f32 {
+    type OrderKey = f32;
+
+    fn to_order_key(&self) -> f32 {
+        *self
+    }
+
+    fn heuristic_extent(min: f32, max: f32) -> f32 {
+        clamped_extent(min, max)
+    }
+
+    fn heuristic_center(min: f32, max: f32) -> f32 {
+        min * 0.5 + max * 0.5
+    }
+}
+
+impl BoundsScalar for i32 {
+    type OrderKey = i32;
+
+    fn to_order_key(&self) -> i32 {
+        *self
+    }
+
+    fn heuristic_extent(min: i32, max: i32) -> f32 {
+        clamped_extent(min as f32, max as f32)
+    }
+
+    fn heuristic_center(min: i32, max: i32) -> f32 {
+        min as f32 * 0.5 + max as f32 * 0.5
+    }
+}
+
+/// Maps between `f32` bits and integers ordered exactly like
+/// [`f32::total_cmp`], which `ScaledPixels` uses for its ordering. The mapping
+/// is its own inverse.
+///
+/// As `i32`, negative floats already sort below non-negative ones, but in
+/// reverse order; flipping their low 31 bits corrects that.
+///
+/// If `ScaledPixels` stops ordering by `total_cmp`, this must change with it,
+/// or the tree's intersections will disagree with [`Bounds::intersects`].
+fn total_order_bits(bits: i32) -> i32 {
+    bits ^ (((bits >> 31) as u32 >> 1) as i32)
+}
+
+fn decode_scaled_pixels(key: i32) -> f32 {
+    f32::from_bits(total_order_bits(key) as u32)
+}
+
+impl BoundsScalar for ScaledPixels {
+    type OrderKey = i32;
+
+    fn to_order_key(&self) -> i32 {
+        total_order_bits(self.0.to_bits() as i32)
+    }
+
+    fn heuristic_extent(min: i32, max: i32) -> f32 {
+        clamped_extent(decode_scaled_pixels(min), decode_scaled_pixels(max))
+    }
+
+    fn heuristic_center(min: i32, max: i32) -> f32 {
+        decode_scaled_pixels(min) * 0.5 + decode_scaled_pixels(max) * 0.5
+    }
+}
+
+/// A spatial tree optimized for finding the maximum key among intersecting bounds.
+///
+/// This is a paged R-tree specifically designed for assigning z-order to
+/// overlapping UI elements. Each bounds has an ordering and a kind; bounds
+/// sharing an ordering are drawn in the order of their kinds.
+///
+/// Every page stores its entries' bounds in structure-of-arrays lanes along with
+/// their keys sorted ascending, so searches can scan from the highest key down and
+/// stop as soon as no remaining entry can improve on the best match. Within each
+/// size tier, all leaf pages are at the same depth.
+///
+/// Bounds that can never affect a future query result are not stored: a new
+/// bounds contained in an intersecting bounds with an equal or greater key is
+/// dropped, and a stored bounds contained in a new bounds with an equal or greater
+/// key is overwritten by it.
+///
+/// Tiers, split axes and subtree choice only affect speed, never orderings.
+/// Search pruning requires each internal slot's key to equal its child's
+/// maximum key exactly, though its bounds may be looser.
+#[derive(Debug)]
+pub(crate) struct BoundsTree<U: BoundsScalar> {
+    /// From largest to smallest bounds.
+    tiers: [PageTree<U>; TIER_COUNT],
+    /// The union of every stored bounds.
+    scene_bounds: Option<NodeBounds<U::OrderKey>>,
+    /// The bounds and key of a stored bounds with the greatest key, which answers
+    /// any query that intersects it without searching.
+    max_leaf: Option<(NodeBounds<U::OrderKey>, Key)>,
+    /// Reusable stack of the internal pages and slots visited while inserting.
+    insert_path: Vec<PathStep>,
+    /// Reusable stack of internal page indices and their max keys for searching.
+    search_stack: Vec<(usize, Key)>,
+}
+
+#[derive(Debug)]
+struct PageTree<U: BoundsScalar> {
+    leaf_pages: Vec<LeafPage<U>>,
+    internal_pages: Vec<InternalPage<U>>,
+    root: Option<NodeId>,
+    /// The union of every bounds in this tree, valid when `root` is set.
+    root_bounds: NodeBounds<U::OrderKey>,
+    /// The greatest key in this tree, valid when `root` is set.
+    root_max_key: Key,
+}
+
+/// The ordering of a bounds in the high bits, then its kind, which orders the
+/// bounds that share an ordering.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+struct Key(u64);
+
+impl Key {
+    /// Orderings start at 1, so this compares below every stored key.
+    const MIN: Key = Key(0);
+
+    fn new(ordering: u32, kind: PrimitiveKind) -> Self {
+        debug_assert!(
+            (kind as u64) < 1 << 8,
+            "{kind:?} doesn't fit in the kind bits"
+        );
+        Self((u64::from(ordering) << 8) | kind as u64)
+    }
+
+    fn ordering(self) -> u32 {
+        (self.0 >> 8) as u32
+    }
+}
+
+/// Identifies a leaf page or an internal page.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct NodeId(u32);
+
+enum PageIndex {
+    Leaf(usize),
+    Internal(usize),
+}
+
+impl NodeId {
+    const LEAF_PAGE_BIT: u32 = 1 << 31;
+
+    fn leaf_page(index: usize) -> Self {
+        debug_assert!(
+            index < Self::LEAF_PAGE_BIT as usize,
+            "page index {index} collides with the leaf page bit"
+        );
+        Self(index as u32 | Self::LEAF_PAGE_BIT)
+    }
+
+    fn internal_page(index: usize) -> Self {
+        debug_assert!(
+            index < Self::LEAF_PAGE_BIT as usize,
+            "page index {index} collides with the leaf page bit"
+        );
+        Self(index as u32)
+    }
+
+    fn is_leaf_page(self) -> bool {
+        self.0 & Self::LEAF_PAGE_BIT != 0
+    }
+
+    fn index(self) -> usize {
+        (self.0 & !Self::LEAF_PAGE_BIT) as usize
+    }
+
+    fn page_index(self) -> PageIndex {
+        if self.is_leaf_page() {
+            PageIndex::Leaf(self.index())
+        } else {
+            PageIndex::Internal(self.index())
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PathStep {
+    page_index: usize,
+    slot: usize,
 }
 
 /// Bounds stored as corners.
 ///
-/// Storing a union as an origin and size would round its far corner, which
-/// could then fall short of a child's. The corners are also not reordered for
-/// negative sizes, so `intersects` agrees with [`Bounds::intersects`] for every
-/// input.
-#[derive(Debug, Clone)]
-struct NodeBounds<U> {
-    min_x: U,
-    min_y: U,
-    max_x: U,
-    max_y: U,
+/// The corners are not reordered for negative sizes, so `intersects` agrees with
+/// [`Bounds::intersects`] for every input.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct NodeBounds<K> {
+    min_x: K,
+    min_y: K,
+    max_x: K,
+    max_y: K,
 }
 
-impl<U> NodeBounds<U>
-where
-    U: Clone + Debug + Default + PartialEq + PartialOrd + Add<U, Output = U> + Sub<Output = U>,
-{
-    fn from_bounds(bounds: &Bounds<U>) -> Self {
-        Self {
-            min_x: bounds.origin.x.clone(),
-            min_y: bounds.origin.y.clone(),
-            max_x: bounds.origin.x.clone() + bounds.size.width.clone(),
-            max_y: bounds.origin.y.clone() + bounds.size.height.clone(),
-        }
+fn node_bounds<U: BoundsScalar>(bounds: &Bounds<U>) -> NodeBounds<U::OrderKey> {
+    let max_x = bounds.origin.x.clone() + bounds.size.width.clone();
+    let max_y = bounds.origin.y.clone() + bounds.size.height.clone();
+    NodeBounds {
+        min_x: bounds.origin.x.to_order_key(),
+        min_y: bounds.origin.y.to_order_key(),
+        max_x: max_x.to_order_key(),
+        max_y: max_y.to_order_key(),
     }
+}
 
+fn heuristic_half_perimeter<U: BoundsScalar>(bounds: &NodeBounds<U::OrderKey>) -> f32 {
+    U::heuristic_extent(bounds.min_x, bounds.max_x)
+        + U::heuristic_extent(bounds.min_y, bounds.max_y)
+}
+
+impl<K: Copy + PartialOrd> NodeBounds<K> {
+    #[inline]
     fn intersects(&self, other: &Self) -> bool {
         self.min_x < other.max_x
             && self.max_x > other.min_x
@@ -84,24 +263,31 @@ where
             && self.max_y > other.min_y
     }
 
-    fn union(&self, other: &Self) -> Self {
-        Self {
-            min_x: min_value(self.min_x.clone(), other.min_x.clone()),
-            min_y: min_value(self.min_y.clone(), other.min_y.clone()),
-            max_x: max_value(self.max_x.clone(), other.max_x.clone()),
-            max_y: max_value(self.max_y.clone(), other.max_y.clone()),
-        }
+    /// Whenever this holds, every bounds that intersects `inner` also intersects
+    /// `self`, regardless of the sign of either size.
+    #[inline]
+    fn contains(&self, inner: &Self) -> bool {
+        self.min_x <= inner.min_x
+            && inner.max_x <= self.max_x
+            && self.min_y <= inner.min_y
+            && inner.max_y <= self.max_y
     }
 
-    fn half_perimeter(&self) -> U {
-        (self.max_x.clone() - self.min_x.clone()) + (self.max_y.clone() - self.min_y.clone())
+    fn union(&self, other: &Self) -> Self {
+        Self {
+            min_x: min_value(self.min_x, other.min_x),
+            min_y: min_value(self.min_y, other.min_y),
+            max_x: max_value(self.max_x, other.max_x),
+            max_y: max_value(self.max_y, other.max_y),
+        }
     }
 }
 
 /// A bounds with an unordered coordinate (such as an `f32` NaN) never intersects
 /// anything, so unions skip such coordinates rather than letting them spread into
 /// the bounds of every ancestor.
-fn min_value<U: PartialOrd>(a: U, b: U) -> U {
+#[inline]
+fn min_value<K: PartialOrd>(a: K, b: K) -> K {
     match a.partial_cmp(&b) {
         Some(Ordering::Greater) => b,
         Some(_) => a,
@@ -115,7 +301,8 @@ fn min_value<U: PartialOrd>(a: U, b: U) -> U {
     }
 }
 
-fn max_value<U: PartialOrd>(a: U, b: U) -> U {
+#[inline]
+fn max_value<K: PartialOrd>(a: K, b: K) -> K {
     match a.partial_cmp(&b) {
         Some(Ordering::Less) => b,
         Some(_) => a,
@@ -129,71 +316,529 @@ fn max_value<U: PartialOrd>(a: U, b: U) -> U {
     }
 }
 
-/// The ordering of a bounds, then its kind, which orders the bounds that share
-/// an ordering.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct Key {
-    ordering: u32,
-    kind: PrimitiveKind,
+#[derive(Clone, Debug)]
+#[repr(C, align(16))]
+struct BoundsLanes<K> {
+    min_x: [K; PAGE_CAPACITY],
+    min_y: [K; PAGE_CAPACITY],
+    max_x: [K; PAGE_CAPACITY],
+    max_y: [K; PAGE_CAPACITY],
 }
 
-#[derive(Debug, Clone)]
-enum NodeKind {
-    /// Leaf node containing actual bounds data.
-    Leaf { key: Key },
-    /// Internal node with children.
-    Internal {
-        /// Indices of child nodes (2 to MAX_CHILDREN).
-        children: NodeChildren,
-    },
-}
-
-/// Fixed-size array for child indices, avoiding heap allocation.
-#[derive(Debug, Clone)]
-struct NodeChildren {
-    // Keeps an invariant where the max key child is always at the end
-    indices: [usize; MAX_CHILDREN],
-    len: u8,
-}
-
-impl NodeChildren {
+impl<K: Copy + Default + PartialOrd> BoundsLanes<K> {
     fn new() -> Self {
         Self {
-            indices: [0; MAX_CHILDREN],
-            len: 0,
+            min_x: [K::default(); PAGE_CAPACITY],
+            min_y: [K::default(); PAGE_CAPACITY],
+            max_x: [K::default(); PAGE_CAPACITY],
+            max_y: [K::default(); PAGE_CAPACITY],
         }
     }
 
-    fn push(&mut self, index: usize) {
-        debug_assert!((self.len as usize) < MAX_CHILDREN);
-        self.indices[self.len as usize] = index;
-        self.len += 1;
+    fn get(&self, slot: usize) -> NodeBounds<K> {
+        NodeBounds {
+            min_x: self.min_x[slot],
+            min_y: self.min_y[slot],
+            max_x: self.max_x[slot],
+            max_y: self.max_y[slot],
+        }
+    }
+
+    fn set(&mut self, slot: usize, bounds: NodeBounds<K>) {
+        self.min_x[slot] = bounds.min_x;
+        self.min_y[slot] = bounds.min_y;
+        self.max_x[slot] = bounds.max_x;
+        self.max_y[slot] = bounds.max_y;
+    }
+
+    fn swap(&mut self, a: usize, b: usize) {
+        self.min_x.swap(a, b);
+        self.min_y.swap(a, b);
+        self.max_x.swap(a, b);
+        self.max_y.swap(a, b);
+    }
+
+    /// Returns a bit per slot, including unused slots, set when the slot
+    /// intersects `query`.
+    #[inline(always)]
+    fn intersection_mask(&self, query: &NodeBounds<K>) -> u8 {
+        let mut mask = 0u8;
+        // Non-short-circuiting `&` keeps this loop branch-free so it can be
+        // vectorized across all lanes.
+        for slot in 0..PAGE_CAPACITY {
+            let hit = (self.min_x[slot] < query.max_x)
+                & (self.max_x[slot] > query.min_x)
+                & (self.min_y[slot] < query.max_y)
+                & (self.max_y[slot] > query.min_y);
+            mask |= (hit as u8) << slot;
+        }
+        mask
+    }
+
+    #[inline(always)]
+    fn slot_contains(&self, slot: usize, inner: &NodeBounds<K>) -> bool {
+        self.min_x[slot] <= inner.min_x
+            && inner.max_x <= self.max_x[slot]
+            && self.min_y[slot] <= inner.min_y
+            && inner.max_y <= self.max_y[slot]
+    }
+
+    #[inline(always)]
+    fn is_contained_by(&self, slot: usize, outer: &NodeBounds<K>) -> bool {
+        outer.min_x <= self.min_x[slot]
+            && self.max_x[slot] <= outer.max_x
+            && outer.min_y <= self.min_y[slot]
+            && self.max_y[slot] <= outer.max_y
+    }
+}
+
+/// An entry being moved into a page.
+#[derive(Clone, Copy, Debug)]
+struct Entry<K, Child> {
+    bounds: NodeBounds<K>,
+    key: Key,
+    child: Child,
+}
+
+/// Up to [`PAGE_CAPACITY`] entries, sorted ascending by key.
+///
+/// Never empty, since splits leave entries on both sides and nothing is removed.
+///
+/// In a leaf page, each entry is a stored bounds and its key. In an internal
+/// page, each entry is a child page with the union of its bounds and its
+/// maximum key.
+#[derive(Clone, Debug)]
+struct Page<U: BoundsScalar, Child> {
+    lanes: BoundsLanes<U::OrderKey>,
+    keys: [Key; PAGE_CAPACITY],
+    children: [Child; PAGE_CAPACITY],
+    len: u8,
+}
+
+type LeafPage<U> = Page<U, ()>;
+type InternalPage<U> = Page<U, NodeId>;
+
+impl<U: BoundsScalar, Child: Copy + Default> Page<U, Child> {
+    fn new() -> Self {
+        Self {
+            lanes: BoundsLanes::new(),
+            keys: [Key::MIN; PAGE_CAPACITY],
+            children: [Child::default(); PAGE_CAPACITY],
+            len: 0,
+        }
     }
 
     fn len(&self) -> usize {
         self.len as usize
     }
 
-    fn as_slice(&self) -> &[usize] {
-        &self.indices[..self.len as usize]
+    fn is_full(&self) -> bool {
+        self.len() == PAGE_CAPACITY
+    }
+
+    fn max_key(&self) -> Key {
+        self.keys[self.len() - 1]
+    }
+
+    /// Bits of the slots that `query` intersects, excluding unused slots.
+    #[inline(always)]
+    fn intersection_mask(&self, query: &NodeBounds<U::OrderKey>) -> u8 {
+        let used_slots = ((1u16 << self.len) - 1) as u8;
+        self.lanes.intersection_mask(query) & used_slots
+    }
+
+    fn entry(&self, slot: usize) -> Entry<U::OrderKey, Child> {
+        Entry {
+            bounds: self.lanes.get(slot),
+            key: self.keys[slot],
+            child: self.children[slot],
+        }
+    }
+
+    fn bounds(&self) -> NodeBounds<U::OrderKey> {
+        let mut bounds = self.lanes.get(0);
+        for slot in 1..self.len() {
+            bounds = bounds.union(&self.lanes.get(slot));
+        }
+        bounds
+    }
+
+    fn swap_slots(&mut self, a: usize, b: usize) {
+        self.lanes.swap(a, b);
+        self.keys.swap(a, b);
+        self.children.swap(a, b);
+    }
+
+    fn restore_key_order(&mut self, mut slot: usize) {
+        while slot > 0 && self.keys[slot - 1] > self.keys[slot] {
+            self.swap_slots(slot - 1, slot);
+            slot -= 1;
+        }
+        while slot + 1 < self.len() && self.keys[slot + 1] < self.keys[slot] {
+            self.swap_slots(slot, slot + 1);
+            slot += 1;
+        }
+    }
+
+    fn update_slot(&mut self, slot: usize, bounds: NodeBounds<U::OrderKey>, key: Key) {
+        self.lanes.set(slot, bounds);
+        self.keys[slot] = key;
+        self.restore_key_order(slot);
+    }
+
+    fn push(&mut self, entry: Entry<U::OrderKey, Child>) {
+        debug_assert!(!self.is_full());
+        let slot = self.len();
+        self.lanes.set(slot, entry.bounds);
+        self.keys[slot] = entry.key;
+        self.children[slot] = entry.child;
+        self.len += 1;
+        self.restore_key_order(slot);
+    }
+
+    /// Splits this full page and `extra` along the longer axis of their union,
+    /// keeping [`SPLIT_LEFT_LEN`] entries here and returning the rest as a new page.
+    fn split(&mut self, extra: Entry<U::OrderKey, Child>) -> Self {
+        debug_assert!(self.is_full());
+        let mut entries: [Entry<U::OrderKey, Child>; PAGE_CAPACITY + 1] =
+            std::array::from_fn(|slot| {
+                if slot < PAGE_CAPACITY {
+                    self.entry(slot)
+                } else {
+                    extra
+                }
+            });
+
+        let mut union = entries[0].bounds;
+        for entry in &entries[1..] {
+            union = union.union(&entry.bounds);
+        }
+        let width = U::heuristic_extent(union.min_x, union.max_x);
+        let height = U::heuristic_extent(union.min_y, union.max_y);
+        let split_along_x = height.partial_cmp(&width) != Some(Ordering::Greater);
+        let mut centers: [f32; PAGE_CAPACITY + 1] = std::array::from_fn(|slot| {
+            let bounds = &entries[slot].bounds;
+            if split_along_x {
+                U::heuristic_center(bounds.min_x, bounds.max_x)
+            } else {
+                U::heuristic_center(bounds.min_y, bounds.max_y)
+            }
+        });
+
+        // Insertion sort never panics on an inconsistent order, unlike
+        // `sort_by`, which matters when centers are NaN.
+        for start in 1..entries.len() {
+            let mut slot = start;
+            while slot > 0
+                && centers[slot - 1].partial_cmp(&centers[slot]) == Some(Ordering::Greater)
+            {
+                centers.swap(slot - 1, slot);
+                entries.swap(slot - 1, slot);
+                slot -= 1;
+            }
+        }
+
+        let mut entries = entries.into_iter();
+        self.len = 0;
+        for entry in entries.by_ref().take(SPLIT_LEFT_LEN) {
+            self.push(entry);
+        }
+        let mut sibling = Self::new();
+        for entry in entries {
+            sibling.push(entry);
+        }
+        sibling
     }
 }
 
-impl<U> BoundsTree<U>
-where
-    U: Clone
-        + Debug
-        + PartialEq
-        + PartialOrd
-        + Add<U, Output = U>
-        + Sub<Output = U>
-        + Half
-        + Default,
-{
-    /// Clears all nodes from the tree.
-    pub fn clear(&mut self) {
-        self.nodes.clear();
+impl<U: BoundsScalar> LeafPage<U> {
+    /// Finds a stored bounds that `bounds` with `key` makes redundant.
+    ///
+    /// Best effort: other pages aren't checked and only the first match is
+    /// replaced, so redundant bounds can remain.
+    fn subsumed_slot(&self, bounds: &NodeBounds<U::OrderKey>, key: Key) -> Option<usize> {
+        (0..self.len())
+            .find(|&slot| self.keys[slot] <= key && self.lanes.is_contained_by(slot, bounds))
+    }
+
+    #[inline(always)]
+    fn scan(
+        &self,
+        tier: usize,
+        page_index: usize,
+        query: &NodeBounds<U::OrderKey>,
+        best: &mut SearchResult,
+    ) {
+        if self.max_key() <= best.key {
+            return;
+        }
+        let mask = self.intersection_mask(query);
+        if mask == 0 {
+            return;
+        }
+        // Keys ascend with slots, so the highest set bit has the greatest key.
+        let slot = highest_slot(mask);
+        if self.keys[slot] > best.key {
+            best.key = self.keys[slot];
+            best.location = Some(WinnerLocation::Leaf {
+                tier,
+                page_index,
+                slot,
+            });
+        }
+    }
+}
+
+impl<U: BoundsScalar> InternalPage<U> {
+    fn choose_subtree(&self, bounds: &NodeBounds<U::OrderKey>) -> usize {
+        let lanes = &self.lanes;
+        let half_perimeters: [f32; PAGE_CAPACITY] = std::array::from_fn(|slot| {
+            U::heuristic_extent(lanes.min_x[slot], lanes.max_x[slot])
+                + U::heuristic_extent(lanes.min_y[slot], lanes.max_y[slot])
+        });
+        let enlargements: [f32; PAGE_CAPACITY] = std::array::from_fn(|slot| {
+            let union_width = U::heuristic_extent(
+                min_value(lanes.min_x[slot], bounds.min_x),
+                max_value(lanes.max_x[slot], bounds.max_x),
+            );
+            let union_height = U::heuristic_extent(
+                min_value(lanes.min_y[slot], bounds.min_y),
+                max_value(lanes.max_y[slot], bounds.max_y),
+            );
+            union_width + union_height - half_perimeters[slot]
+        });
+
+        let mut best_slot = 0;
+        for slot in 1..self.len() {
+            let is_better = match enlargements[slot].partial_cmp(&enlargements[best_slot]) {
+                Some(Ordering::Less) => true,
+                Some(Ordering::Equal) => half_perimeters[slot] < half_perimeters[best_slot],
+                _ => false,
+            };
+            if is_better {
+                best_slot = slot;
+            }
+        }
+        best_slot
+    }
+}
+
+#[inline(always)]
+fn highest_slot(mask: u8) -> usize {
+    debug_assert_ne!(mask, 0, "callers skip pages with no intersecting slots");
+    7 - mask.leading_zeros() as usize
+}
+
+/// Where the bounds with the greatest intersecting key is stored.
+#[derive(Clone, Copy, Debug)]
+enum WinnerLocation {
+    MaxLeaf,
+    Leaf {
+        tier: usize,
+        page_index: usize,
+        slot: usize,
+    },
+}
+
+struct SearchResult {
+    key: Key,
+    location: Option<WinnerLocation>,
+}
+
+/// A page that split while inserting, described for its parent.
+struct Split<K> {
+    left: Entry<K, NodeId>,
+    right: Entry<K, NodeId>,
+}
+
+impl<U: BoundsScalar> PageTree<U> {
+    fn clear(&mut self) {
+        self.leaf_pages.clear();
+        self.internal_pages.clear();
         self.root = None;
+    }
+
+    fn search(
+        &self,
+        tier: usize,
+        query: &NodeBounds<U::OrderKey>,
+        global_max_key: Key,
+        best: &mut SearchResult,
+        search_stack: &mut Vec<(usize, Key)>,
+    ) {
+        let Some(root) = self.root else {
+            return;
+        };
+        if self.root_max_key <= best.key || !self.root_bounds.intersects(query) {
+            return;
+        }
+        search_stack.clear();
+        match root.page_index() {
+            PageIndex::Leaf(page_index) => {
+                self.leaf_pages[page_index].scan(tier, page_index, query, best);
+            }
+            PageIndex::Internal(page_index) => {
+                search_stack.push((page_index, self.root_max_key));
+            }
+        }
+
+        while let Some((page_index, max_key)) = search_stack.pop() {
+            if max_key <= best.key {
+                continue;
+            }
+            let page = &self.internal_pages[page_index];
+            let mut mask = page.intersection_mask(query);
+            if mask == 0 {
+                continue;
+            }
+            if page.children[0].is_leaf_page() {
+                while mask != 0 {
+                    let slot = highest_slot(mask);
+                    mask &= !(1 << slot);
+                    if page.keys[slot] <= best.key {
+                        break;
+                    }
+                    let leaf_index = page.children[slot].index();
+                    self.leaf_pages[leaf_index].scan(tier, leaf_index, query, best);
+                }
+            } else {
+                // Pushing in ascending key order pops the highest key first.
+                while mask != 0 {
+                    let slot = mask.trailing_zeros() as usize;
+                    mask &= mask - 1;
+                    if page.keys[slot] > best.key {
+                        search_stack.push((page.children[slot].index(), page.keys[slot]));
+                    }
+                }
+            }
+            if best.key == global_max_key {
+                break;
+            }
+        }
+        search_stack.clear();
+    }
+
+    fn insert(
+        &mut self,
+        bounds: NodeBounds<U::OrderKey>,
+        key: Key,
+        insert_path: &mut Vec<PathStep>,
+    ) {
+        let Some(root) = self.root else {
+            let mut page = LeafPage::new();
+            page.push(Entry {
+                bounds,
+                key,
+                child: (),
+            });
+            self.root = Some(NodeId::leaf_page(self.leaf_pages.len()));
+            self.root_bounds = bounds;
+            self.root_max_key = key;
+            self.leaf_pages.push(page);
+            return;
+        };
+        self.root_bounds = self.root_bounds.union(&bounds);
+        self.root_max_key = cmp::max(self.root_max_key, key);
+
+        insert_path.clear();
+        let mut node = root;
+        let leaf_index = loop {
+            match node.page_index() {
+                PageIndex::Leaf(page_index) => break page_index,
+                PageIndex::Internal(page_index) => {
+                    let page = &self.internal_pages[page_index];
+                    let slot = page.choose_subtree(&bounds);
+                    insert_path.push(PathStep { page_index, slot });
+                    node = page.children[slot];
+                }
+            }
+        };
+
+        let mut split = None;
+        let leaf_page = &mut self.leaf_pages[leaf_index];
+        // The overwritten bounds is contained in the new one, whose key is at
+        // least as great, so it can never decide a future query.
+        if let Some(slot) = leaf_page.subsumed_slot(&bounds, key) {
+            leaf_page.update_slot(slot, bounds, key);
+        } else if !leaf_page.is_full() {
+            leaf_page.push(Entry {
+                bounds,
+                key,
+                child: (),
+            });
+        } else {
+            let sibling = leaf_page.split(Entry {
+                bounds,
+                key,
+                child: (),
+            });
+            let left = Entry {
+                bounds: leaf_page.bounds(),
+                key: leaf_page.max_key(),
+                child: NodeId::leaf_page(leaf_index),
+            };
+            let right = Entry {
+                bounds: sibling.bounds(),
+                key: sibling.max_key(),
+                child: NodeId::leaf_page(self.leaf_pages.len()),
+            };
+            self.leaf_pages.push(sibling);
+            split = Some(Split { left, right });
+        }
+
+        for step in insert_path.iter().rev() {
+            let page = &mut self.internal_pages[step.page_index];
+            let Some(Split { left, right }) = split.take() else {
+                // Neither this child's bounds nor its max key change, so no
+                // ancestor's does either.
+                if key <= page.keys[step.slot] && page.lanes.slot_contains(step.slot, &bounds) {
+                    break;
+                }
+                // Pages below only redistributed their contents, so this page
+                // gains exactly the new bounds.
+                let merged_bounds = page.lanes.get(step.slot).union(&bounds);
+                let merged_key = cmp::max(page.keys[step.slot], key);
+                page.update_slot(step.slot, merged_bounds, merged_key);
+                continue;
+            };
+
+            page.update_slot(step.slot, left.bounds, left.key);
+            if !page.is_full() {
+                page.push(right);
+                continue;
+            }
+            let sibling = page.split(right);
+            let left = Entry {
+                bounds: page.bounds(),
+                key: page.max_key(),
+                child: NodeId::internal_page(step.page_index),
+            };
+            let right = Entry {
+                bounds: sibling.bounds(),
+                key: sibling.max_key(),
+                child: NodeId::internal_page(self.internal_pages.len()),
+            };
+            self.internal_pages.push(sibling);
+            split = Some(Split { left, right });
+        }
+
+        if let Some(Split { left, right }) = split {
+            let mut new_root = InternalPage::new();
+            new_root.push(left);
+            new_root.push(right);
+            self.root = Some(NodeId::internal_page(self.internal_pages.len()));
+            self.internal_pages.push(new_root);
+        }
+    }
+}
+
+impl<U: BoundsScalar> BoundsTree<U> {
+    /// Clears all bounds from the tree.
+    pub fn clear(&mut self) {
+        for tier in &mut self.tiers {
+            tier.clear();
+        }
+        self.scene_bounds = None;
         self.max_leaf = None;
         self.insert_path.clear();
         self.search_stack.clear();
@@ -212,255 +857,120 @@ where
         kind: PrimitiveKind,
         max_shared_kind: PrimitiveKind,
     ) -> u32 {
-        let new_bounds = NodeBounds::from_bounds(&new_bounds);
-        let ordering = match self.find_max_key(&new_bounds) {
+        let new_bounds = node_bounds(&new_bounds);
+        let max_intersecting = self.find_max_key(&new_bounds);
+        let ordering = match &max_intersecting {
             None => 1,
-            Some(max_key) if max_key.kind <= max_shared_kind => max_key.ordering,
-            Some(max_key) => max_key.ordering + 1,
+            Some((max_key, _)) if *max_key <= Key::new(max_key.ordering(), max_shared_kind) => {
+                max_key.ordering()
+            }
+            Some((max_key, _)) => max_key.ordering() + 1,
         };
-        let key = Key { ordering, kind };
+        let key = Key::new(ordering, kind);
 
-        // Insert the new leaf
-        let new_leaf_idx = self.insert_leaf(new_bounds, key);
+        // Any query intersecting the new bounds would also intersect the winner,
+        // whose key is at least as great, so storing the new bounds changes nothing.
+        // This holds later too: the winner is only overwritten by bounds that
+        // contain it with a key at least as great.
+        if let Some((max_key, winner)) = max_intersecting
+            && key <= max_key
+            && self.winner_contains(winner, &new_bounds)
+        {
+            return ordering;
+        }
 
-        // Update max_leaf tracking
-        self.max_leaf = match self.max_leaf {
-            None => Some(new_leaf_idx),
-            Some(old_idx) if self.nodes[old_idx].max_key < key => Some(new_leaf_idx),
-            some => some,
+        let is_new_max = match &self.max_leaf {
+            None => true,
+            Some((_, max_key)) => key >= *max_key,
         };
+        if is_new_max {
+            self.max_leaf = Some((new_bounds, key));
+        }
+        let scene_bounds = match &self.scene_bounds {
+            None => new_bounds,
+            Some(scene_bounds) => scene_bounds.union(&new_bounds),
+        };
+        self.scene_bounds = Some(scene_bounds);
+        let tier = Self::tier_for(&new_bounds, &scene_bounds);
+        self.tiers[tier].insert(new_bounds, key, &mut self.insert_path);
 
         ordering
     }
 
-    /// Finds the maximum key among all bounds that intersect with the query.
-    fn find_max_key(&mut self, query: &NodeBounds<U>) -> Option<Key> {
-        let root_idx = self.root?;
-
-        // Fast path: check if the max-key leaf intersects
-        if let Some(max_idx) = self.max_leaf {
-            let max_node = &self.nodes[max_idx];
-            if query.intersects(&max_node.bounds) {
-                return Some(max_node.max_key);
-            }
+    fn tier_for(bounds: &NodeBounds<U::OrderKey>, scene_bounds: &NodeBounds<U::OrderKey>) -> usize {
+        let half_perimeter = heuristic_half_perimeter::<U>(bounds);
+        let scene_half_perimeter = heuristic_half_perimeter::<U>(scene_bounds);
+        if half_perimeter > scene_half_perimeter * LARGE_TIER_MIN_FRACTION {
+            0
+        } else if half_perimeter > scene_half_perimeter * MEDIUM_TIER_MIN_FRACTION {
+            1
+        } else {
+            2
         }
-
-        // Slow path: search the tree
-        self.search_stack.clear();
-        self.search_stack.push(NonNull::from(&self.nodes[root_idx]));
-
-        // `None` compares below every key.
-        let mut max_found = None;
-
-        while let Some(node) = self.search_stack.pop() {
-            // SAFETY: `node` is guaranteed to be valid as the `nodes` stack is unmodified in this function
-            // and the `search_stack` only contains pointers from this function call.
-            let node = unsafe { node.as_ref() };
-
-            // Pruning: skip if this subtree can't improve our result
-            if Some(node.max_key) <= max_found {
-                continue;
-            }
-
-            // Spatial pruning: skip if bounds don't intersect
-            if !query.intersects(&node.bounds) {
-                continue;
-            }
-
-            match &node.kind {
-                NodeKind::Leaf { key } => {
-                    max_found = cmp::max(max_found, Some(*key));
-                }
-                NodeKind::Internal { children } => {
-                    // Children are maintained with highest max_key at the end.
-                    // Push in forward order to highest (last) is popped first.
-                    self.search_stack.extend(
-                        children
-                            .as_slice()
-                            .iter()
-                            .map(|&child_idx| &self.nodes[child_idx])
-                            .filter(|node| Some(node.max_key) > max_found)
-                            .map(NonNull::from),
-                    );
-                }
-            }
-        }
-
-        max_found
     }
 
-    /// Inserts a leaf node with the given bounds and key.
-    /// Returns the index of the new leaf.
-    fn insert_leaf(&mut self, bounds: NodeBounds<U>, key: Key) -> usize {
-        let new_leaf_idx = self.nodes.len();
-        self.nodes.push(Node {
-            bounds: bounds.clone(),
-            max_key: key,
-            kind: NodeKind::Leaf { key },
-        });
+    fn winner_contains(&self, winner: WinnerLocation, inner: &NodeBounds<U::OrderKey>) -> bool {
+        match winner {
+            WinnerLocation::MaxLeaf => self
+                .max_leaf
+                .as_ref()
+                .is_some_and(|(bounds, _)| bounds.contains(inner)),
+            WinnerLocation::Leaf {
+                tier,
+                page_index,
+                slot,
+            } => self.tiers[tier].leaf_pages[page_index]
+                .lanes
+                .slot_contains(slot, inner),
+        }
+    }
 
-        let Some(root_idx) = self.root else {
-            // Tree is empty, new leaf becomes root
-            self.root = Some(new_leaf_idx);
-            return new_leaf_idx;
+    /// Finds the maximum key among all bounds that intersect with the query,
+    /// along with where the bounds that has it is stored.
+    fn find_max_key(&mut self, query: &NodeBounds<U::OrderKey>) -> Option<(Key, WinnerLocation)> {
+        let (global_max_bounds, global_max_key) = self.max_leaf.as_ref()?;
+        if global_max_bounds.intersects(query) {
+            return Some((*global_max_key, WinnerLocation::MaxLeaf));
+        }
+        let global_max_key = *global_max_key;
+
+        let mut best = SearchResult {
+            key: Key::MIN,
+            location: None,
         };
-
-        // If root is a leaf, create internal node with both
-        if matches!(self.nodes[root_idx].kind, NodeKind::Leaf { .. }) {
-            let root_bounds = self.nodes[root_idx].bounds.clone();
-            let root_key = self.nodes[root_idx].max_key;
-
-            let mut children = NodeChildren::new();
-            // Max end invariant
-            if key > root_key {
-                children.push(root_idx);
-                children.push(new_leaf_idx);
-            } else {
-                children.push(new_leaf_idx);
-                children.push(root_idx);
-            }
-
-            let new_root_idx = self.nodes.len();
-            self.nodes.push(Node {
-                bounds: root_bounds.union(&bounds),
-                max_key: cmp::max(root_key, key),
-                kind: NodeKind::Internal { children },
-            });
-            self.root = Some(new_root_idx);
-            return new_leaf_idx;
-        }
-
-        // Descend to find the best internal node to insert into
-        self.insert_path.clear();
-        let mut current_idx = root_idx;
-
-        loop {
-            let current = &self.nodes[current_idx];
-            let NodeKind::Internal { children } = &current.kind else {
-                unreachable!("Should only traverse internal nodes");
-            };
-
-            self.insert_path.push(current_idx);
-
-            // Find the best child to descend into
-            let mut best_child_idx = children.as_slice()[0];
-            let mut best_child_pos = 0;
-            let mut best_cost = bounds
-                .union(&self.nodes[best_child_idx].bounds)
-                .half_perimeter();
-
-            for (pos, &child_idx) in children.as_slice().iter().enumerate().skip(1) {
-                let cost = bounds.union(&self.nodes[child_idx].bounds).half_perimeter();
-                if cost < best_cost {
-                    best_cost = cost;
-                    best_child_idx = child_idx;
-                    best_child_pos = pos;
-                }
-            }
-
-            // Check if best child is a leaf or internal
-            if matches!(self.nodes[best_child_idx].kind, NodeKind::Leaf { .. }) {
-                // Best child is a leaf. Check if current node has room for another child.
-                if children.len() < MAX_CHILDREN {
-                    // Add new leaf directly to this node
-                    let node = &mut self.nodes[current_idx];
-
-                    if let NodeKind::Internal { children } = &mut node.kind {
-                        children.push(new_leaf_idx);
-                        // Swap new leaf only if it has the highest max_key
-                        if key <= node.max_key {
-                            let last = children.len() - 1;
-                            children.indices.swap(last - 1, last);
-                        }
-                    }
-
-                    node.bounds = node.bounds.union(&bounds);
-                    node.max_key = cmp::max(node.max_key, key);
-                    break;
-                } else {
-                    // Node is full, create new internal with [best_leaf, new_leaf]
-                    let sibling_bounds = self.nodes[best_child_idx].bounds.clone();
-                    let sibling_key = self.nodes[best_child_idx].max_key;
-
-                    let mut new_children = NodeChildren::new();
-                    // Max end invariant
-                    if key > sibling_key {
-                        new_children.push(best_child_idx);
-                        new_children.push(new_leaf_idx);
-                    } else {
-                        new_children.push(new_leaf_idx);
-                        new_children.push(best_child_idx);
-                    }
-
-                    let new_internal_idx = self.nodes.len();
-                    let new_internal_max_key = cmp::max(sibling_key, key);
-                    self.nodes.push(Node {
-                        bounds: sibling_bounds.union(&bounds),
-                        max_key: new_internal_max_key,
-                        kind: NodeKind::Internal {
-                            children: new_children,
-                        },
-                    });
-
-                    // Replace the leaf with the new internal in parent
-                    let parent = &mut self.nodes[current_idx];
-                    if let NodeKind::Internal { children } = &mut parent.kind {
-                        let children_len = children.len();
-
-                        children.indices[best_child_pos] = new_internal_idx;
-
-                        // If new internal has highest max_key, swap it to the end
-                        // to maintain sorting invariant
-                        if new_internal_max_key > parent.max_key {
-                            children.indices.swap(best_child_pos, children_len - 1);
-                        }
-                    }
-                    break;
-                }
-            } else {
-                // Best child is internal, continue descent
-                current_idx = best_child_idx;
+        for (tier_index, tier) in self.tiers.iter().enumerate() {
+            tier.search(
+                tier_index,
+                query,
+                global_max_key,
+                &mut best,
+                &mut self.search_stack,
+            );
+            if best.key == global_max_key {
+                break;
             }
         }
-
-        // Propagate bounds and max_key updates up the tree
-        let mut updated_child_idx = None;
-        for &node_idx in self.insert_path.iter().rev() {
-            let node = &mut self.nodes[node_idx];
-            node.bounds = node.bounds.union(&bounds);
-
-            if node.max_key < key {
-                node.max_key = key;
-
-                // Swap updated child to end (skip first iteration since the invariant is already handled by previous cases)
-                if let Some(child_idx) = updated_child_idx {
-                    if let NodeKind::Internal { children } = &mut node.kind {
-                        if let Some(pos) = children.as_slice().iter().position(|&c| c == child_idx)
-                        {
-                            let last = children.len() - 1;
-                            if pos != last {
-                                children.indices.swap(pos, last);
-                            }
-                        }
-                    }
-                }
-            }
-
-            updated_child_idx = Some(node_idx);
-        }
-
-        new_leaf_idx
+        Some((best.key, best.location?))
     }
 }
 
-impl<U> Default for BoundsTree<U>
-where
-    U: Clone + Debug + Default + PartialEq,
-{
+impl<U: BoundsScalar> Default for PageTree<U> {
+    fn default() -> Self {
+        PageTree {
+            leaf_pages: Vec::new(),
+            internal_pages: Vec::new(),
+            root: None,
+            root_bounds: NodeBounds::default(),
+            root_max_key: Key::MIN,
+        }
+    }
+}
+
+impl<U: BoundsScalar> Default for BoundsTree<U> {
     fn default() -> Self {
         BoundsTree {
-            nodes: Vec::new(),
-            root: None,
+            tiers: std::array::from_fn(|_| PageTree::default()),
+            scene_bounds: None,
             max_leaf: None,
             insert_path: Vec::new(),
             search_stack: Vec::new(),
@@ -661,14 +1171,7 @@ mod tests {
         items: &[(Bounds<U>, PrimitiveKind, PrimitiveKind)],
         label: &str,
     ) where
-        U: Clone
-            + Debug
-            + PartialEq
-            + PartialOrd
-            + Add<U, Output = U>
-            + Sub<Output = U>
-            + Half
-            + Default,
+        U: BoundsScalar + PartialOrd,
     {
         let mut inserted: Vec<(Bounds<U>, u32, PrimitiveKind)> = Vec::with_capacity(items.len());
         for (item_index, (new_bounds, kind, max_shared_kind)) in items.iter().enumerate() {
@@ -686,88 +1189,156 @@ mod tests {
         assert_invariants(tree, inserted.len(), label);
     }
 
-    fn covers<U: PartialOrd>(outer: &NodeBounds<U>, inner: &NodeBounds<U>) -> bool {
+    fn covers<K: PartialOrd>(outer: &NodeBounds<K>, inner: &NodeBounds<K>) -> bool {
         // Unordered coordinates never intersect anything, so ancestors skip them.
-        let is_ordered = |value: &U| value.partial_cmp(value).is_some();
+        let is_ordered = |value: &K| value.partial_cmp(value).is_some();
         (!is_ordered(&inner.min_x) || outer.min_x <= inner.min_x)
             && (!is_ordered(&inner.max_x) || inner.max_x <= outer.max_x)
             && (!is_ordered(&inner.min_y) || outer.min_y <= inner.min_y)
             && (!is_ordered(&inner.max_y) || inner.max_y <= outer.max_y)
     }
 
-    fn assert_invariants<U>(tree: &BoundsTree<U>, inserted_count: usize, label: &str)
-    where
-        U: Clone + Debug + Default + PartialEq + PartialOrd,
-    {
-        let Some(root) = tree.root else {
-            assert!(tree.nodes.is_empty(), "{label}");
-            assert!(tree.max_leaf.is_none(), "{label}");
-            assert_eq!(inserted_count, 0, "{label}");
-            return;
+    fn assert_invariants<U: BoundsScalar>(
+        tree: &BoundsTree<U>,
+        inserted_count: usize,
+        label: &str,
+    ) {
+        let mut stored_count = 0;
+        let mut max_key = None;
+        for (tier_index, tier) in tree.tiers.iter().enumerate() {
+            let label = format!("{label} tier {tier_index}");
+            stored_count += assert_tier_invariants(tier, &label);
+            if tier.root.is_some() {
+                max_key = cmp::max(max_key, Some(tier.root_max_key));
+                let Some(scene_bounds) = &tree.scene_bounds else {
+                    panic!("{label}: missing scene bounds");
+                };
+                assert!(covers(scene_bounds, &tier.root_bounds), "{label}");
+            }
+        }
+        assert!(stored_count <= inserted_count, "{label}");
+        assert_eq!(
+            tree.max_leaf
+                .as_ref()
+                .map(|(_, max_leaf_key)| *max_leaf_key),
+            max_key,
+            "{label}"
+        );
+        if max_key.is_none() {
+            assert!(tree.scene_bounds.is_none(), "{label}");
+        }
+    }
+
+    /// Returns the number of stored bounds.
+    fn assert_tier_invariants<U: BoundsScalar>(tier: &PageTree<U>, label: &str) -> usize {
+        let Some(root) = tier.root else {
+            assert!(tier.leaf_pages.is_empty(), "{label}");
+            assert!(tier.internal_pages.is_empty(), "{label}");
+            return 0;
         };
 
-        let mut visited = vec![false; tree.nodes.len()];
-        let mut leaf_count = 0;
-        let mut stack = vec![root];
-        while let Some(node_index) = stack.pop() {
-            assert!(!visited[node_index], "{label}: node {node_index} reused");
-            visited[node_index] = true;
-            let node = &tree.nodes[node_index];
-            match &node.kind {
-                NodeKind::Leaf { key } => {
-                    assert_eq!(node.max_key, *key, "{label}: leaf {node_index}");
-                    leaf_count += 1;
-                }
-                NodeKind::Internal { children } => {
-                    let children = children.as_slice();
-                    assert!(
-                        (2..=MAX_CHILDREN).contains(&children.len()),
-                        "{label}: node {node_index} has {} children",
-                        children.len()
-                    );
-                    let mut children_max_key = None;
-                    for &child_index in children {
-                        let child = &tree.nodes[child_index];
-                        assert!(
-                            covers(&node.bounds, &child.bounds),
-                            "{label}: node {node_index} {:?} does not cover child {child_index} {:?}",
-                            node.bounds,
-                            child.bounds
-                        );
-                        children_max_key = cmp::max(children_max_key, Some(child.max_key));
-                        stack.push(child_index);
-                    }
+        let mut visited_leaf_pages = vec![false; tier.leaf_pages.len()];
+        let mut visited_internal_pages = vec![false; tier.internal_pages.len()];
+        let mut leaf_depth = None;
+        let mut stored_count = 0;
+        let mut stack = vec![(root, 0usize)];
+        while let Some((node, depth)) = stack.pop() {
+            match node.page_index() {
+                PageIndex::Leaf(page_index) => {
+                    assert!(!visited_leaf_pages[page_index], "{label}: leaf page reused");
+                    visited_leaf_pages[page_index] = true;
                     assert_eq!(
-                        Some(node.max_key),
-                        children_max_key,
-                        "{label}: node {node_index} max key"
+                        *leaf_depth.get_or_insert(depth),
+                        depth,
+                        "{label}: leaf pages at different depths"
                     );
-                    if let Some(&last_child) = children.last() {
-                        assert_eq!(
-                            tree.nodes[last_child].max_key, node.max_key,
-                            "{label}: node {node_index} last child doesn't hold the max key"
+                    let page = &tier.leaf_pages[page_index];
+                    assert!((1..=PAGE_CAPACITY).contains(&page.len()), "{label}");
+                    assert!(page.keys[..page.len()].is_sorted(), "{label}");
+                    assert!(page.keys[0] > Key::MIN, "{label}");
+                    stored_count += page.len();
+                }
+                PageIndex::Internal(page_index) => {
+                    assert!(
+                        !visited_internal_pages[page_index],
+                        "{label}: internal page reused"
+                    );
+                    visited_internal_pages[page_index] = true;
+                    let page = &tier.internal_pages[page_index];
+                    let min_len = if node == root { 2 } else { 1 };
+                    assert!((min_len..=PAGE_CAPACITY).contains(&page.len()), "{label}");
+                    assert!(page.keys[..page.len()].is_sorted(), "{label}");
+                    let children_are_leaves = page.children[0].is_leaf_page();
+                    for slot in 0..page.len() {
+                        let child = page.children[slot];
+                        assert_eq!(child.is_leaf_page(), children_are_leaves, "{label}");
+                        let (child_bounds, child_max_key) = page_summary(tier, child);
+                        assert_eq!(page.keys[slot], child_max_key, "{label}: stale max key");
+                        let slot_bounds = page.lanes.get(slot);
+                        assert!(
+                            covers(&slot_bounds, &child_bounds),
+                            "{label}: {slot_bounds:?} does not cover child {child_bounds:?}"
                         );
+                        stack.push((child, depth + 1));
                     }
                 }
             }
         }
 
+        assert!(visited_leaf_pages.iter().all(|visited| *visited), "{label}");
         assert!(
-            visited.iter().all(|visited| *visited),
-            "{label}: unreachable node"
-        );
-        assert_eq!(leaf_count, inserted_count, "{label}");
-        let Some(max_leaf) = tree.max_leaf else {
-            panic!("{label}: missing max leaf");
-        };
-        assert!(
-            matches!(tree.nodes[max_leaf].kind, NodeKind::Leaf { .. }),
+            visited_internal_pages.iter().all(|visited| *visited),
             "{label}"
         );
-        assert_eq!(
-            tree.nodes[max_leaf].max_key, tree.nodes[root].max_key,
-            "{label}: max leaf"
-        );
+        let (root_page_bounds, root_page_max_key) = page_summary(tier, root);
+        assert_eq!(tier.root_max_key, root_page_max_key, "{label}");
+        assert!(covers(&tier.root_bounds, &root_page_bounds), "{label}");
+        stored_count
+    }
+
+    fn page_summary<U: BoundsScalar>(
+        tier: &PageTree<U>,
+        node: NodeId,
+    ) -> (NodeBounds<U::OrderKey>, Key) {
+        match node.page_index() {
+            PageIndex::Leaf(page_index) => {
+                let page = &tier.leaf_pages[page_index];
+                (page.bounds(), page.max_key())
+            }
+            PageIndex::Internal(page_index) => {
+                let page = &tier.internal_pages[page_index];
+                (page.bounds(), page.max_key())
+            }
+        }
+    }
+
+    fn stored_count<U: BoundsScalar>(tree: &BoundsTree<U>) -> usize {
+        tree.tiers
+            .iter()
+            .flat_map(|tier| &tier.leaf_pages)
+            .map(|page| page.len())
+            .sum()
+    }
+
+    fn tree_height<U: BoundsScalar>(tree: &BoundsTree<U>) -> usize {
+        tree.tiers
+            .iter()
+            .map(|tier| {
+                let mut height = 0;
+                let mut node = tier.root;
+                while let Some(current) = node {
+                    height += 1;
+                    node = match current.page_index() {
+                        PageIndex::Leaf(_) => None,
+                        PageIndex::Internal(page_index) => {
+                            Some(tier.internal_pages[page_index].children[0])
+                        }
+                    };
+                }
+                height
+            })
+            .max()
+            .unwrap_or(0)
     }
 
     fn log_uniform(rng: &mut impl Rng, min: f32, max: f32) -> f32 {
@@ -996,6 +1567,49 @@ mod tests {
         assert_eq!(
             tree.insert(bounds(0.09999, 0.0, 1.0, 10.0), quad, shadow),
             2
+        );
+    }
+
+    #[test]
+    fn test_nested_bounds_are_subsumed() {
+        let (quad, shadow) = (PrimitiveKind::Quad, PrimitiveKind::Shadow);
+
+        let mut shrinking = BoundsTree::<f32>::default();
+        for item in nested_shrinking_scenario() {
+            assert_eq!(shrinking.insert(item, quad, quad), 1);
+        }
+        assert_eq!(stored_count(&shrinking), 1);
+        assert_invariants(&shrinking, ITEM_COUNT, "shrinking");
+
+        let mut growing = BoundsTree::<f32>::default();
+        for item in nested_growing_scenario() {
+            assert_eq!(growing.insert(item, quad, quad), 1);
+        }
+        assert_eq!(stored_count(&growing), 1);
+        assert_invariants(&growing, ITEM_COUNT, "growing");
+
+        // Each bounds needs a new ordering, so it can never be dropped in favor
+        // of the bounds containing it, but it does replace the one it contains.
+        let mut incrementing = BoundsTree::<f32>::default();
+        for (item_index, item) in nested_growing_scenario().into_iter().enumerate() {
+            assert_eq!(
+                incrementing.insert(item, quad, shadow),
+                item_index as u32 + 1
+            );
+        }
+        assert_eq!(stored_count(&incrementing), 1);
+
+        let mut disjoint = BoundsTree::<f32>::default();
+        for item_index in 0..ITEM_COUNT {
+            let item = bounds(item_index as f32 * 10.0, 0.0, 5.0, 5.0);
+            assert_eq!(disjoint.insert(item, quad, shadow), 1);
+        }
+        assert_eq!(stored_count(&disjoint), ITEM_COUNT);
+        assert_invariants(&disjoint, ITEM_COUNT, "disjoint");
+        assert!(
+            tree_height(&disjoint) <= 6,
+            "height {}",
+            tree_height(&disjoint)
         );
     }
 
