@@ -4,6 +4,7 @@ use collections::HashMap;
 use gpui::AsyncApp;
 use language::{
     LanguageName, LspAdapter, LspAdapterDelegate, LspInstaller, PromptResponseContext, Toolchain,
+    language_settings::AllLanguageSettings,
 };
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
@@ -12,14 +13,14 @@ use regex::Regex;
 use semver::Version;
 use serde_json::Value;
 use serde_json::json;
-use settings::update_settings_file;
+use settings::{Settings, SettingsLocation, update_settings_file};
 use std::{
     ffi::OsString,
     future::Future,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
 };
-use util::{ResultExt, maybe, merge_json_value_into};
+use util::{ResultExt, maybe, merge_json_value_into, rel_path::RelPath};
 
 const ACTION_ALWAYS: &str = "Always";
 const ACTION_NEVER: &str = "Never";
@@ -285,10 +286,30 @@ impl LspAdapter for VtslsLspAdapter {
             },
         });
 
+        let (typescript_format, javascript_format) = cx.update(|cx| {
+            let location = Some(SettingsLocation {
+                worktree_id: delegate.worktree_id(),
+                path: RelPath::empty(),
+            });
+            let settings = AllLanguageSettings::get(location, cx);
+            let format_settings = |language_name| {
+                let settings =
+                    settings.language(location, Some(&LanguageName::new_static(language_name)), cx);
+                json!({
+                    "indentSize": settings.tab_size,
+                    "tabSize": settings.tab_size,
+                    "convertTabsToSpaces": !settings.hard_tabs,
+                })
+            };
+            (format_settings("TypeScript"), format_settings("JavaScript"))
+        });
+
         let mut default_workspace_configuration = serde_json::json!({
             "typescript": config,
             "javascript": config,
             "vtsls": {
+                "typescript": { "format": typescript_format },
+                "javascript": { "format": javascript_format },
                 "experimental": {
                     "completion": {
                         "enableServerSideFuzzyMatch": true,
@@ -393,7 +414,70 @@ async fn get_cached_ts_server_binary(
 
 #[cfg(test)]
 mod tests {
-    use crate::vtsls::VtslsLspAdapter;
+    use super::VtslsLspAdapter;
+    use fs::FakeFs;
+    use gpui::{TestAppContext, UpdateGlobal};
+    use language::{LspAdapter, LspAdapterDelegate};
+    use node_runtime::NodeRuntime;
+    use project::{Project, lsp_store::LocalLspAdapterDelegate};
+    use serde_json::json;
+    use settings::{LocalSettingsKind, LocalSettingsPath, SettingsStore};
+    use std::{path::Path, sync::Arc};
+    use util::{path, rel_path::RelPath};
+
+    #[gpui::test]
+    async fn test_workspace_indentation_for_vtsls(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let root = Path::new(path!("/project"));
+        fs.insert_tree(root, json!({"main.ts": ""})).await;
+        let project = Project::test(fs.clone(), [root], cx).await;
+        let delegate: Arc<dyn LspAdapterDelegate> = project.update(cx, |project, cx| {
+            let worktree = project.worktrees(cx).next().expect("test worktree");
+            let worktree_id = worktree.read(cx).id();
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_local_settings(
+                        worktree_id,
+                        LocalSettingsPath::InWorktree(RelPath::empty().into()),
+                        LocalSettingsKind::Settings,
+                        Some(r#"{
+                            "tab_size": 2,
+                            "hard_tabs": false,
+                            "languages": {"JavaScript": {"tab_size": 4, "hard_tabs": true}},
+                            "lsp": {"vtsls": {"settings": {"vtsls": {"javascript": {"format": {"indentSize": 8}}}}}}
+                        }"#),
+                        cx,
+                    )
+                    .expect("valid local settings");
+            });
+            project.lsp_store().update(cx, |store, cx| {
+                LocalLspAdapterDelegate::from_local_lsp(
+                    store.as_local().expect("local test project"),
+                    &worktree,
+                    cx,
+                )
+            })
+        });
+
+        let adapter = Arc::new(VtslsLspAdapter::new(NodeRuntime::unavailable(), fs));
+        let config = adapter
+            .workspace_configuration(&delegate, None, None, &mut cx.to_async())
+            .await
+            .expect("vtsls workspace configuration");
+        let typescript = &config["vtsls"]["typescript"]["format"];
+        assert_eq!(typescript["indentSize"], 2);
+        assert_eq!(typescript["tabSize"], 2);
+        assert_eq!(typescript["convertTabsToSpaces"], true);
+        let javascript = &config["vtsls"]["javascript"]["format"];
+        assert_eq!(javascript["indentSize"], 8);
+        assert_eq!(javascript["tabSize"], 4);
+        assert_eq!(javascript["convertTabsToSpaces"], false);
+    }
 
     #[test]
     fn test_diagnostic_message_to_markdown() {
