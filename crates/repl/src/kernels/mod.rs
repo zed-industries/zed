@@ -508,13 +508,6 @@ pub fn python_env_kernel_specifications(
                     let python_path = toolchain.path.to_string();
                     let environment_kind = extract_environment_kind(&toolchain.as_json);
 
-                    let has_ipykernel = util::command::new_command(&python_path)
-                        .args(&["-c", "import ipykernel"])
-                        .output()
-                        .await
-                        .map(|output| output.status.success())
-                        .unwrap_or(false);
-
                     let mut env = HashMap::new();
                     if let Some(python_bin_dir) = PathBuf::from(&python_path).parent() {
                         if let Some(path_var) = std::env::var_os("PATH") {
@@ -539,6 +532,21 @@ pub fn python_env_kernel_specifications(
                     }
                     if let Some(venv) = env.get("VIRTUAL_ENV") {
                          log::info!("Kernel VIRTUAL_ENV: {}", venv);
+                    }
+
+                    let probe = util::command::new_command(&python_path)
+                        .args(["-c", include_str!("python_kernel_env.py")])
+                        .envs(&env)
+                        .output()
+                        .await
+                        .ok()
+                        .filter(|output| output.status.success());
+                    let has_ipykernel = probe.is_some();
+                    if let Some(output) = probe
+                        && let Ok(overrides) =
+                            serde_json::from_slice::<HashMap<String, String>>(&output.stdout)
+                    {
+                        env.extend(overrides);
                     }
 
                     let kernelspec = JupyterKernelspec {
