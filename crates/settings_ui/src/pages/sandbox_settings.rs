@@ -22,7 +22,9 @@ pub(crate) fn render_sandbox_settings_page(
 ) -> AnyElement {
     // Sandbox permissions are a user-level setting; they aren't configurable
     // per-project, so always operate against the global value here.
-    let permissions = AgentSettings::get_global(cx).sandbox_permissions.clone();
+    let agent_settings = AgentSettings::get_global(cx);
+    let permissions = agent_settings.sandbox_permissions.clone();
+    let yolo_mode = agent_settings.yolo_mode;
     let validation_error = settings_window.sandbox_host_validation_error.clone();
 
     // Read the list values from the raw user settings content rather than the
@@ -58,6 +60,16 @@ pub(crate) fn render_sandbox_settings_page(
         .gap_6()
         .overflow_y_scroll()
         .track_scroll(scroll_handle)
+        .when(yolo_mode, |this| {
+            this.child(
+                Banner::new().severity(Severity::Warning).child(
+                    Label::new(
+                        "YOLO Mode is enabled: terminal commands run unsandboxed and all sandbox escalations are allowed automatically.",
+                    )
+                    .size(LabelSize::Small),
+                ),
+            )
+        })
         .child(
             SwitchField::new(
                 "sandbox-enabled",

@@ -249,6 +249,7 @@ pub struct AgentSettings {
     pub show_turn_stats: bool,
     pub show_merge_conflict_indicator: bool,
     pub auto_generate_thread_titles: bool,
+    pub yolo_mode: bool,
     pub tool_permissions: ToolPermissions,
     pub sandbox_permissions: SandboxPermissions,
 }
@@ -839,6 +840,7 @@ impl Settings for AgentSettings {
             show_turn_stats: agent.show_turn_stats.unwrap(),
             show_merge_conflict_indicator: agent.show_merge_conflict_indicator.unwrap(),
             auto_generate_thread_titles: agent.auto_generate_thread_titles.unwrap(),
+            yolo_mode: agent.yolo_mode.unwrap_or(false),
             tool_permissions: compile_tool_permissions(agent.tool_permissions),
             sandbox_permissions: compile_sandbox_permissions(agent.sandbox_permissions),
         }
@@ -2254,6 +2256,22 @@ mod tests {
             };
             assert_eq!(user_layout.agent_dock, Some(DockPosition::Right));
             assert_eq!(user_layout.project_panel_dock, Some(DockSide::Right));
+        });
+    }
+
+    #[gpui::test]
+    fn test_yolo_mode_setting_default_and_override(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            assert!(!AgentSettings::get_global(cx).yolo_mode);
+
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_user_settings(r#"{"agent": {"yolo_mode": true}}"#, cx)
+                    .expect("yolo_mode setting should parse");
+            });
+            assert!(AgentSettings::get_global(cx).yolo_mode);
         });
     }
 }

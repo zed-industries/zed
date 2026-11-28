@@ -8,7 +8,10 @@ use settings::{Settings as _, SettingsStore, ToolPermissionMode};
 use shell_command_parser::extract_commands;
 use std::sync::Arc;
 use theme_settings::ThemeSettings;
-use ui::{Banner, ContextMenu, Divider, PopoverMenu, Severity, Tooltip, prelude::*};
+use ui::{
+    Banner, ContextMenu, Divider, PopoverMenu, Severity, SwitchField, ToggleState, Tooltip,
+    prelude::*,
+};
 use util::ResultExt as _;
 use util::shell::ShellKind;
 
@@ -16,7 +19,7 @@ use crate::{SettingsWindow, components::SettingsInputField};
 
 const HARDCODED_RULES_DESCRIPTION: &str =
     "`rm -rf` commands are always blocked when run on `$HOME`, `~`, `.`, `..`, or `/`";
-const SETTINGS_DISCLAIMER: &str = "Note: custom tool permissions only apply to the Zed native agent and don’t extend to external agents connected through the Agent Client Protocol (ACP).";
+const SETTINGS_DISCLAIMER: &str = "Note: custom tool permissions only apply to the Zed native agent, whereas YOLO Mode applies to both the Zed native agent and external agents connected through the Agent Client Protocol (ACP).";
 
 /// Tools that support permission rules
 const TOOLS: &[ToolInfo] = &[
@@ -165,6 +168,7 @@ pub(crate) fn render_tool_permissions_setup_page(
 
     let settings = AgentSettings::get_global(cx);
     let global_default = settings.tool_permissions.default;
+    let yolo_mode = settings.yolo_mode;
 
     let scroll_step = px(40.);
 
@@ -201,6 +205,37 @@ pub(crate) fn render_tool_permissions_setup_page(
                     .mt_0p5(),
             ),
         )
+        .child(
+            v_flex()
+                .my_4()
+                .gap_3()
+                .child(
+                    SwitchField::new(
+                        "tool-permissions-yolo-mode",
+                        Some("YOLO Mode"),
+                        Some(
+                            "Automatically allow all commands, tool actions, and sandbox escalations without prompting across Zed and external ACP agents."
+                                .into(),
+                        ),
+                        yolo_mode,
+                        move |state, _window, cx| {
+                            set_yolo_mode(*state == ToggleState::Selected, cx);
+                        },
+                    )
+                    .tab_index(0),
+                )
+                .when(yolo_mode, |this| {
+                    this.child(
+                        Banner::new().severity(Severity::Warning).child(
+                            Label::new(
+                                "YOLO Mode is enabled: all tool actions, commands, and external ACP agent permission requests are approved automatically without confirmation.",
+                            )
+                            .size(LabelSize::Small),
+                        ),
+                    )
+                }),
+        )
+        .child(Divider::horizontal())
         .child(
             v_flex()
                 .child(render_global_default_mode_section(global_default))
@@ -1335,6 +1370,12 @@ fn delete_pattern(tool_name: &str, rule_type: ToolPermissionMode, pattern: &str,
                 list.0.retain(|r| r.pattern != pattern);
             }
         }
+    });
+}
+
+fn set_yolo_mode(enabled: bool, cx: &mut App) {
+    SettingsStore::global(cx).update_settings_file(<dyn fs::Fs>::global(cx), move |settings, _| {
+        settings.agent.get_or_insert_default().yolo_mode = Some(enabled);
     });
 }
 

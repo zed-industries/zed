@@ -9312,7 +9312,7 @@ fn ai_page(cx: &App) -> SettingsPage {
                 r#type: Default::default(),
                 json_path: Some("agent.tool_permissions"),
                 description: Some("Set up regex patterns to auto-allow, auto-deny, or always request confirmation, for specific tool inputs.".into()),
-                search_aliases: &[],
+                search_aliases: &["permissions", "auto allow", "yolo"],
                 in_json: true,
                 files: USER,
                 render: render_tool_permissions_setup_page,
@@ -9320,6 +9320,25 @@ fn ai_page(cx: &App) -> SettingsPage {
         ]);
 
         items.extend([
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "YOLO Mode",
+                description: "Automatically allow all commands, tool actions, and sandbox escalations without prompting across Zed and external ACP agents (such as Claude Code, OpenAI Codex, Gemini CLI, and Antigravity).",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent.yolo_mode"),
+                    pick: |settings_content| {
+                        settings_content.agent.as_ref()?.yolo_mode.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .yolo_mode = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Single File Review",
                 description: "When enabled, agent edits will also be displayed in single-file buffers for review.",

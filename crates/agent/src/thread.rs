@@ -6360,11 +6360,11 @@ impl ToolCallEventStream {
         self.run_authorization_loop(title, options, Some(context), Some(check_settings), cx)
     }
 
-    /// Like [`Self::authorize`], but always prompts the user without
-    /// consulting settings. Use this for authorizations that must be
-    /// confirmed even when the user has configured `always_allow` rules —
-    /// for example, symlink-escape confirmations or edits that target
-    /// sensitive settings files.
+    /// Like [`Self::authorize`], but prompts the user regardless of regular
+    /// `tool_permissions` rules (unless YOLO mode is enabled). Use this for
+    /// authorizations that must be confirmed even when the user has configured
+    /// `always_allow` rules — for example, symlink-escape confirmations or
+    /// edits that target sensitive settings files.
     pub fn authorize_always_prompt(
         &self,
         title: impl Into<String>,
@@ -6373,7 +6373,14 @@ impl ToolCallEventStream {
     ) -> Task<Result<()>> {
         let title = title.into();
         let options = context.build_permission_options();
-        self.run_authorization_loop(title, options, Some(context), None, cx)
+        let check_yolo_mode: Box<dyn Fn(&App) -> ToolPermissionDecision> = Box::new(|cx: &App| {
+            if agent_settings::AgentSettings::get_global(cx).yolo_mode {
+                ToolPermissionDecision::Allow
+            } else {
+                ToolPermissionDecision::Confirm
+            }
+        });
+        self.run_authorization_loop(title, options, Some(context), Some(check_yolo_mode), cx)
     }
 
     /// Gate a sandbox *escalation* (network access, per-path writes, or full
@@ -6524,6 +6531,9 @@ impl ToolCallEventStream {
         cx: &App,
     ) -> bool {
         let settings = AgentSettings::get_global(cx);
+        if settings.yolo_mode {
+            return true;
+        }
         sandbox_grants
             .borrow()
             .covers_with_persistent(request, &settings.sandbox_permissions)
@@ -6666,11 +6676,11 @@ impl ToolCallEventStream {
     /// no longer provide isolation and callers may skip host authorization
     /// entirely.
     pub(crate) fn unsandboxed_access_granted(&self, cx: &App) -> bool {
-        self.unsandboxed_granted_for_thread()
+        let settings = AgentSettings::get_global(cx);
+        settings.yolo_mode
+            || self.unsandboxed_granted_for_thread()
             || self.sandbox_fallback_granted_for_thread()
-            || AgentSettings::get_global(cx)
-                .sandbox_permissions
-                .allow_unsandboxed
+            || settings.sandbox_permissions.allow_unsandboxed
     }
 
     /// Ask the user how to proceed when the OS sandbox could not be created
@@ -6698,6 +6708,10 @@ impl ToolCallEventStream {
         retries: usize,
         cx: &mut App,
     ) -> Task<Result<SandboxFallbackDecision>> {
+        if AgentSettings::get_global(cx).yolo_mode {
+            return Task::ready(Ok(SandboxFallbackDecision::RunUnsandboxed));
+        }
+
         let details = acp_thread::SandboxFallbackAuthorizationDetails {
             command,
             reason,

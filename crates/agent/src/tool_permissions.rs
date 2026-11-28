@@ -469,6 +469,10 @@ pub fn decide_permission_from_settings(
     inputs: &[String],
     settings: &AgentSettings,
 ) -> ToolPermissionDecision {
+    if settings.yolo_mode {
+        return ToolPermissionDecision::Allow;
+    }
+
     ToolPermissionDecision::from_input(
         tool_name,
         inputs,
@@ -551,6 +555,10 @@ pub fn path_matches_always_confirm(
     raw_path: &str,
     settings: &AgentSettings,
 ) -> bool {
+    if settings.yolo_mode {
+        return false;
+    }
+
     let Some(rules) = settings.tool_permissions.tools.get(tool_name) else {
         return false;
     };
@@ -624,6 +632,7 @@ mod tests {
             cancel_generation_on_terminal_stop: true,
             use_modifier_to_send: true,
             message_editor_min_lines: 1,
+            yolo_mode: false,
             tool_permissions,
             sandbox_permissions: Default::default(),
             show_turn_stats: false,
@@ -2441,5 +2450,61 @@ mod tests {
     fn decide_permission_for_path_denies_edit_file_traversal_to_dotenv() {
         let decision = path_perm(EditFileTool::NAME, "src/../.env", &["^\\.env"], &[], &[]);
         assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
+    }
+
+    #[test]
+    fn yolo_mode_allows_all_tools_and_skips_always_confirm() {
+        let mut tools = collections::HashMap::default();
+        tools.insert(
+            Arc::from(TerminalTool::NAME),
+            ToolRules {
+                default: Some(ToolPermissionMode::Deny),
+                always_allow: vec![],
+                always_deny: vec![CompiledRegex::new("git push", false).unwrap()],
+                always_confirm: vec![CompiledRegex::new("cargo", false).unwrap()],
+                invalid_patterns: vec![],
+            },
+        );
+        tools.insert(
+            Arc::from(EditFileTool::NAME),
+            ToolRules {
+                default: Some(ToolPermissionMode::Confirm),
+                always_allow: vec![],
+                always_deny: vec![],
+                always_confirm: vec![CompiledRegex::new("\\.env$", false).unwrap()],
+                invalid_patterns: vec![],
+            },
+        );
+        let mut settings = test_agent_settings(ToolPermissions {
+            default: ToolPermissionMode::Deny,
+            tools,
+        });
+        settings.yolo_mode = true;
+
+        assert_eq!(
+            decide_permission_from_settings(
+                TerminalTool::NAME,
+                &["git push --force".to_string()],
+                &settings,
+            ),
+            ToolPermissionDecision::Allow
+        );
+        assert_eq!(
+            decide_permission_from_settings(
+                TerminalTool::NAME,
+                &["cargo test".to_string()],
+                &settings,
+            ),
+            ToolPermissionDecision::Allow
+        );
+        assert_eq!(
+            decide_permission_for_path(EditFileTool::NAME, ".env", &settings),
+            ToolPermissionDecision::Allow
+        );
+        assert!(!path_matches_always_confirm(
+            EditFileTool::NAME,
+            ".env",
+            &settings
+        ));
     }
 }
