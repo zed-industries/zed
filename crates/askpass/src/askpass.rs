@@ -613,7 +613,7 @@ printf '%s\n' "$passphrase" |
 #[inline]
 #[cfg(not(target_os = "windows"))]
 fn find_gpg_program() -> Option<std::path::PathBuf> {
-    ["gpg", "gpg2"]
+    ["gpg2", "gpg"]
         .into_iter()
         .find_map(|candidate| which::which(candidate).ok())
 }
