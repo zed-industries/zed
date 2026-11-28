@@ -10,7 +10,10 @@ use gpui::{
 };
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use release_channel::ReleaseChannel;
-use remote::{ConnectionIdentifier, RemoteClient, RemoteConnectionOptions, RemotePlatform};
+use remote::{
+    ConnectionIdentifier, RemoteClient, RemoteConnectionOptions, RemotePlatform,
+    RemoteServerDownloadError,
+};
 use semver::Version;
 use settings::Settings;
 use theme_settings::ThemeSettings;
@@ -498,24 +501,14 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
         cx.spawn(async move |cx| {
             AutoUpdater::download_remote_server_release(
                 release_channel,
-                version.clone(),
+                version,
                 platform.os.as_str(),
                 platform.arch.as_str(),
                 move |status, cx| this.set_status(Some(status), cx),
                 cx,
             )
             .await
-            .with_context(|| {
-                format!(
-                    "Downloading remote server binary (version: {}, os: {}, arch: {})",
-                    version
-                        .as_ref()
-                        .map(|v| format!("{}", v))
-                        .unwrap_or("unknown".to_string()),
-                    platform.os,
-                    platform.arch,
-                )
-            })
+            .map_err(RemoteServerDownloadError::wrap)
         })
     }
 
@@ -535,6 +528,7 @@ impl remote::RemoteClientDelegate for RemoteClientDelegate {
                 cx,
             )
             .await
+            .map_err(RemoteServerDownloadError::wrap)
         })
     }
 }
@@ -664,24 +658,14 @@ impl remote::RemoteClientDelegate for BackgroundRemoteClientDelegate {
         cx.spawn(async move |cx| {
             AutoUpdater::download_remote_server_release(
                 release_channel,
-                version.clone(),
+                version,
                 platform.os.as_str(),
                 platform.arch.as_str(),
                 |_status, _cx| {},
                 cx,
             )
             .await
-            .with_context(|| {
-                format!(
-                    "Downloading remote server binary (version: {}, os: {}, arch: {})",
-                    version
-                        .as_ref()
-                        .map(|v| format!("{v}"))
-                        .unwrap_or("unknown".to_string()),
-                    platform.os,
-                    platform.arch,
-                )
-            })
+            .map_err(RemoteServerDownloadError::wrap)
         })
     }
 
@@ -701,6 +685,7 @@ impl remote::RemoteClientDelegate for BackgroundRemoteClientDelegate {
                 cx,
             )
             .await
+            .map_err(RemoteServerDownloadError::wrap)
         })
     }
 }
@@ -740,8 +725,6 @@ pub fn connect(
             .await
     })
 }
-
-use anyhow::Context as _;
 
 #[cfg(test)]
 mod tests {
