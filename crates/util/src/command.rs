@@ -56,6 +56,16 @@ impl Command {
         self
     }
 
+    /// Appends an argument verbatim, skipping the quoting [`Self::arg`] applies. Needed for
+    /// programs like `cmd` that parse the command line themselves and would treat that
+    /// quoting as literal text.
+    #[cfg(target_os = "windows")]
+    pub fn raw_arg(&mut self, arg: impl AsRef<OsStr>) -> &mut Self {
+        use smol::process::windows::CommandExt;
+        self.0.raw_arg(arg);
+        self
+    }
+
     pub fn get_args(&self) -> impl Iterator<Item = &OsStr> {
         self.0.get_args()
     }
