@@ -297,6 +297,8 @@ dependencies = [
  "quick-xml 0.41.0",
  "rand 0.9.4",
  "regex",
+ "release_channel",
+ "remote",
  "reqwest_client",
  "sandbox",
  "schemars 1.0.4",

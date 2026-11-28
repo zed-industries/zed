@@ -239,8 +239,15 @@ pub(crate) fn terminal_shell(project: &Project, cx: &App) -> String {
         .unwrap_or_else(util::get_default_system_shell_preferring_bash)
 }
 
-/// The name of the shell [`terminal_shell`] picks, for the system prompt.
 pub(crate) fn terminal_shell_name(project: &Project, cx: &App) -> String {
+    if let Some(remote_client) = project.remote_client() {
+        // The local fallback in `terminal_shell` would misdescribe a disconnected remote.
+        return remote_client
+            .read(cx)
+            .default_system_shell()
+            .unwrap_or_else(|| "unknown".to_owned());
+    }
+
     util::shell::ShellKind::new(
         &terminal_shell(project, cx),
         project.path_style(cx).is_windows(),

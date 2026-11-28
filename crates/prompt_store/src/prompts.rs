@@ -34,8 +34,6 @@ pub struct ProjectContext {
     pub worktrees: Vec<WorktreeContext>,
     /// Whether any worktree has a rules_file. Provided as a field because handlebars can't do this.
     pub has_rules: bool,
-    pub os: String,
-    pub arch: String,
     // Similarly to `has_rules`, `has_skills` is a derived flag exposed
     // to the handlebars template (which can't do
     // `!skills.is_empty()`). These are `pub(crate)` so the only way to
@@ -53,8 +51,6 @@ impl ProjectContext {
         Self {
             worktrees,
             has_rules,
-            os: std::env::consts::OS.to_string(),
-            arch: std::env::consts::ARCH.to_string(),
             skills: Vec::new(),
             has_skills: false,
         }

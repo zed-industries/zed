@@ -224,6 +224,7 @@ impl TerminalToolTest {
                 .collect::<Vec<_>>();
             let template = crate::SystemPromptTemplate {
                 project: &project_context,
+                environment: crate::SystemPromptEnvironment::local(),
                 available_tools: tool_names,
                 model_name: None,
                 date: chrono::Local::now().format("%Y-%m-%d").to_string(),
