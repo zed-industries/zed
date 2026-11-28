@@ -259,18 +259,22 @@ impl AgentConnectionStore {
                     };
 
                     this.update(cx, move |this, cx| {
-                        if this.entries.get(&key) != entry.upgrade().as_ref() {
+                        let Some(entry) = entry.upgrade() else {
+                            return;
+                        };
+                        if this.entries.get(&key) != Some(&entry) {
                             return;
                         }
 
-                        entry
-                            .update(cx, move |_entry, cx| {
-                                cx.emit(AgentConnectionEntryEvent::NewVersionAvailable(
-                                    version.into(),
-                                ));
-                            })
-                            .ok();
+                        entry.update(cx, move |_entry, cx| {
+                            cx.emit(AgentConnectionEntryEvent::NewVersionAvailable(
+                                version.into(),
+                            ));
+                        });
                         this.entries.remove(&key);
+                        // Released entities drop their pending events, so keep the entry
+                        // alive until its subscribers have received this one.
+                        cx.defer(move |_| drop(entry));
                         cx.notify();
                     })
                     .ok();
@@ -470,6 +474,78 @@ mod tests {
             drop(other_view);
             drop(connected);
         }
+    }
+
+    struct NewVersionAgentServer {
+        connection: StubAgentConnection,
+    }
+
+    impl AgentServer for NewVersionAgentServer {
+        fn logo(&self) -> ui::IconName {
+            ui::IconName::ZedAgent
+        }
+
+        fn agent_id(&self) -> project::AgentId {
+            "new-version".into()
+        }
+
+        fn connect(
+            &self,
+            mut delegate: AgentServerDelegate,
+            _project: Entity<Project>,
+            _cx: &mut App,
+        ) -> Task<Result<Rc<dyn AgentConnection>>> {
+            if let Some(mut tx) = delegate.take_new_version_available_tx() {
+                tx.send(Some("2.0.0".to_owned())).ok();
+            }
+            Task::ready(Ok(Rc::new(self.connection.clone())))
+        }
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+    }
+
+    #[gpui::test]
+    async fn test_new_version_reported_while_connecting_reaches_subscribers(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", serde_json::json!({})).await;
+        let project = Project::test(fs, [Path::new("/project")], cx).await;
+        let store = cx.new(|cx| AgentConnectionStore::new(project.clone(), cx));
+
+        let entry = store.update(cx, |store, cx| {
+            store.request_connection(
+                Agent::Stub,
+                Rc::new(NewVersionAgentServer {
+                    connection: StubAgentConnection::new(),
+                }),
+                cx,
+            )
+        });
+        let versions = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            let versions = versions.clone();
+            cx.subscribe(&entry, move |_, event, _| {
+                if let AgentConnectionEntryEvent::NewVersionAvailable(version) = event {
+                    versions.borrow_mut().push(version.clone());
+                }
+            })
+        });
+        let connecting = entry.read_with(cx, |entry, _| entry.wait_for_connection());
+        drop(entry);
+
+        connecting.await.expect("connected");
+        cx.run_until_parked();
+        assert_eq!(*versions.borrow(), vec![SharedString::from("2.0.0")]);
+        store.read_with(cx, |store, _| {
+            assert!(
+                !store.entries.contains_key(&Agent::Stub),
+                "the next thread should start a new connection"
+            );
+        });
     }
 
     struct PendingAgentServer {

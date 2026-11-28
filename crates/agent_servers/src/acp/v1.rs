@@ -583,6 +583,7 @@ impl AcpConnection {
         let ResolvedAgentServerCommand {
             command,
             installation_lease,
+            ..
         } = command;
         let original_command = command.clone();
         let transport::StdioProcess {

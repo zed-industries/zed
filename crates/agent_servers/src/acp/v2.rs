@@ -236,6 +236,7 @@ impl AcpV2Connection {
         let ResolvedAgentServerCommand {
             command,
             installation_lease,
+            ..
         } = command;
         let transport::StdioProcess {
             child,
