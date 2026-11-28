@@ -1238,6 +1238,11 @@ impl DisplayMap {
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
 
+    pub fn set_table_wrap_width(&self, width: Option<Pixels>, cx: &mut Context<Self>) -> bool {
+        self.wrap_map
+            .update(cx, |map, cx| map.set_table_wrap_width(width, cx))
+    }
+
     pub fn set_soft_wrap_indent(&self, indent: SoftWrapIndent, cx: &mut Context<Self>) -> bool {
         self.wrap_map
             .update(cx, |map, cx| map.set_soft_wrap_indent(indent, cx))
