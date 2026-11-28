@@ -76,6 +76,29 @@ pub fn init(cx: &mut App) {
     cx.observe_new(TabSwitcher::register).detach();
 }
 
+enum TabSwitcherMode {
+    CurrentPane { select_last: bool },
+    AllPanes,
+    OpenInActivePane,
+}
+
+impl TabSwitcherMode {
+    fn opens_in_active_pane(&self) -> bool {
+        matches!(self, TabSwitcherMode::OpenInActivePane)
+    }
+
+    fn spans_all_panes(&self) -> bool {
+        matches!(
+            self,
+            TabSwitcherMode::AllPanes | TabSwitcherMode::OpenInActivePane
+        )
+    }
+
+    fn select_last(&self) -> bool {
+        matches!(self, TabSwitcherMode::CurrentPane { select_last: true })
+    }
+}
+
 impl TabSwitcher {
     fn register(
         workspace: &mut Workspace,
@@ -84,7 +107,14 @@ impl TabSwitcher {
     ) {
         workspace.register_action(|workspace, action: &Toggle, window, cx| {
             let Some(tab_switcher) = workspace.active_modal::<Self>(cx) else {
-                Self::open(workspace, action.select_last, false, false, window, cx);
+                Self::open(
+                    workspace,
+                    TabSwitcherMode::CurrentPane {
+                        select_last: action.select_last,
+                    },
+                    window,
+                    cx,
+                );
                 return;
             };
 
@@ -96,7 +126,7 @@ impl TabSwitcher {
         });
         workspace.register_action(|workspace, _action: &ToggleAll, window, cx| {
             let Some(tab_switcher) = workspace.active_modal::<Self>(cx) else {
-                Self::open(workspace, false, true, false, window, cx);
+                Self::open(workspace, TabSwitcherMode::AllPanes, window, cx);
                 return;
             };
 
@@ -108,7 +138,7 @@ impl TabSwitcher {
         });
         workspace.register_action(|workspace, _action: &OpenInActivePane, window, cx| {
             let Some(tab_switcher) = workspace.active_modal::<Self>(cx) else {
-                Self::open(workspace, false, true, true, window, cx);
+                Self::open(workspace, TabSwitcherMode::OpenInActivePane, window, cx);
                 return;
             };
 
@@ -122,9 +152,7 @@ impl TabSwitcher {
 
     fn open(
         workspace: &mut Workspace,
-        select_last: bool,
-        is_global: bool,
-        open_in_active_pane: bool,
+        mode: TabSwitcherMode,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
@@ -158,34 +186,28 @@ impl TabSwitcher {
         workspace.toggle_modal(window, cx, |window, cx| {
             let delegate = TabSwitcherDelegate::new(
                 project,
-                select_last,
+                mode,
                 cx.entity().downgrade(),
                 weak_pane,
                 weak_workspace,
-                is_global,
-                open_in_active_pane,
                 window,
                 cx,
                 original_items,
             );
-            TabSwitcher::new(delegate, window, is_global, cx)
+            TabSwitcher::new(delegate, window, cx)
         });
     }
 
-    fn new(
-        delegate: TabSwitcherDelegate,
-        window: &mut Window,
-        is_global: bool,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let init_modifiers = if is_global {
+    fn new(delegate: TabSwitcherDelegate, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let spans_all_panes = delegate.mode.spans_all_panes();
+        let init_modifiers = if spans_all_panes {
             None
         } else {
             window.modifiers().modified().then_some(window.modifiers())
         };
         Self {
             picker: cx.new(|cx| {
-                if is_global {
+                if spans_all_panes {
                     Picker::list(delegate, window, cx)
                 } else {
                     Picker::nonsearchable_list(delegate, window, cx)
@@ -258,16 +280,14 @@ struct TabMatch {
 }
 
 pub struct TabSwitcherDelegate {
-    select_last: bool,
     tab_switcher: WeakEntity<TabSwitcher>,
+    mode: TabSwitcherMode,
     selected_index: usize,
     pane: WeakEntity<Pane>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     matches: Vec<TabMatch>,
     original_items: Vec<(Entity<Pane>, usize)>,
-    is_all_panes: bool,
-    open_in_active_pane: bool,
     restored_items: bool,
 }
 
@@ -348,27 +368,23 @@ impl TabSwitcherDelegate {
     #[allow(clippy::complexity)]
     fn new(
         project: Entity<Project>,
-        select_last: bool,
+        mode: TabSwitcherMode,
         tab_switcher: WeakEntity<TabSwitcher>,
         pane: WeakEntity<Pane>,
         workspace: WeakEntity<Workspace>,
-        is_all_panes: bool,
-        open_in_active_pane: bool,
         window: &mut Window,
         cx: &mut Context<TabSwitcher>,
         original_items: Vec<(Entity<Pane>, usize)>,
     ) -> Self {
         Self::subscribe_to_updates(&workspace, window, cx);
         Self {
-            select_last,
             tab_switcher,
+            mode,
             selected_index: 0,
             pane,
             workspace,
             project,
             matches: Vec::new(),
-            is_all_panes,
-            open_in_active_pane,
             original_items,
             restored_items: false,
         }
@@ -471,14 +487,11 @@ impl TabSwitcherDelegate {
             .collect()
         };
 
-        if self.open_in_active_pane {
+        if self.mode.opens_in_active_pane() {
             let mut seen_paths: HashSet<project::ProjectPath> = HashSet::default();
-            matches.retain(|tab| {
-                if let Some(path) = tab.item.project_path(cx) {
-                    seen_paths.insert(path)
-                } else {
-                    true
-                }
+            matches.retain(|tab| match tab.item.single_file_project_path(cx) {
+                Some(path) => seen_paths.insert(path),
+                None => true,
             });
         }
 
@@ -497,7 +510,7 @@ impl TabSwitcherDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) {
-        if self.is_all_panes {
+        if self.mode.spans_all_panes() {
             // needed because we need to borrow the workspace, but that may be borrowed when the picker
             // calls update_matches.
             let this = cx.entity();
@@ -583,7 +596,7 @@ impl TabSwitcherDelegate {
             return self.selected_index.min(self.matches.len() - 1);
         }
 
-        if self.select_last {
+        if self.mode.select_last() {
             let item_index = self.matches.len() - 1;
             self.set_selected_index(item_index, window, cx);
             return item_index;
@@ -609,7 +622,7 @@ impl TabSwitcherDelegate {
             return;
         };
 
-        if self.open_in_active_pane
+        if self.mode.opens_in_active_pane()
             && let Some(project_path) = tab_match.item.single_file_project_path(cx)
         {
             let Some(workspace) = self.workspace.upgrade() else {
@@ -639,7 +652,7 @@ impl TabSwitcherDelegate {
     /// as the pane's active item can be indirectly updated and this method
     /// ensures that the picker can react to those changes.
     fn sync_selected_index(&mut self, cx: &mut Context<Picker<TabSwitcherDelegate>>) {
-        let item = if self.is_all_panes {
+        let item = if self.mode.spans_all_panes() {
             self.workspace
                 .read_with(cx, |workspace, cx| workspace.active_item(cx))
         } else {
@@ -767,7 +780,9 @@ impl PickerDelegate for TabSwitcherDelegate {
     ) {
         self.selected_index = ix;
 
-        if !self.open_in_active_pane && TabSwitcherSettings::get_global(cx).show_file_preview {
+        if !self.mode.opens_in_active_pane()
+            && TabSwitcherSettings::get_global(cx).show_file_preview
+        {
             let Some(selected_match) = self.matches.get(self.selected_index()) else {
                 return;
             };
@@ -814,7 +829,7 @@ impl PickerDelegate for TabSwitcherDelegate {
             })
         }
 
-        if self.open_in_active_pane {
+        if self.mode.opens_in_active_pane() {
             self.confirm_open_in_active_pane(selected_match, window, cx);
         } else {
             selected_match

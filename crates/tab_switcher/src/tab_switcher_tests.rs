@@ -1,5 +1,5 @@
 use super::*;
-use editor::{Editor, MultiBuffer};
+use editor::{Editor, MultiBuffer, PathKey, SelectionEffects};
 use gpui::{TestAppContext, VisualTestContext};
 use menu::SelectPrevious;
 use project::{Project, ProjectPath};
@@ -574,6 +574,90 @@ async fn test_open_in_active_pane_closes_file_in_all_panes(cx: &mut gpui::TestAp
             "all panes should be empty"
         );
     }
+}
+
+#[gpui::test]
+async fn test_open_in_active_pane_lists_multibuffer_and_its_files(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "a.txt": "Never Gonna Give You Up",
+                "b.txt": "Take On Me",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    // With both files open, we'll also open a multibuffer with excerpts for
+    // both files and place its cursor in the `a.txt` excerpt, ensuring we have
+    // two tab items open that both report the same `ProjectPath` for
+    // `ItemHandle::project_path`.
+    let item_a = open_buffer("rick_astley.txt", &workspace, cx).await;
+    let item_b = open_buffer("a_ha.txt", &workspace, cx).await;
+
+    let multibuffer_editor = cx.new_window_entity(|window, cx| {
+        let editor_a = item_a.act_as::<Editor>(cx).unwrap();
+        let editor_b = item_b.act_as::<Editor>(cx).unwrap();
+        let buffer_a = editor_a.read(cx).buffer().read(cx).as_singleton().unwrap();
+        let buffer_b = editor_b.read(cx).buffer().read(cx).as_singleton().unwrap();
+
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(buffer_a.read(cx).capability());
+
+            let range_a = Default::default()..buffer_a.read(cx).max_point();
+            let range_b = Default::default()..buffer_b.read(cx).max_point();
+            multibuffer.set_excerpts_for_buffer(buffer_a.clone(), [range_a], 0, cx);
+            multibuffer.set_excerpts_for_buffer(buffer_b.clone(), [range_b], 0, cx);
+
+            multibuffer
+        });
+
+        let cursor = multibuffer
+            .read(cx)
+            .location_for_path(&PathKey::for_buffer(&buffer_a, cx), cx)
+            .unwrap();
+
+        let mut editor = Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx);
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_anchor_ranges([cursor..cursor])
+        });
+        editor
+    });
+
+    let pane = workspace.read_with(cx, |workspace, _cx| workspace.active_pane().clone());
+    pane.update_in(cx, |pane, window, cx| {
+        pane.add_item(
+            multibuffer_editor.boxed_clone(),
+            true,
+            true,
+            None,
+            window,
+            cx,
+        )
+    });
+
+    assert_eq!(pane.read_with(cx, |pane, _cx| pane.items_len()), 3);
+
+    // Ensure that both the singleton editor for `a.txt` and the
+    // multibuffer editor report the same `ProjectPath`.
+    cx.read(|cx| {
+        assert_eq!(multibuffer_editor.project_path(cx), item_a.project_path(cx));
+    });
+
+    let tab_switcher = open_tab_switcher_for_active_pane(&workspace, cx);
+    tab_switcher.read_with(cx, |picker, _cx| {
+        assert_match_at_position(picker, 0, multibuffer_editor.boxed_clone());
+        assert_match_at_position(picker, 1, item_b.boxed_clone());
+        assert_match_at_position(picker, 2, item_a.boxed_clone());
+    });
 }
 
 #[gpui::test]
