@@ -122,6 +122,7 @@ impl WindowsWindowState {
         min_size: Option<Size<Pixels>>,
         appearance: WindowAppearance,
         disable_direct_composition: bool,
+        draw_above_child_windows: bool,
         invalidate_devices: Arc<AtomicBool>,
         draw_coordinator: Rc<DrawCoordinator>,
     ) -> Result<Self> {
@@ -143,8 +144,13 @@ impl WindowsWindowState {
         };
         let border_offset = WindowBorderOffset::default();
         let restore_from_minimized = None;
-        let renderer = DirectXRenderer::new(hwnd, directx_devices, disable_direct_composition)
-            .context("Creating DirectX renderer")?;
+        let renderer = DirectXRenderer::new(
+            hwnd,
+            directx_devices,
+            disable_direct_composition,
+            draw_above_child_windows,
+        )
+        .context("Creating DirectX renderer")?;
         let callbacks = Callbacks::default();
         let input_handler = None;
         let pending_surrogate = None;
@@ -278,6 +284,7 @@ impl WindowsWindowInner {
             context.min_size,
             context.appearance,
             context.disable_direct_composition,
+            context.draw_above_child_windows,
             context.invalidate_devices.clone(),
             context.draw_coordinator.clone(),
         )?;
@@ -428,6 +435,7 @@ struct WindowCreateContext {
     platform_window_handle: HWND,
     appearance: WindowAppearance,
     disable_direct_composition: bool,
+    draw_above_child_windows: bool,
     directx_devices: DirectXDevices,
     invalidate_devices: Arc<AtomicBool>,
     draw_coordinator: Rc<DrawCoordinator>,
@@ -541,6 +549,7 @@ impl WindowsWindow {
             platform_window_handle,
             appearance,
             disable_direct_composition,
+            draw_above_child_windows: params.draw_above_child_windows,
             directx_devices,
             invalidate_devices,
             draw_coordinator,
