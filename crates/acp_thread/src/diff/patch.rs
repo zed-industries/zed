@@ -15,6 +15,8 @@ pub(super) struct PatchHunk {
     pub(super) old_count: u32,
     pub(super) new_start: u32,
     pub(super) new_count: u32,
+    pub(super) added_lines: u32,
+    pub(super) removed_lines: u32,
     pub(super) old_text: String,
     pub(super) new_text: String,
 }
@@ -59,14 +61,22 @@ pub(super) fn parse_patch(text: &str) -> Result<Vec<PatchFile>> {
             .map(|hunk| {
                 let mut old_text = String::new();
                 let mut new_text = String::new();
+                let mut added_lines = 0u32;
+                let mut removed_lines = 0u32;
                 for line in hunk.lines() {
                     match line {
                         Line::Context(text) => {
                             old_text.push_str(text);
                             new_text.push_str(text);
                         }
-                        Line::Delete(text) => old_text.push_str(text),
-                        Line::Insert(text) => new_text.push_str(text),
+                        Line::Delete(text) => {
+                            old_text.push_str(text);
+                            removed_lines = removed_lines.saturating_add(1);
+                        }
+                        Line::Insert(text) => {
+                            new_text.push_str(text);
+                            added_lines = added_lines.saturating_add(1);
+                        }
                     }
                 }
                 Ok(PatchHunk {
@@ -74,6 +84,8 @@ pub(super) fn parse_patch(text: &str) -> Result<Vec<PatchFile>> {
                     old_count: u32::try_from(hunk.old_range().len())?,
                     new_start: u32::try_from(hunk.new_range().start())?,
                     new_count: u32::try_from(hunk.new_range().len())?,
+                    added_lines,
+                    removed_lines,
                     old_text,
                     new_text,
                 })
