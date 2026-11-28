@@ -96,6 +96,17 @@ impl MarkdownElement {
                 );
                 self.pop_markdown_paragraph(builder);
             }
+            ParsedHtmlElement::Div(div_element) => {
+                builder.push_div(div(), &div_element.source_range, markdown_end);
+                self.render_html_elements(
+                    &div_element.children,
+                    source_allocator,
+                    builder,
+                    markdown_end,
+                    cx,
+                );
+                builder.pop_div();
+            }
             ParsedHtmlElement::Heading(heading) => {
                 self.push_markdown_heading(
                     builder,
