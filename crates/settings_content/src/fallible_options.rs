@@ -73,15 +73,17 @@ pub trait FallibleOption: Default {}
 impl<T> FallibleOption for Option<T> {}
 
 macro_rules! flattened_deserialize {
+    (@key $field:ident, $key:literal) => { $key };
+    (@key $field:ident) => { stringify!($field) };
     ($type_name:ty {
         sections: { $($section:ident),* $(,)? },
-        options: { $($option_field:ident),* $(,)? },
+        options: { $($option_field:ident $(: $option_key:literal)?),* $(,)? },
         defaults: { $($default_field:ident),* $(,)? } $(,)?
     }) => {
         impl $type_name {
             #[doc(hidden)]
             pub const NAMED_DESERIALIZE_KEYS: &'static [&'static str] = &[
-                $(stringify!($option_field),)*
+                $($crate::fallible_options::flattened_deserialize!(@key $option_field $(, $option_key)?),)*
                 $(stringify!($default_field),)*
             ];
         }
@@ -97,7 +99,7 @@ macro_rules! flattened_deserialize {
                         let $option_field =
                             $crate::fallible_options::take_option_field(
                                 &mut object,
-                                stringify!($option_field),
+                                $crate::fallible_options::flattened_deserialize!(@key $option_field $(, $option_key)?),
                             )?;
                     )*
                     $(

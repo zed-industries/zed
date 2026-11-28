@@ -516,6 +516,7 @@ dependencies = [
  "markdown",
  "menu",
  "multi_buffer",
+ "node_runtime",
  "notifications",
  "ordered-float 5.5.0",
  "parking_lot",
@@ -6154,6 +6155,7 @@ dependencies = [
  "language_extension",
  "log",
  "lsp",
+ "managed_resources",
  "moka",
  "node_runtime",
  "parking_lot",
@@ -6180,6 +6182,7 @@ dependencies = [
  "wasmparser 0.254.2",
  "wasmtime",
  "wasmtime-wasi",
+ "watch",
  "zlog",
  "ztracing",
 ]
@@ -9937,14 +9940,17 @@ dependencies = [
  "globset",
  "gpui",
  "grammars",
+ "http_client",
  "indoc",
  "itertools 0.14.0",
  "json_schema_store",
  "language",
  "log",
  "lsp",
+ "managed_resources",
  "node_runtime",
  "parking_lot",
+ "paths",
  "pet",
  "pet-conda",
  "pet-core",
@@ -9980,6 +9986,7 @@ dependencies = [
  "unindent",
  "url",
  "util",
+ "watch",
 ]
 
 [[package]]
@@ -10662,6 +10669,20 @@ name = "macro_rules_attribute-proc_macro"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc04a4c58212d57930a24bf47d3fa87485264a3a054e9c10e042eb373573ad3c"
+
+[[package]]
+name = "managed_resources"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.34",
+ "gpui",
+ "serde",
+ "serde_json",
+ "settings",
+ "settings_content",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "manatee"
@@ -11493,8 +11514,10 @@ dependencies = [
  "async-trait",
  "chrono",
  "futures 0.3.34",
+ "gpui",
  "http_client",
  "log",
+ "managed_resources",
  "paths",
  "semver",
  "serde",
@@ -15341,6 +15364,7 @@ dependencies = [
  "libc",
  "log",
  "lsp",
+ "managed_resources",
  "net",
  "node_runtime",
  "paths",
@@ -22254,10 +22278,12 @@ dependencies = [
  "language",
  "log",
  "lsp",
+ "managed_resources",
  "markdown",
  "menu",
  "node_runtime",
  "parking_lot",
+ "paths",
  "postage",
  "pretty_assertions",
  "project",

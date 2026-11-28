@@ -16,7 +16,7 @@ use theme_settings::ThemeSettings;
 use std::ops::Deref;
 use std::sync::{Arc, LazyLock};
 use std::{any::TypeId, time::Duration};
-use ui::{CopyButton, Tooltip, prelude::*};
+use ui::{CopyButton, LabelLike, SplitButton, SplitButtonStyle, TintColor, Tooltip, prelude::*};
 use util::ResultExt;
 
 #[derive(Default)]
@@ -69,6 +69,127 @@ pub trait Notification:
 }
 
 pub struct SuppressEvent;
+
+pub(crate) fn request_resource_approval(
+    request: managed_resources::ResourcePermissionRequest,
+    store: WeakEntity<managed_resources::ManagedResourceStore>,
+    cx: &mut App,
+) -> Task<managed_resources::ResourcePermission> {
+    use managed_resources::ResourcePermission;
+
+    let window = cx
+        .active_window()
+        .and_then(|window| window.downcast::<MultiWorkspace>())
+        .or_else(|| {
+            cx.windows()
+                .into_iter()
+                .find_map(|window| window.downcast::<MultiWorkspace>())
+        });
+    let Some(window) = window else {
+        return Task::ready(ResourcePermission::Denied);
+    };
+    let (sender, receiver) = futures::channel::oneshot::channel();
+    let sender = Arc::new(Mutex::new(Some(sender)));
+    let dismissed = sender.clone();
+    let expanded = std::rc::Rc::new(std::cell::Cell::new(false));
+    let notification = cx.new(|cx| {
+        simple_message_notification::MessageNotification::new_from_builder(cx, move |window, cx| {
+            let mut text = String::new();
+            let runs = request.summary().0.into_iter().map(|span| {
+                use managed_resources::PermissionText;
+                let (PermissionText::Plain(value) | PermissionText::Emphasis(value) | PermissionText::Code(value)) = &span;
+                let mut run = window.text_style().to_run(value.len());
+                match &span {
+                    PermissionText::Emphasis(_) => run.font.weight = gpui::FontWeight::SEMIBOLD,
+                    PermissionText::Code(_) => run.font = ThemeSettings::get_global(cx).buffer_font.clone(),
+                    PermissionText::Plain(_) => {}
+                }
+                text.push_str(value);
+                run
+            }).collect();
+            let show_details = expanded.get();
+            let expanded = expanded.clone();
+            let controls = h_flex().gap_2().flex_wrap().children([
+                    ("Allow", ResourcePermission::Allowed),
+                    ("Deny", ResourcePermission::Denied),
+                ].into_iter().map(|(label, permission)| {
+                    let button = |remember| {
+                    let sender = sender.clone();
+                    let store = store.clone();
+                    let request = request.clone();
+                        Button::new((label, usize::from(remember)), if remember { "Always" } else { label })
+                            .label_size(LabelSize::Small)
+                            .when(!remember, |button| button.style(ButtonStyle::Tinted(
+                                if permission == ResourcePermission::Allowed { TintColor::Success } else { TintColor::Error }
+                            )))
+                            .color(if remember { Color::Muted } else if permission == ResourcePermission::Allowed { Color::Success } else { Color::Error })
+                            .when(remember, |button| button.tooltip(Tooltip::text(format!(
+                                "{label} this operation for this resource from any requester. Saved in your user settings."
+                            ))))
+                            .on_click(cx.listener(move |_, _, _, cx| {
+                                if let Some(sender) = sender.lock().take() {
+                                    if !sender.is_canceled() {
+                                        let permission = if remember && store
+                                            .update(cx, |store, cx| store.remember_permission(&request, permission, cx))
+                                            .log_err().and_then(|result| result.log_err()).is_none()
+                                        {
+                                            ResourcePermission::Denied
+                                        } else {
+                                            permission
+                                        };
+                                        sender.send(permission).unwrap_or_else(|_| {
+                                            log::debug!("Resource approval request was cancelled");
+                                        });
+                                    }
+                                }
+                                cx.emit(DismissEvent);
+                            }))
+                    };
+                    div().debug_selector(move || label.to_owned()).child(
+                        SplitButton::new(button(false),
+                            div().debug_selector(move || format!("{label} Always"))
+                                .child(button(true)).into_any_element())
+                            .style(SplitButtonStyle::Outlined)
+                    )
+                }));
+            v_flex()
+                .gap_2()
+                .child(LabelLike::new().child(gpui::StyledText::new(text).with_runs(runs)))
+                .child(div().debug_selector(|| "Permission details toggle".to_owned()).child(Button::new("permission-details", if show_details { "Hide details" } else { "Details" })
+                    .label_size(LabelSize::Small).color(Color::Muted)
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        expanded.set(!expanded.get());
+                        cx.notify();
+                    }))))
+                .when(show_details, |this| this.child(div().debug_selector(|| "Permission details".to_owned()).child(Label::new(request.details()).size(LabelSize::Small).color(Color::Muted))))
+                .child(controls)
+                .into_any_element()
+            })
+            .with_title("Permission required")
+            .show_suppress_button(false)
+    });
+    cx.subscribe(&notification, move |_, _: &DismissEvent, _| {
+        if let Some(sender) = dismissed.lock().take() {
+            sender.send(ResourcePermission::Denied).unwrap_or_else(|_| {
+                log::debug!("Resource approval request was cancelled");
+            });
+        }
+    })
+    .detach();
+    let id = NotificationId::composite::<managed_resources::ResourcePermissionRequest>((
+        "resource-approval",
+        notification.entity_id(),
+    ));
+    window
+        .update(cx, |multi_workspace, _, cx| {
+            multi_workspace.workspace().update(cx, |workspace, cx| {
+                workspace.show_notification(id, cx, |_| notification);
+            });
+        })
+        .log_err();
+    // Closing the notification or its workspace drops the sender and denies the request.
+    cx.spawn(async move |_| receiver.await.unwrap_or(ResourcePermission::Denied))
+}
 
 impl Workspace {
     pub fn has_notification(&self, id: &NotificationId) -> bool {

@@ -668,18 +668,17 @@ impl LspInstaller for TypeScriptLspAdapter {
         &self,
         _: &Arc<dyn LspAdapterDelegate>,
         _: bool,
-        _: &mut AsyncApp,
+        cx: &mut AsyncApp,
     ) -> Result<Self::BinaryVersion> {
+        let node = crate::npm::NpmInstaller::new(&self.node, self, cx.clone());
         Ok(TypeScriptVersions {
-            typescript_version: self
-                .node
+            typescript_version: node
                 .npm_package_latest_version_with_requirement(
                     Self::PACKAGE_NAME,
                     Some(&TYPESCRIPT_VERSION_REQ),
                 )
                 .await?,
-            server_version: self
-                .node
+            server_version: node
                 .npm_package_latest_version(Self::SERVER_PACKAGE_NAME)
                 .await?,
         })
@@ -690,8 +689,9 @@ impl LspInstaller for TypeScriptLspAdapter {
         version: &Self::BinaryVersion,
         container_dir: &PathBuf,
         _: &Arc<dyn LspAdapterDelegate>,
-    ) -> impl Send + Future<Output = Option<LanguageServerBinary>> + use<> {
-        let node = self.node.clone();
+        cx: AsyncApp,
+    ) -> impl Future<Output = Result<Option<LanguageServerBinary>>> + use<> {
+        let node = crate::npm::NpmInstaller::new(&self.node, self, cx);
         let typescript_version = version.typescript_version.clone();
         let server_version = version.server_version.clone();
         let container_dir = container_dir.clone();
@@ -707,9 +707,9 @@ impl LspInstaller for TypeScriptLspAdapter {
                     &container_dir,
                     VersionStrategy::Pin(&typescript_version),
                 )
-                .await
+                .await?
             {
-                return None;
+                return Ok(None);
             }
 
             if node
@@ -719,16 +719,16 @@ impl LspInstaller for TypeScriptLspAdapter {
                     &container_dir,
                     VersionStrategy::Latest(&server_version),
                 )
-                .await
+                .await?
             {
-                return None;
+                return Ok(None);
             }
 
-            Some(LanguageServerBinary {
-                path: node.binary_path().await.ok()?,
+            Ok(Some(LanguageServerBinary {
+                path: node.binary_path().await?,
                 env: None,
                 arguments: typescript_server_binary_arguments(&server_path),
-            })
+            }))
         }
     }
 
@@ -737,8 +737,9 @@ impl LspInstaller for TypeScriptLspAdapter {
         latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
         _: &Arc<dyn LspAdapterDelegate>,
-    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
-        let node = self.node.clone();
+        cx: AsyncApp,
+    ) -> impl Future<Output = Result<LanguageServerBinary>> + use<> {
+        let node = crate::npm::NpmInstaller::new(&self.node, self, cx);
 
         async move {
             let server_path = container_dir.join(Self::NEW_SERVER_PATH);
@@ -765,8 +766,13 @@ impl LspInstaller for TypeScriptLspAdapter {
         &self,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
+        cx: AsyncApp,
     ) -> Option<LanguageServerBinary> {
-        get_cached_ts_server_binary(container_dir, &self.node).await
+        get_cached_ts_server_binary(
+            container_dir,
+            &crate::npm::NpmInstaller::new(&self.node, self, cx),
+        )
+        .await
     }
 }
 
@@ -883,7 +889,7 @@ impl LspAdapter for TypeScriptLspAdapter {
 
 async fn get_cached_ts_server_binary(
     container_dir: PathBuf,
-    node: &NodeRuntime,
+    node: &crate::npm::NpmInstaller,
 ) -> Option<LanguageServerBinary> {
     maybe!(async {
         let old_server_path = container_dir.join(TypeScriptLspAdapter::OLD_SERVER_PATH);

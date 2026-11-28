@@ -3,10 +3,16 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use chrono::{DateTime, Utc};
 use futures::{AsyncReadExt, FutureExt as _, channel::oneshot, future::Shared};
+use gpui::{AsyncApp, Entity, Task};
 use http_client::{Host, HttpClient, Url};
 use log::Level;
+use managed_resources::{
+    CommandPermissionRule, ManagedResource, ManagedResourceCommand, ManagedResourceStore,
+    NpmResourceId, ResourceAcquisition, ResourceId, ResourcePermission,
+};
+pub use managed_resources::{ExecutionBillRoot, ResourceExecutionBill};
 use semver::{Version, VersionReq};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use smol::io::BufReader;
 use smol::{fs, lock::Mutex};
 use std::collections::HashMap;
@@ -43,6 +49,310 @@ pub struct NpmCommand {
     pub current_dir: PathBuf,
 }
 
+pub struct Npm {
+    runtime: NodeRuntime,
+    options: NodeBinaryOptions,
+}
+
+pub struct NpmContext {
+    pub http: Arc<dyn HttpClient>,
+    pub options: NodeBinaryOptions,
+}
+
+impl ManagedResource for Npm {
+    type Key = String;
+    type Context = NpmContext;
+    type CommandKind = NpmCommandKind;
+
+    fn id(key: &Self::Key) -> ResourceId {
+        ResourceId::Npm {
+            payload: NpmResourceId { name: key.clone() },
+        }
+    }
+
+    fn is_current(&self, context: &NpmContext) -> bool {
+        self.options == context.options
+    }
+
+    async fn obtain(_: &Self::Key, context: &NpmContext) -> Result<ResourceAcquisition<Self>> {
+        // Keep the acquisition options fixed so commands cannot switch to an unapproved source.
+        let runtime = NodeRuntime::new(
+            context.http.clone(),
+            None,
+            watch::channel(Some(context.options.clone())).1,
+        );
+        let instance: Option<Box<dyn NodeRuntimeTrait>> =
+            if let Some((node, npm)) = &context.options.use_paths {
+                Some(Box::new(
+                    SystemNodeRuntime::new(node.clone(), npm.clone()).await?,
+                ))
+            } else if context.options.allow_path_lookup
+                && let Ok(instance) = SystemNodeRuntime::detect().await
+            {
+                Some(Box::new(instance))
+            } else if context.options.allow_binary_download {
+                let instance = ManagedNodeRuntime {
+                    installation_path: ManagedNodeRuntime::installation_path()?,
+                };
+                if instance.is_valid().await {
+                    Some(Box::new(instance))
+                } else {
+                    None
+                }
+            } else {
+                bail!("no usable Node.js installation and binary downloads are disabled");
+            };
+
+        if let Some(instance) = instance {
+            {
+                let mut state = runtime.state.lock().await;
+                state.instance = Some(instance);
+                state.last_options = Some(context.options.clone());
+            }
+            Ok(ResourceAcquisition::Ready {
+                resource: Self {
+                    runtime,
+                    options: context.options.clone(),
+                },
+                action: None,
+            })
+        } else {
+            let options = context.options.clone();
+            Ok(ResourceAcquisition::RequiresAction(Box::new(move || {
+                async move {
+                    runtime.run_npm_subcommand(None, "--version", &[]).await?;
+                    Ok(Self { runtime, options })
+                }
+                .boxed_local()
+            })))
+        }
+    }
+}
+
+pub struct InstallNpmPackages {
+    pub directory: PathBuf,
+    pub packages: Vec<(String, String)>,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NpmPermissionSettings {
+    pub commands: Vec<CommandPermissionRule<NpmCommandKind>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NpmCommandKind {
+    Install,
+    BinaryPath,
+    LatestVersion,
+    InstalledVersion,
+    Run,
+}
+
+pub struct NodeBinaryPath;
+
+impl ManagedResourceCommand<Npm> for NodeBinaryPath {
+    type Output = Result<PathBuf>;
+    type PermissionSettings = NpmPermissionSettings;
+
+    fn command_kind(&self) -> NpmCommandKind {
+        NpmCommandKind::BinaryPath
+    }
+
+    fn permission(&self, settings: &NpmPermissionSettings) -> Option<ResourcePermission> {
+        settings
+            .commands
+            .iter()
+            .find(|rule| rule.command == self.command_kind())
+            .map(|rule| rule.permission)
+    }
+
+    fn permission_description(&self, _: &Npm) -> managed_resources::PermissionDescription {
+        managed_resources::PermissionDescription::default()
+            .emphasis("get the Node.js executable path")
+    }
+
+    async fn run(self, npm: &Npm, _: &gpui::BackgroundExecutor) -> Self::Output {
+        npm.runtime.binary_path().await
+    }
+}
+
+pub struct LatestNpmPackageVersion {
+    pub package: String,
+    pub requirement: Option<VersionReq>,
+}
+
+impl ManagedResourceCommand<Npm> for LatestNpmPackageVersion {
+    type Output = Result<Version>;
+    type PermissionSettings = NpmPermissionSettings;
+
+    fn command_kind(&self) -> NpmCommandKind {
+        NpmCommandKind::LatestVersion
+    }
+
+    fn permission(&self, settings: &NpmPermissionSettings) -> Option<ResourcePermission> {
+        settings
+            .commands
+            .iter()
+            .find(|rule| rule.command == self.command_kind())
+            .map(|rule| rule.permission)
+    }
+
+    fn permission_description(&self, _: &Npm) -> managed_resources::PermissionDescription {
+        let description = managed_resources::PermissionDescription::default()
+            .emphasis("query the npm registry")
+            .text(" for the latest version of ")
+            .code(&self.package);
+        match &self.requirement {
+            Some(requirement) => description.text(" matching ").code(requirement.to_string()),
+            None => description,
+        }
+    }
+
+    async fn run(self, npm: &Npm, _: &gpui::BackgroundExecutor) -> Self::Output {
+        npm.runtime
+            .npm_package_latest_version_with_requirement(&self.package, self.requirement.as_ref())
+            .await
+    }
+}
+
+pub struct InstalledNpmPackageVersion {
+    pub directory: PathBuf,
+    pub package: String,
+}
+
+impl ManagedResourceCommand<Npm> for InstalledNpmPackageVersion {
+    type Output = Result<Option<Version>>;
+    type PermissionSettings = NpmPermissionSettings;
+
+    fn command_kind(&self) -> NpmCommandKind {
+        NpmCommandKind::InstalledVersion
+    }
+
+    fn permission(&self, settings: &NpmPermissionSettings) -> Option<ResourcePermission> {
+        settings
+            .commands
+            .iter()
+            .find(|rule| rule.command == self.command_kind())
+            .map(|rule| rule.permission)
+    }
+
+    fn permission_description(&self, _: &Npm) -> managed_resources::PermissionDescription {
+        managed_resources::PermissionDescription::default()
+            .emphasis("look up the installed version")
+            .text(" of ")
+            .code(&self.package)
+            .text(" in ")
+            .code(self.directory.display().to_string())
+    }
+
+    async fn run(self, npm: &Npm, _: &gpui::BackgroundExecutor) -> Self::Output {
+        npm.runtime
+            .npm_package_installed_version(&self.directory, &self.package)
+            .await
+    }
+}
+
+impl ManagedResourceCommand<Npm> for InstallNpmPackages {
+    type Output = Result<()>;
+    type PermissionSettings = NpmPermissionSettings;
+
+    fn command_kind(&self) -> NpmCommandKind {
+        NpmCommandKind::Install
+    }
+
+    fn permission(&self, settings: &Self::PermissionSettings) -> Option<ResourcePermission> {
+        let command = self.command_kind();
+        settings
+            .commands
+            .iter()
+            .find(|rule| rule.command == command)
+            .map(|rule| rule.permission)
+    }
+
+    fn permission_description(&self, _: &Npm) -> managed_resources::PermissionDescription {
+        let mut description = managed_resources::PermissionDescription::default()
+            .emphasis("install npm packages")
+            .text(" ");
+        for (index, (name, version)) in self.packages.iter().enumerate() {
+            if index > 0 {
+                description = description.text(", ");
+            }
+            description = description.code(format!("{name}@{version}"));
+        }
+        description
+            .text(" in ")
+            .code(self.directory.display().to_string())
+    }
+
+    async fn run(self, npm: &Npm, _: &gpui::BackgroundExecutor) -> Self::Output {
+        let packages = self
+            .packages
+            .iter()
+            .map(|(name, version)| (name.as_str(), version.as_str()))
+            .collect::<Vec<_>>();
+        npm.runtime
+            .npm_install_packages(&self.directory, &packages)
+            .await
+    }
+}
+
+pub struct RunNpmSubcommand {
+    pub directory: Option<PathBuf>,
+    pub subcommand: String,
+    pub args: Vec<String>,
+}
+
+impl ManagedResourceCommand<Npm> for RunNpmSubcommand {
+    type Output = Result<Output>;
+    type PermissionSettings = NpmPermissionSettings;
+
+    fn command_kind(&self) -> NpmCommandKind {
+        if self.subcommand == "install" {
+            NpmCommandKind::Install
+        } else {
+            NpmCommandKind::Run
+        }
+    }
+
+    fn permission(&self, settings: &NpmPermissionSettings) -> Option<ResourcePermission> {
+        settings
+            .commands
+            .iter()
+            .find(|rule| rule.command == self.command_kind())
+            .map(|rule| rule.permission)
+    }
+
+    fn permission_description(&self, _: &Npm) -> managed_resources::PermissionDescription {
+        let mut description = managed_resources::PermissionDescription::default()
+            .emphasis("run npm")
+            .text(" ")
+            .code(&self.subcommand);
+        for argument in &self.args {
+            description = description.text(" ").code(argument);
+        }
+        if let Some(directory) = &self.directory {
+            description = description
+                .text(" in ")
+                .code(directory.display().to_string());
+        }
+        description
+    }
+
+    async fn run(self, npm: &Npm, executor: &gpui::BackgroundExecutor) -> Self::Output {
+        let runtime = npm.runtime.clone();
+        executor
+            .spawn(async move {
+                let args = self.args.iter().map(String::as_str).collect::<Vec<_>>();
+                runtime
+                    .run_npm_subcommand(self.directory.as_deref(), &self.subcommand, &args)
+                    .await
+            })
+            .await
+    }
+}
+
 pub enum VersionStrategy<'a> {
     /// Install if current version doesn't match pinned version
     Pin(&'a Version),
@@ -51,7 +361,10 @@ pub enum VersionStrategy<'a> {
 }
 
 #[derive(Clone)]
-pub struct NodeRuntime(Arc<Mutex<NodeRuntimeState>>);
+pub struct NodeRuntime {
+    state: Arc<Mutex<NodeRuntimeState>>,
+    managed_resources: Option<Entity<ManagedResourceStore>>,
+}
 
 struct NodeRuntimeState {
     http: Arc<dyn HttpClient>,
@@ -67,27 +380,85 @@ impl NodeRuntime {
         shell_env_loaded: Option<oneshot::Receiver<()>>,
         options: watch::Receiver<Option<NodeBinaryOptions>>,
     ) -> Self {
-        NodeRuntime(Arc::new(Mutex::new(NodeRuntimeState {
-            http,
-            instance: None,
-            last_options: None,
-            options,
-            shell_env_loaded: shell_env_loaded.unwrap_or(oneshot::channel().1).shared(),
-        })))
+        Self {
+            state: Arc::new(Mutex::new(NodeRuntimeState {
+                http,
+                instance: None,
+                last_options: None,
+                options,
+                shell_env_loaded: shell_env_loaded.unwrap_or(oneshot::channel().1).shared(),
+            })),
+            managed_resources: None,
+        }
     }
 
     pub fn unavailable() -> Self {
-        NodeRuntime(Arc::new(Mutex::new(NodeRuntimeState {
-            http: Arc::new(http_client::BlockedHttpClient),
-            instance: None,
-            last_options: None,
-            options: watch::channel(Some(NodeBinaryOptions::default())).1,
-            shell_env_loaded: oneshot::channel().1.shared(),
-        })))
+        Self::new(
+            Arc::new(http_client::BlockedHttpClient),
+            None,
+            watch::channel(Some(NodeBinaryOptions::default())).1,
+        )
+    }
+
+    pub fn with_managed_resources(mut self, store: Entity<ManagedResourceStore>) -> Self {
+        self.managed_resources = Some(store);
+        self
+    }
+
+    /// Keep access failures separate from command output so a denied lookup cannot
+    /// be mistaken for a cache miss and trigger an installation.
+    pub fn execute_command<Output: 'static>(
+        &self,
+        command: impl ManagedResourceCommand<Npm, Output = Output>,
+        bill: ResourceExecutionBill,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<Output>> {
+        let runtime = self.clone();
+        cx.spawn(async move |cx| {
+            let store = runtime
+                .managed_resources
+                .as_ref()
+                .context("Node runtime has no managed resource store")?;
+            let options = runtime.acquisition_options().await?;
+            let http = runtime.state.lock().await.http.clone();
+            store
+                .update(cx, |store, cx| {
+                    store.execute_command::<Npm, _>(
+                        "node".to_owned(),
+                        std::rc::Rc::new(NpmContext { http, options }),
+                        bill,
+                        command,
+                        cx,
+                    )
+                })
+                .await
+                .map_err(Into::into)
+        })
+    }
+
+    /// Reads configured acquisition options without discovering or installing Node.
+    pub async fn acquisition_options(&self) -> Result<NodeBinaryOptions> {
+        let (mut options, shell_env_loaded) = {
+            let state = self.state.lock().await;
+            (state.options.clone(), state.shell_env_loaded.clone())
+        };
+        let options = loop {
+            if let Some(options) = options.borrow().clone() {
+                break options;
+            }
+            options.changed().await?;
+        };
+        if options.allow_path_lookup && options.use_paths.is_none() {
+            // A missing loader is also used by headless and test runtimes.
+            if let Err(error) = shell_env_loaded.await {
+                log::debug!("Node shell environment loader unavailable: {error}");
+            }
+        }
+        Ok(options)
     }
 
     async fn instance(&self) -> Box<dyn NodeRuntimeTrait> {
-        let mut state = self.0.lock().await;
+        let mut state = self.state.lock().await;
 
         let options = loop {
             if let Some(options) = state.options.borrow().as_ref() {
@@ -223,7 +594,7 @@ impl NodeRuntime {
         subcommand: &str,
         args: &[&str],
     ) -> Result<Output> {
-        let http = self.0.lock().await.http.clone();
+        let http = self.state.lock().await.http.clone();
         self.instance()
             .await
             .run_npm_subcommand(directory, http.proxy(), subcommand, args)
@@ -247,7 +618,7 @@ impl NodeRuntime {
         subcommand: &str,
         args: &[&str],
     ) -> Result<NpmCommand> {
-        let http = self.0.lock().await.http.clone();
+        let http = self.state.lock().await.http.clone();
         self.instance()
             .await
             .npm_command(prefix_dir, http.proxy(), subcommand, args)
@@ -264,7 +635,7 @@ impl NodeRuntime {
         name: &str,
         version_requirement: Option<&VersionReq>,
     ) -> Result<Version> {
-        let http = self.0.lock().await.http.clone();
+        let http = self.state.lock().await.http.clone();
         let instance = self.instance().await;
         let output = instance
             .run_npm_subcommand(
@@ -618,9 +989,7 @@ impl ManagedNodeRuntime {
     #[cfg(windows)]
     const NPM_PATH: &str = "node_modules/npm/bin/npm-cli.js";
 
-    async fn install_if_needed(http: &Arc<dyn HttpClient>) -> Result<Self> {
-        log::info!("Node runtime install_if_needed");
-
+    fn installation_path() -> Result<PathBuf> {
         let os = match consts::OS {
             "macos" => "darwin",
             "linux" => "linux",
@@ -636,14 +1005,18 @@ impl ManagedNodeRuntime {
 
         let version = Self::VERSION;
         let folder_name = format!("node-{version}-{os}-{arch}");
-        let node_containing_dir = paths::data_dir().join("node");
-        let node_dir = node_containing_dir.join(folder_name);
+        Ok(paths::data_dir().join("node").join(folder_name))
+    }
+
+    async fn is_valid(&self) -> bool {
+        let node_dir = &self.installation_path;
         let node_binary = node_dir.join(Self::NODE_PATH);
         let npm_file = node_dir.join(Self::NPM_PATH);
         let node_ca_certs = env::var(NODE_CA_CERTS_ENV_VAR).unwrap_or_else(|_| String::new());
 
-        let valid = if fs::metadata(&node_binary).await.is_ok() {
+        if fs::metadata(&node_binary).await.is_ok() {
             let result = util::command::new_command(&node_binary)
+                .kill_on_drop(true)
                 .env(NODE_CA_CERTS_ENV_VAR, node_ca_certs)
                 .arg(npm_file)
                 .arg("--version")
@@ -667,8 +1040,7 @@ impl ManagedNodeRuntime {
                 }
                 Err(err) => {
                     log::warn!(
-                        "Zed managed Node.js binary at {} failed check, so re-downloading it. \
-                        Error: {}",
+                        "Zed managed Node.js binary at {} failed check. Error: {}",
                         node_binary.display(),
                         err
                     );
@@ -677,9 +1049,18 @@ impl ManagedNodeRuntime {
             }
         } else {
             false
-        };
+        }
+    }
 
-        if !valid {
+    async fn install_if_needed(http: &Arc<dyn HttpClient>) -> Result<Self> {
+        log::info!("Node runtime install_if_needed");
+
+        let runtime = Self {
+            installation_path: Self::installation_path()?,
+        };
+        let node_dir = &runtime.installation_path;
+        let node_containing_dir = paths::data_dir().join("node");
+        if !runtime.is_valid().await {
             _ = fs::remove_dir_all(&node_containing_dir).await;
             fs::create_dir(&node_containing_dir)
                 .await
@@ -692,8 +1073,12 @@ impl ManagedNodeRuntime {
             };
 
             let version = Self::VERSION;
+            let folder_name = node_dir
+                .file_name()
+                .context("missing Node.js installation folder name")?
+                .to_string_lossy();
             let file_name = format!(
-                "node-{version}-{os}-{arch}.{extension}",
+                "{folder_name}.{extension}",
                 extension = match archive_type {
                     ArchiveType::TarGz => "tar.gz",
                     ArchiveType::Zip => "zip",
@@ -727,9 +1112,7 @@ impl ManagedNodeRuntime {
         _ = fs::write(node_dir.join("blank_user_npmrc"), []).await;
         _ = fs::write(node_dir.join("blank_global_npmrc"), []).await;
 
-        anyhow::Ok(ManagedNodeRuntime {
-            installation_path: node_dir,
-        })
+        Ok(runtime)
     }
 }
 
@@ -774,6 +1157,7 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
         let attempt = || async {
             let npm_command = self.npm_command(directory, proxy, subcommand, args).await?;
             let mut command = util::command::new_command(npm_command.path);
+            command.kill_on_drop(true);
             command.args(npm_command.args);
             command.envs(npm_command.env);
             command.current_dir(npm_command.current_dir);
@@ -1094,6 +1478,7 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
     ) -> anyhow::Result<Output> {
         let npm_command = self.npm_command(directory, proxy, subcommand, args).await?;
         let mut command = util::command::new_command(npm_command.path);
+        command.kill_on_drop(true);
         command.args(npm_command.args);
         command.envs(npm_command.env);
         command.current_dir(npm_command.current_dir);
@@ -1377,14 +1762,307 @@ mod tests {
 
     use anyhow::{Result, bail};
     use http_client::Url;
+    use managed_resources::{ManagedResourceCommand as _, ResourcePermission};
     use semver::{Version, VersionReq};
 
     use super::{
-        ManagedNodeRuntime, NodeDiscoveryError, NodeRuntimeTrait, NpmInfo, SystemNodeRuntime,
+        InstallNpmPackages, LatestNpmPackageVersion, ManagedNodeRuntime, NodeBinaryPath,
+        NodeDiscoveryError, NodeRuntimeTrait, NpmInfo, NpmPermissionSettings, SystemNodeRuntime,
         VersionStrategy, build_npm_command_args, check_node_version,
         deserialize_npm_info_from_response, find_node_path, find_npm_path, npm_command_directory,
         proxy_argument, select_npm_package_version, should_install_npm_package_version,
     };
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn builtin_commands_use_shared_permissions_and_configured_runtime(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use super::{
+            ExecutionBillRoot, InstalledNpmPackageVersion, NodeBinaryOptions, NodeRuntime,
+            ResourceExecutionBill, RunNpmSubcommand,
+        };
+        use gpui::AppContext as _;
+        use managed_resources::{
+            ManagedResource, ManagedResourceStore, ResourceAccessError, ResourcePermissionRequest,
+        };
+        use std::{cell::Cell, os::unix::fs::PermissionsExt, rc::Rc, sync::Arc};
+
+        // Node acquisition resets its cache, so isolate the global data directory
+        // from the user's installation and from other tests in this process.
+        if env::var_os("ZED_BUILTIN_NODE_TEST_CHILD").is_none() {
+            let output = std::process::Command::new(env::current_exe().expect("test executable"))
+                .args([
+                    "--exact",
+                    "tests::builtin_commands_use_shared_permissions_and_configured_runtime",
+                    "--nocapture",
+                ])
+                .env("ZED_BUILTIN_NODE_TEST_CHILD", "1")
+                .env("ITERATIONS", "1")
+                .output()
+                .expect("isolated test process");
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        cx.executor().allow_parking();
+        let directory = tempfile::tempdir().expect("temporary runtime");
+        paths::set_custom_data_dir(&directory.path().join("data").to_string_lossy());
+        let node = directory.path().join("node");
+        let npm = directory.path().join("npm");
+        fs::write(&node, "#!/bin/sh\necho v22.0.0\n").expect("node fixture");
+        fs::write(
+            &npm,
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\npwd -P > \"$0.cwd\"\necho installed\n",
+        )
+        .expect("npm fixture");
+        for path in [&node, &npm] {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+                .expect("executable fixture");
+        }
+        let package_directory = directory.path().join("node_modules/example");
+        fs::create_dir_all(&package_directory).expect("package directory");
+        fs::write(
+            package_directory.join("package.json"),
+            r#"{"version":"3.1.4"}"#,
+        )
+        .expect("package metadata");
+
+        let bill = ResourceExecutionBill {
+            root: ExecutionBillRoot::AgentServer {
+                name: "test-agent".into(),
+            },
+            reasoning: vec!["Install the agent".into()],
+        };
+        let allow = Rc::new(Cell::new(false));
+        let approvals = Rc::new(Cell::new(0));
+        let store = cx.new(|_| {
+            let allow = allow.clone();
+            let approvals = approvals.clone();
+            let bill = bill.clone();
+            ManagedResourceStore::new(Default::default(), move |request, _| {
+                let ResourcePermissionRequest::ExecuteCommand {
+                    resource,
+                    bill: actual_bill,
+                    ..
+                } = request
+                else {
+                    panic!("local runtime must not require management");
+                };
+                assert_eq!(resource, super::Npm::id(&"node".to_owned()));
+                assert_eq!(actual_bill, bill);
+                approvals.set(approvals.get() + 1);
+                gpui::Task::ready(if allow.get() {
+                    ResourcePermission::Allowed
+                } else {
+                    ResourcePermission::Denied
+                })
+            })
+        });
+        let (mut sender, options) = watch::channel(Some(NodeBinaryOptions::default()));
+        let runtime = NodeRuntime::new(Arc::new(http_client::BlockedHttpClient), None, options)
+            .with_managed_resources(store);
+        let installed = || InstalledNpmPackageVersion {
+            directory: directory.path().to_path_buf(),
+            package: "example".into(),
+        };
+        let mut app = cx.to_async();
+        assert!(
+            runtime
+                .execute_command(installed(), bill.clone(), &mut app)
+                .await
+                .is_err(),
+            "package metadata must not bypass acquiring Node"
+        );
+        assert_eq!(approvals.get(), 0);
+        sender
+            .send(Some(NodeBinaryOptions {
+                use_paths: Some((node.clone(), npm.clone())),
+                ..Default::default()
+            }))
+            .expect("configure runtime");
+
+        let install = || RunNpmSubcommand {
+            directory: Some(directory.path().to_path_buf()),
+            subcommand: "install".into(),
+            args: vec!["@example/agent@^1.2.3".into(), "--save-exact".into()],
+        };
+        let error = runtime
+            .execute_command(install(), bill.clone(), &mut app)
+            .await
+            .expect_err("permission denied");
+        assert!(matches!(
+            error.downcast_ref::<ResourceAccessError>(),
+            Some(ResourceAccessError::CommandDenied)
+        ));
+        assert_eq!(approvals.get(), 1);
+        assert!(!directory.path().join("npm.args").exists());
+
+        allow.set(true);
+        let output = runtime
+            .execute_command(install(), bill.clone(), &mut app)
+            .await
+            .expect("permission allowed")
+            .expect("install succeeded");
+        assert_eq!(output.stdout, b"installed\n");
+        assert_eq!(
+            fs::read_to_string(directory.path().join("npm.args")).expect("arguments"),
+            format!(
+                "--prefix\n{}\ninstall\n--cache={}\n@example/agent@^1.2.3\n--save-exact\n",
+                directory.path().display(),
+                fs::canonicalize(directory.path())
+                    .expect("canonical directory")
+                    .join("data/node/cache")
+                    .display()
+            )
+        );
+        assert_eq!(
+            fs::read_to_string(directory.path().join("npm.cwd"))
+                .expect("working directory")
+                .trim(),
+            fs::canonicalize(directory.path())
+                .expect("canonical directory")
+                .to_str()
+                .expect("UTF-8 path")
+        );
+        assert_eq!(
+            runtime
+                .execute_command(installed(), bill.clone(), &mut app)
+                .await
+                .expect("permission allowed")
+                .expect("lookup succeeded"),
+            Some(Version::new(3, 1, 4))
+        );
+        assert_eq!(approvals.get(), 3);
+
+        fs::write(package_directory.join("package.json"), "invalid json")
+            .expect("invalid package metadata");
+        assert!(
+            runtime
+                .execute_command(installed(), bill.clone(), &mut app)
+                .await
+                .expect("permission failures stay separate from command failures")
+                .is_err()
+        );
+        sender
+            .send(Some(NodeBinaryOptions::default()))
+            .expect("disable acquisition");
+        assert!(
+            runtime
+                .execute_command(NodeBinaryPath, bill, &mut app)
+                .await
+                .is_err(),
+            "changed options must not reuse a stale runtime"
+        );
+        assert_eq!(approvals.get(), 4);
+    }
+
+    #[test]
+    fn npm_command_permissions_identify_operations_not_arguments() {
+        let serialized = serde_json::json!({"commands":[{
+            "permission":"prompt",
+            "command":"install"
+        }, {
+            "permission":"allowed",
+            "command":"binary_path"
+        }, {
+            "permission":"denied",
+            "command":"latest_version"
+        }, {
+            "permission":"prompt",
+            "command":"installed_version"
+        }, {
+            "permission":"denied",
+            "command":"run"
+        }]});
+        let settings: NpmPermissionSettings =
+            serde_json::from_value(serialized.clone()).expect("npm settings");
+        for (subcommand, permission) in [
+            ("install", ResourcePermission::Prompt),
+            ("run-script", ResourcePermission::Denied),
+        ] {
+            assert_eq!(
+                super::RunNpmSubcommand {
+                    directory: None,
+                    subcommand: subcommand.into(),
+                    args: vec!["example".into()],
+                }
+                .permission(&settings),
+                Some(permission),
+            );
+        }
+        assert_eq!(
+            super::InstalledNpmPackageVersion {
+                directory: PathBuf::from("/tmp/package"),
+                package: "typescript".into(),
+            }
+            .permission(&settings),
+            Some(ResourcePermission::Prompt)
+        );
+        assert_eq!(
+            NodeBinaryPath.permission(&settings),
+            Some(ResourcePermission::Allowed)
+        );
+        assert_eq!(
+            LatestNpmPackageVersion {
+                package: "typescript".into(),
+                requirement: None,
+            }
+            .permission(&settings),
+            Some(ResourcePermission::Denied)
+        );
+        assert_eq!(
+            serde_json::to_value(&settings).expect("serializable settings"),
+            serialized
+        );
+        let command = InstallNpmPackages {
+            directory: PathBuf::from("/tmp/npm-permission-test"),
+            packages: vec![
+                ("typescript".into(), "5.8.3".into()),
+                ("typescript-language-server".into(), "4.3.4".into()),
+            ],
+        };
+        assert_eq!(
+            command.permission(&settings),
+            Some(ResourcePermission::Prompt)
+        );
+        assert_eq!(
+            serde_json::to_value(command.command_kind()).expect("serializable command"),
+            serde_json::json!("install")
+        );
+        for other in [
+            InstallNpmPackages {
+                directory: PathBuf::from("/tmp/other"),
+                packages: command.packages.clone(),
+            },
+            InstallNpmPackages {
+                directory: command.directory.clone(),
+                packages: vec![
+                    ("typescript".into(), "5.9.0".into()),
+                    ("typescript-language-server".into(), "4.3.4".into()),
+                ],
+            },
+            InstallNpmPackages {
+                directory: command.directory.clone(),
+                packages: vec![("typescript".into(), "5.8.3".into())],
+            },
+        ] {
+            assert_eq!(
+                other.permission(&settings),
+                Some(ResourcePermission::Prompt)
+            );
+        }
+        assert!(
+            serde_json::from_value::<NpmPermissionSettings>(serde_json::json!({"commands":[{
+                "permission":"allowed","command":"unknown"
+            }]}))
+            .is_err()
+        );
+    }
 
     #[test]
     fn test_npm_commands_use_an_isolated_default_directory() -> Result<()> {

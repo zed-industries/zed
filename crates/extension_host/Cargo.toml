@@ -34,6 +34,7 @@ http_client.workspace = true
 language.workspace = true
 log.workspace = true
 lsp.workspace = true
+managed_resources.workspace = true
 moka.workspace = true
 node_runtime.workspace = true
 paths.workspace = true
@@ -71,6 +72,7 @@ reqwest_client.workspace = true
 theme = { workspace = true, features = ["test-support"] }
 theme_settings.workspace = true
 theme_extension.workspace = true
+watch.workspace = true
 zlog.workspace = true
 
 [[bench]]

@@ -102,9 +102,10 @@ impl LspInstaller for EsLintLspAdapter {
         version: GitHubLspBinaryVersion,
         container_dir: PathBuf,
         delegate: &Arc<dyn LspAdapterDelegate>,
-    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+        cx: AsyncApp,
+    ) -> impl Future<Output = Result<LanguageServerBinary>> + use<> {
         let delegate = delegate.clone();
-        let node = self.node.clone();
+        let node = crate::npm::NpmInstaller::new(&self.node, self, cx);
 
         async move {
             let destination_path = Self::build_destination_path(&container_dir);
@@ -161,12 +162,14 @@ impl LspInstaller for EsLintLspAdapter {
         &self,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
+        cx: AsyncApp,
     ) -> Option<LanguageServerBinary> {
+        let node = crate::npm::NpmInstaller::new(&self.node, self, cx);
         let server_path =
             Self::build_destination_path(&container_dir).join(EsLintLspAdapter::SERVER_PATH);
         fs::metadata(&server_path).await.ok()?;
         Some(LanguageServerBinary {
-            path: self.node.binary_path().await.ok()?,
+            path: node.binary_path().await.ok()?,
             env: None,
             arguments: eslint_server_binary_arguments(&server_path),
         })

@@ -570,6 +570,7 @@ impl SettingsStore {
     fn update_settings_file_inner(
         &self,
         fs: Arc<dyn Fs>,
+        server_settings: bool,
         update: Box<dyn Send + FnOnce(String, AsyncApp) -> Result<String>>,
     ) -> oneshot::Receiver<Result<()>> {
         let (tx, rx) = oneshot::channel::<Result<()>>();
@@ -604,7 +605,11 @@ impl SettingsStore {
                         }
 
                         cx.update_global(|store: &mut SettingsStore, cx| {
-                            store.set_user_settings(&new_text, cx).result().map(|_| ())
+                            if server_settings {
+                                store.set_server_settings(&new_text, cx)
+                            } else {
+                                store.set_user_settings(&new_text, cx).result().map(|_| ())
+                            }
                         })
                     }
                     .await;
@@ -640,6 +645,7 @@ impl SettingsStore {
         let mut update = Some(update);
         self.update_settings_file_inner(
             fs,
+            false,
             Box::new(move |old_text: String, cx: AsyncApp| {
                 cx.read_global(|store: &SettingsStore, cx| {
                     store.new_text_for_update_inner(old_text, &mut |content| {
@@ -657,9 +663,27 @@ impl SettingsStore {
     ) -> oneshot::Receiver<Result<()>> {
         self.update_settings_file_inner(
             fs,
+            false,
             Box::new(move |old_text: String, cx: AsyncApp| {
                 cx.read_global(|store: &SettingsStore, _cx| {
                     store.get_vscode_edits(old_text, &vscode_settings)
+                })
+            }),
+        )
+    }
+
+    /// Writes this host's settings file and applies it to the server settings layer.
+    pub fn update_server_settings_file(
+        &self,
+        fs: Arc<dyn Fs>,
+        update: impl 'static + Send + FnOnce(&mut SettingsContent),
+    ) -> oneshot::Receiver<Result<()>> {
+        self.update_settings_file_inner(
+            fs,
+            true,
+            Box::new(move |old_text, cx| {
+                cx.read_global(|store: &SettingsStore, _| {
+                    store.new_text_for_update(old_text, update)
                 })
             }),
         )

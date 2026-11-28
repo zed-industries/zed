@@ -38,6 +38,148 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
 
+/// Policies for managing binaries and executing commands.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(default)]
+pub struct ResourcePermissionsContent {
+    /// Permission for commands without an explicit override.
+    pub default: Option<ResourcePermission>,
+    /// Policy for management attempts, including network checks, downloads and updates.
+    pub management: Option<ResourceManagement>,
+    /// Ordered resource rules. The first matching entry wins.
+    pub resources: Vec<ResourcePermissionContent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ResourcePermissionContent {
+    pub resource: ResourceSpecifier,
+    pub management: Option<ResourceManagement>,
+    #[serde(flatten)]
+    pub settings: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum ResourceSpecifier {
+    All(ResourceKind),
+    Specific(ResourceId),
+}
+
+impl ResourceSpecifier {
+    pub fn matches(&self, id: &ResourceId) -> bool {
+        match self {
+            Self::All(kind) => *kind == ResourceKind::from(id),
+            Self::Specific(resource) => resource == id,
+        }
+    }
+}
+
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, strum::EnumDiscriminants,
+)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[strum_discriminants(name(ResourceKind))]
+#[strum_discriminants(derive(Serialize, Deserialize, JsonSchema))]
+#[strum_discriminants(serde(rename_all = "snake_case"))]
+pub enum ResourceId {
+    Npm { payload: NpmResourceId },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NpmResourceId {
+    pub name: String,
+}
+
+impl ResourcePermissionsContent {
+    pub fn resource(&self, id: &ResourceId) -> Option<&ResourcePermissionContent> {
+        self.resources
+            .iter()
+            .find(|entry| entry.resource.matches(id))
+    }
+
+    pub fn set_management_permission(
+        &mut self,
+        id: ResourceId,
+        permission: Option<ResourcePermission>,
+    ) {
+        let insertion_position = self
+            .resources
+            .iter()
+            .position(|entry| entry.resource.matches(&id))
+            .unwrap_or(self.resources.len());
+        let specifier = ResourceSpecifier::Specific(id);
+        let position = self
+            .resources
+            .iter()
+            .position(|entry| entry.resource == specifier);
+        if permission.is_some() {
+            let mut entry = if let Some(position) = position {
+                self.resources.remove(position)
+            } else {
+                ResourcePermissionContent {
+                    resource: specifier,
+                    management: None,
+                    settings: BTreeMap::new(),
+                }
+            };
+            entry.management = permission.map(Into::into);
+            self.resources.insert(insertion_position, entry);
+        } else if let Some(position) = position {
+            let entry = &mut self.resources[position];
+            entry.management = None;
+            if entry.settings.is_empty() {
+                self.resources.remove(position);
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CommandPermissionRule<T> {
+    pub permission: ResourcePermission,
+    pub command: T,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourcePermission {
+    Allowed,
+    Denied,
+    Prompt,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceManagement {
+    /// Zed may check for, install, and update its managed binaries.
+    Automatic,
+    /// Ask before each management attempt, including network checks.
+    Ask,
+    /// Only use existing binaries; never check for downloads or updates.
+    Never,
+}
+
+impl From<ResourceManagement> for ResourcePermission {
+    fn from(policy: ResourceManagement) -> Self {
+        match policy {
+            ResourceManagement::Automatic => Self::Allowed,
+            ResourceManagement::Ask => Self::Prompt,
+            ResourceManagement::Never => Self::Denied,
+        }
+    }
+}
+
+impl From<ResourcePermission> for ResourceManagement {
+    fn from(permission: ResourcePermission) -> Self {
+        match permission {
+            ResourcePermission::Allowed => Self::Automatic,
+            ResourcePermission::Prompt => Self::Ask,
+            ResourcePermission::Denied => Self::Never,
+        }
+    }
+}
+
 /// A non-negative size in pixels.
 ///
 /// Valid range: 0.0 and up
@@ -281,6 +423,10 @@ pub struct SettingsContent {
     /// Configuration for Node-related features
     pub node: Option<NodeBinarySettings>,
 
+    /// Permissions for acquiring and executing managed resources.
+    #[serde(rename = "experimental.permissions")]
+    pub experimental_permissions: Option<ResourcePermissionsContent>,
+
     pub proxy: Option<String>,
 
     /// Whether to reduce non-essential motion in the UI, such as loading
@@ -408,6 +554,7 @@ fallible_options::flattened_deserialize!(SettingsContent {
     options: {
         call_hierarchy, command_palette, file_finder, git_panel, git_graph, tabs, tab_bar, tab_switcher, status_bar, preview_tabs, agent,
         agent_servers, audio, auto_update, base_keymap, collaboration_panel, debugger, diagnostics,
+        experimental_permissions: "experimental.permissions",
         git,
         global_lsp_settings, image_viewer, markdown_preview, repl, helix_mode, hide_mouse,
         journal, log, line_indicator_format, language_models, copilot, outline_panel, project_panel,

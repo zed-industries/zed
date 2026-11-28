@@ -65,6 +65,7 @@ fn main() {
         let node_runtime = NodeRuntime::unavailable();
 
         let app_state = Arc::new(AppState {
+            managed_resources: AppState::create_managed_resources(fs.clone(), cx),
             languages,
             client,
             user_store,

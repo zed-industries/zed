@@ -526,7 +526,9 @@ message Envelope {
     TrashGlobalSkill trash_global_skill = 501;
     ResolveGlobalSkillPath resolve_global_skill_path = 502;
     ResolveGlobalSkillPathResponse resolve_global_skill_path_response = 503;
-    ApplyGlobalSkillFileOperation apply_global_skill_file_operation = 504; // current max
+    ApplyGlobalSkillFileOperation apply_global_skill_file_operation = 504;
+    ResourceApprovalRequest resource_approval_request = 505;
+    ResourceApprovalResponse resource_approval_response = 506; // current max
   }
 
   reserved 87 to 88;
@@ -623,4 +625,13 @@ message SpawnKernelResponse {
 message KillKernel {
   string kernel_id = 1;
   uint64 project_id = 2;
+}
+
+message ResourceApprovalRequest {
+  uint64 project_id = 1;
+  string description = 2;
+}
+
+message ResourceApprovalResponse {
+  bool allowed = 1;
 }

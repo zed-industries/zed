@@ -993,6 +993,7 @@ fn init_app_state(cx: &mut App) -> Arc<AppState> {
 
     let app_state = Arc::new(AppState {
         client,
+        managed_resources: AppState::create_managed_resources(fs.clone(), cx),
         fs,
         languages,
         user_store,

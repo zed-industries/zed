@@ -66,6 +66,7 @@ impl HeadlessExtensionStore {
         extension_dir: PathBuf,
         extension_host_proxy: Arc<ExtensionHostProxy>,
         node_runtime: NodeRuntime,
+        managed_resources: Entity<managed_resources::ManagedResourceStore>,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx| {
@@ -85,6 +86,7 @@ impl HeadlessExtensionStore {
                     fs.clone(),
                     http_client.clone(),
                     node_runtime,
+                    managed_resources,
                     extension_host_proxy.clone(),
                     extension_dir.join("work"),
                     cx,

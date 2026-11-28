@@ -340,6 +340,8 @@ impl TestServer {
         let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
         let session = cx.new(|cx| AppSession::new(Session::test(), cx));
         let app_state = Arc::new(workspace::AppState {
+            managed_resources: cx
+                .update(|cx| workspace::AppState::create_managed_resources(fs.clone(), cx)),
             client: client.clone(),
             user_store: user_store.clone(),
             workspace_store,

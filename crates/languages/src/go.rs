@@ -128,10 +128,11 @@ impl LspInstaller for GoLspAdapter {
         version: Option<String>,
         container_dir: PathBuf,
         delegate: &Arc<dyn LspAdapterDelegate>,
-    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+        cx: AsyncApp,
+    ) -> impl Future<Output = Result<LanguageServerBinary>> + use<> {
         let delegate = delegate.clone();
 
-        async move {
+        cx.background_executor().spawn(async move {
             let go = delegate.which("go".as_ref()).await.unwrap_or("go".into());
             let go_version_output = util::command::new_command(&go)
                 .args(["version"])
@@ -195,13 +196,14 @@ impl LspInstaller for GoLspAdapter {
                 arguments: server_binary_arguments(),
                 env: None,
             })
-        }
+        })
     }
 
     async fn cached_server_binary(
         &self,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
+        _: AsyncApp,
     ) -> Option<LanguageServerBinary> {
         get_cached_server_binary(&container_dir).await
     }

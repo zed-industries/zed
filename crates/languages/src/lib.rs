@@ -23,6 +23,7 @@ mod css;
 mod eslint;
 mod go;
 mod json;
+mod npm;
 mod package_json;
 mod python;
 mod rust;

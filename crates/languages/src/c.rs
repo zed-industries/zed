@@ -73,10 +73,11 @@ impl LspInstaller for CLspAdapter {
         version: GitHubLspBinaryVersion,
         container_dir: PathBuf,
         delegate: &Arc<dyn LspAdapterDelegate>,
-    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+        cx: AsyncApp,
+    ) -> impl Future<Output = Result<LanguageServerBinary>> + use<> {
         let delegate = delegate.clone();
 
-        async move {
+        cx.background_executor().spawn(async move {
             ensure_arch_compatibility()?;
 
             let GitHubLspBinaryVersion {
@@ -150,13 +151,14 @@ impl LspInstaller for CLspAdapter {
             .await?;
 
             Ok(binary)
-        }
+        })
     }
 
     async fn cached_server_binary(
         &self,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
+        _: AsyncApp,
     ) -> Option<LanguageServerBinary> {
         get_cached_server_binary(container_dir).await
     }

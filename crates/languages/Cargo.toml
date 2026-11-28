@@ -67,8 +67,11 @@ util.workspace = true
 
 [dev-dependencies]
 fs = { workspace = true, features = ["test-support"] }
+http_client.workspace = true
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
+managed_resources.workspace = true
+paths.workspace = true
 pretty_assertions.workspace = true
 tempfile.workspace = true
 settings = { workspace = true, features = ["test-support"] }
@@ -83,3 +86,4 @@ tree-sitter-rust.workspace = true
 tree-sitter-typescript.workspace = true
 tree-sitter = { workspace = true, features = ["wasm"] }
 unindent.workspace = true
+watch.workspace = true

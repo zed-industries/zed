@@ -6,15 +6,107 @@
 
 #![cfg(unix)]
 
-use anyhow::Result;
-use node_runtime::{NodeBinaryOptions, NodeDiscoveryError, NodeRuntime, SystemNode};
+use anyhow::{Context as _, Result};
+use async_compression::futures::bufread::GzipEncoder;
+use futures::AsyncReadExt as _;
+use http_client::{FakeHttpClient, Response};
+use managed_resources::{ManagedResource, ManagedResourceCommand, ResourceAcquisition};
+use node_runtime::{
+    InstallNpmPackages, NodeBinaryOptions, NodeDiscoveryError, NodeRuntime, Npm, NpmContext,
+    SystemNode,
+};
 use semver::Version;
 use std::{
     env, fs,
     os::unix::fs::{PermissionsExt, symlink},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering::SeqCst},
+    },
 };
+
+#[test]
+fn cancelling_npm_stops_its_process() -> Result<()> {
+    use futures::{
+        FutureExt as _,
+        future::{Either, select},
+    };
+    use std::time::{Duration, Instant};
+
+    if env::var_os(CHILD).is_some() {
+        let directory = env::current_dir()?;
+        paths::set_custom_data_dir(&directory.join("data").to_string_lossy());
+        return smol::block_on(async {
+            let runtime = NodeRuntime::new(
+                Arc::new(http_client::BlockedHttpClient),
+                None,
+                watch::channel(Some(NodeBinaryOptions {
+                    use_paths: Some((directory.join("node"), directory.join("npm"))),
+                    ..Default::default()
+                }))
+                .1,
+            );
+            let running = runtime
+                .run_npm_subcommand(Some(&directory), "install", &[])
+                .boxed();
+            let started = async {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                loop {
+                    if let Ok(pid) = smol::fs::read_to_string(directory.join("npm.pid")).await
+                        && !pid.trim().is_empty()
+                    {
+                        return Ok(pid.trim().to_owned());
+                    }
+                    anyhow::ensure!(Instant::now() < deadline, "npm did not start");
+                    smol::Timer::after(Duration::from_millis(10)).await;
+                }
+            }
+            .boxed();
+            let (pid, running) = match select(running, started).await {
+                Either::Left((result, _)) => {
+                    anyhow::bail!("npm ended before cancellation: {result:?}")
+                }
+                Either::Right((pid, running)) => (pid?, running),
+            };
+            drop(running);
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let alive = smol::process::Command::new("/bin/kill")
+                    .args(["-0", &pid])
+                    .output()
+                    .await?
+                    .status
+                    .success();
+                if !alive {
+                    return Ok(());
+                }
+                if Instant::now() >= deadline {
+                    let killed = smol::process::Command::new("/bin/kill")
+                        .args(["-KILL", &pid])
+                        .output()
+                        .await?;
+                    anyhow::ensure!(killed.status.success(), "could not clean up npm fixture");
+                    anyhow::bail!("cancelled npm process was still running");
+                }
+                smol::Timer::after(Duration::from_millis(10)).await;
+            }
+        });
+    }
+    let directory = tempfile::tempdir()?;
+    fake_node(directory.path(), "echo v22.0.0")?;
+    let npm = directory.path().join("npm");
+    fs::write(
+        &npm,
+        "#!/bin/sh\necho $$ > \"$0.pid\"\nexec /bin/sleep 30\n",
+    )?;
+    fs::set_permissions(&npm, fs::Permissions::from_mode(0o755))?;
+    run_child_test(
+        "cancelling_npm_stops_its_process",
+        directory.path(),
+        directory.path(),
+    )
+}
 
 #[test]
 fn configured_runtime_keeps_node_available_when_npm_is_missing() -> Result<()> {
@@ -61,6 +153,257 @@ fn configured_runtime_keeps_node_available_when_npm_is_missing() -> Result<()> {
     fake_node(directory.path(), "printf 'v22.0.0\\n'")?;
     run_child_test(
         "configured_runtime_keeps_node_available_when_npm_is_missing",
+        directory.path(),
+        directory.path(),
+    )
+}
+
+#[test]
+fn managed_npm_obtains_and_installs_packages() -> Result<()> {
+    if env::var_os(CHILD).is_some() {
+        let executor = gpui::BackgroundExecutor::new(Arc::new(gpui::TestDispatcher::new(0)));
+        let directory = env::current_dir()?;
+        paths::set_custom_data_dir(&directory.join("data").to_string_lossy());
+        return smol::block_on(async {
+            let npm_path = directory.join("npm");
+            let key = "example-language-server".to_owned();
+            assert_eq!(
+                serde_json::to_value(Npm::id(&key))?,
+                serde_json::json!({"kind": "npm", "payload": {"name": "example-language-server"}})
+            );
+            assert_ne!(Npm::id(&key), Npm::id(&"another-language-server".into()));
+            let mut context = NpmContext {
+                http: Arc::new(http_client::BlockedHttpClient),
+                options: NodeBinaryOptions {
+                    use_paths: Some((directory.join("node"), npm_path.clone())),
+                    ..Default::default()
+                },
+            };
+            let ResourceAcquisition::Ready { resource, .. } = Npm::obtain(&key, &context).await?
+            else {
+                anyhow::bail!("configured Node must be usable without npm");
+            };
+            assert_eq!(
+                node_runtime::NodeBinaryPath
+                    .run(&resource, &executor)
+                    .await?,
+                directory.join("node")
+            );
+            assert!(
+                node_runtime::LatestNpmPackageVersion {
+                    package: "test-package".into(),
+                    requirement: None,
+                }
+                .run(&resource, &executor)
+                .await
+                .is_err()
+            );
+
+            fs::write(
+                &npm_path,
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\npwd -P > \"$0.cwd\"\n",
+            )?;
+            fs::set_permissions(&npm_path, fs::Permissions::from_mode(0o755))?;
+            let ResourceAcquisition::Ready { resource, action } =
+                Npm::obtain(&key, &context).await?
+            else {
+                anyhow::bail!("configured NPM must be ready");
+            };
+            assert!(action.is_none());
+            let npm = resource;
+            assert!(npm.is_current(&context));
+            assert!(
+                !directory.join("npm.args").exists(),
+                "discovery must not run npm"
+            );
+
+            let options = std::mem::take(&mut context.options);
+            assert!(!npm.is_current(&context));
+            assert!(Npm::obtain(&key, &context).await.is_err());
+            let installation_directory = directory.join("language server");
+            fs::create_dir(&installation_directory)?;
+            let install = || InstallNpmPackages {
+                directory: installation_directory.clone(),
+                packages: vec![
+                    ("@example/server".into(), "1.2.3".into()),
+                    ("another-package".into(), "4.5.6".into()),
+                ],
+            };
+            let description = install().permission_description(&npm).to_string();
+            for detail in [
+                "@example/server",
+                "1.2.3",
+                "another-package",
+                "4.5.6",
+                installation_directory.to_str().expect("UTF-8 test path"),
+            ] {
+                assert!(description.contains(detail), "{description}");
+            }
+            install().run(&npm, &executor).await?;
+            let arguments = fs::read_to_string(directory.join("npm.args"))?;
+            let arguments = arguments.lines().collect::<Vec<_>>();
+            assert!(
+                arguments.starts_with(&[
+                    "--prefix",
+                    installation_directory.to_str().expect("UTF-8 test path"),
+                    "install",
+                ]),
+                "{arguments:?}"
+            );
+            assert!(
+                arguments.windows(2).any(
+                    |arguments| arguments == ["@example/server@1.2.3", "another-package@4.5.6"]
+                ),
+                "{arguments:?}"
+            );
+            assert_eq!(
+                fs::read_to_string(directory.join("npm.cwd"))?.trim(),
+                fs::canonicalize(&installation_directory)?.to_string_lossy()
+            );
+
+            fs::write(
+                &npm_path,
+                "#!/bin/sh\necho 'installation failed' >&2\nexit 7\n",
+            )?;
+            let error = install()
+                .run(&npm, &executor)
+                .await
+                .expect_err("npm failure propagates");
+            assert!(error.to_string().contains("installation failed"));
+            context.options = options;
+            assert!(matches!(
+                Npm::obtain(&key, &context).await?,
+                ResourceAcquisition::Ready { .. }
+            ));
+            fs::write(
+                directory.join("node"),
+                "#!/bin/sh\necho 'broken node' >&2\nexit 7\n",
+            )?;
+            assert!(Npm::obtain(&key, &context).await.is_err());
+            Ok(())
+        });
+    }
+
+    let directory = tempfile::tempdir()?;
+    fake_node(directory.path(), "printf 'v22.0.0\\n'")?;
+    run_child_test(
+        "managed_npm_obtains_and_installs_packages",
+        directory.path(),
+        directory.path(),
+    )
+}
+
+#[test]
+fn managed_npm_downloads_only_when_allowed() -> Result<()> {
+    if env::var_os(CHILD).is_some() {
+        let executor = gpui::BackgroundExecutor::new(Arc::new(gpui::TestDispatcher::new(0)));
+        let directory = env::current_dir()?;
+        let data_directory = directory.join("data");
+        fs::create_dir(&data_directory)?;
+        paths::set_custom_data_dir(&data_directory.to_string_lossy());
+        return smol::block_on(async {
+            let downloads = Arc::new(AtomicUsize::new(0));
+            let http = FakeHttpClient::create({
+                let downloads = downloads.clone();
+                move |request| {
+                    downloads.fetch_add(1, SeqCst);
+                    async move {
+                        assert_eq!(request.uri().host(), Some("nodejs.org"));
+                        let folder = request
+                            .uri()
+                            .path()
+                            .rsplit('/')
+                            .next()
+                            .and_then(|name| name.strip_suffix(".tar.gz"))
+                            .context("expected a Node tarball request")?;
+                        let mut archive = async_tar::Builder::new(Vec::new());
+                        for (path, contents) in [
+                            ("bin/node", "#!/bin/sh\nexec /bin/sh \"$@\"\n"),
+                            (
+                                "bin/npm",
+                                "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.args\"\n",
+                            ),
+                        ] {
+                            let mut header = async_tar::Header::new_gnu();
+                            header.set_size(contents.len() as u64);
+                            header.set_mode(0o755);
+                            archive
+                                .append_data(
+                                    &mut header,
+                                    format!("{folder}/{path}"),
+                                    contents.as_bytes(),
+                                )
+                                .await?;
+                        }
+                        let archive = archive.into_inner().await?;
+                        let mut compressed = Vec::new();
+                        GzipEncoder::new(archive.as_slice())
+                            .read_to_end(&mut compressed)
+                            .await?;
+                        Ok(Response::new(compressed.into()))
+                    }
+                }
+            });
+            let key = "example-language-server".to_owned();
+            let mut context = NpmContext {
+                http,
+                options: NodeBinaryOptions::default(),
+            };
+            assert!(Npm::obtain(&key, &context).await.is_err());
+            context.options.allow_path_lookup = true;
+            assert!(Npm::obtain(&key, &context).await.is_err());
+            assert_eq!(downloads.load(SeqCst), 0);
+            assert!(!data_directory.join("node").exists());
+
+            context.options = NodeBinaryOptions {
+                allow_binary_download: true,
+                ..Default::default()
+            };
+            let ResourceAcquisition::RequiresAction(action) = Npm::obtain(&key, &context).await?
+            else {
+                anyhow::bail!("missing NPM must require an acquisition action");
+            };
+            assert_eq!(downloads.load(SeqCst), 0);
+            assert!(!data_directory.join("node").exists());
+            let npm = action().await?;
+            let installation = fs::read_dir(data_directory.join("node"))?
+                .next()
+                .transpose()?
+                .context("expected an installed Node runtime")?
+                .path();
+            let arguments = fs::read_to_string(installation.join("bin/npm.args"))?;
+            assert!(arguments.lines().any(|argument| argument == "--version"));
+            let package_directory = directory.join("language server");
+            fs::create_dir(&package_directory)?;
+            InstallNpmPackages {
+                directory: package_directory,
+                packages: vec![("@example/server".into(), "1.2.3".into())],
+            }
+            .run(&npm, &executor)
+            .await?;
+            let arguments = fs::read_to_string(installation.join("bin/npm.args"))?;
+            assert!(arguments.lines().any(|argument| argument == "install"));
+            assert!(
+                arguments
+                    .lines()
+                    .any(|argument| argument == "@example/server@1.2.3")
+            );
+
+            assert!(matches!(
+                Npm::obtain(&key, &context).await?,
+                ResourceAcquisition::Ready { action: None, .. }
+            ));
+            assert_eq!(downloads.load(SeqCst), 1);
+            context.options = NodeBinaryOptions::default();
+            assert!(Npm::obtain(&key, &context).await.is_err());
+            assert_eq!(downloads.load(SeqCst), 1);
+            Ok(())
+        });
+    }
+
+    let directory = tempfile::tempdir()?;
+    run_child_test(
+        "managed_npm_downloads_only_when_allowed",
         directory.path(),
         directory.path(),
     )
