@@ -8,8 +8,8 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use gpui::{
-    App, AssetSource, Bounds, Context, SharedString, Window, WindowBounds, WindowOptions, div,
-    prelude::*, px, rgb, size, svg,
+    App, AssetSource, Bounds, Context, SharedString, SvgData, Window, WindowBounds, WindowOptions,
+    div, prelude::*, px, rgb, size, svg,
 };
 use gpui_platform::application;
 
@@ -40,7 +40,11 @@ impl AssetSource for Assets {
     }
 }
 
-struct SvgExample;
+const DRAGON: SvgData = SvgData::from_static(include_bytes!("dragon.svg"));
+
+struct SvgExample {
+    shared: SvgData,
+}
 
 impl Render for SvgExample {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
@@ -58,15 +62,10 @@ impl Render for SvgExample {
                     .size_8()
                     .text_color(rgb(0xff0000)),
             )
+            .child(svg().data(DRAGON).size_8().text_color(rgb(0x00ff00)))
             .child(
                 svg()
-                    .path("svg/dragon.svg")
-                    .size_8()
-                    .text_color(rgb(0x00ff00)),
-            )
-            .child(
-                svg()
-                    .path("svg/dragon.svg")
+                    .data(self.shared.clone())
                     .size_8()
                     .text_color(rgb(0x0000ff)),
             )
@@ -88,7 +87,11 @@ fn run_example() {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |_, cx| cx.new(|_| SvgExample),
+                |_, cx| {
+                    cx.new(|_| SvgExample {
+                        shared: SvgData::from_shared(std::sync::Arc::from(DRAGON.as_bytes())),
+                    })
+                },
             )
             .unwrap();
             cx.activate(true);
