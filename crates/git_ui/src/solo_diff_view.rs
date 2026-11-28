@@ -1,9 +1,12 @@
-use crate::{git_panel::GitStatusEntry, git_panel_settings::GitPanelSettings, git_status_icon};
+use crate::{
+    git_panel::GitStatusEntry, git_panel_settings::GitPanelSettings, git_status_icon,
+    staged_diff::StagedDiffHunkRenderer, unstaged_diff::UnstagedDiffHunkRenderer,
+};
 use anyhow::{Context as _, Result};
 use buffer_diff::DiffHunkSecondaryStatus;
 use editor::{
-    DiffStyleControls, Direction, Editor, EditorEvent, EditorSettings, SplittableEditor,
-    ToggleSplitDiff,
+    DefaultDiffHunkRenderer, DiffHunkRenderer, DiffStyleControls, Direction, Editor, EditorEvent,
+    EditorSettings, SplittableEditor, ToggleSplitDiff,
     actions::{GoToHunk, GoToPreviousHunk},
     file_status_label_color,
 };
@@ -12,14 +15,17 @@ use git::{
     repository::RepoPath, status::StageStatus,
 };
 use gpui::{
-    Action, App, AppContext as _, Context, Empty, Entity, EventEmitter, FocusHandle, Focusable,
-    HighlightStyle, IntoElement, Render, Subscription, Task, WeakEntity, Window,
+    Action, App, AppContext as _, AsyncApp, Context, Empty, Entity, EventEmitter, FocusHandle,
+    Focusable, HighlightStyle, IntoElement, Render, Subscription, Task, WeakEntity, Window,
 };
 use language::{Anchor, Buffer, HighlightedText, OffsetRangeExt as _, Point};
 use multi_buffer::{MultiBuffer, PathKey, excerpt_context_lines};
 use project::{
     Project, ProjectPath,
-    git_store::{Repository, RepositoryId},
+    git_store::{
+        Repository, RepositoryId,
+        diff_buffer_list::{DiffBase, LoadedDiffBuffer},
+    },
 };
 use settings::{Settings, SettingsStore, StatusStyle};
 use std::{
@@ -27,7 +33,7 @@ use std::{
     ops::Range,
     sync::Arc,
 };
-use ui::{DiffStat, Divider, Tooltip, prelude::*};
+use ui::{ContextMenu, DiffStat, Divider, PopoverMenu, Tooltip, prelude::*};
 use util::paths::{PathExt as _, PathStyle};
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
@@ -41,8 +47,11 @@ pub struct SoloDiffView {
     repository: Entity<Repository>,
     repository_id: RepositoryId,
     repo_path: RepoPath,
-    buffer: Entity<Buffer>,
-    diff: Entity<buffer_diff::BufferDiff>,
+    diff_base: DiffBase,
+    // `main_buffer` is the worktree buffer, even for staged views: GitStore drops
+    // the diff state once it is released, and unlike the index buffer's file it
+    // follows renames.
+    loaded_diff_buffer: LoadedDiffBuffer,
     editor: Entity<SplittableEditor>,
     workspace: WeakEntity<Workspace>,
     showing_full_file: bool,
@@ -53,6 +62,7 @@ impl SoloDiffView {
     pub fn open_or_focus(
         entry: GitStatusEntry,
         repository: Entity<Repository>,
+        diff_base: DiffBase,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut App,
@@ -64,7 +74,10 @@ impl SoloDiffView {
         let existing = workspace_entity
             .read(cx)
             .items_of_type::<SoloDiffView>(cx)
-            .find(|item| item.read(cx).matches(&repository, &entry.repo_path, cx));
+            .find(|item| {
+                item.read(cx)
+                    .matches(&repository, &entry.repo_path, &diff_base, cx)
+            });
         if let Some(existing) = existing {
             workspace_entity.update(cx, |workspace, cx| {
                 workspace.activate_item(&existing, true, true, window, cx);
@@ -91,11 +104,8 @@ impl SoloDiffView {
                     project.open_buffer(project_path.clone(), cx)
                 })
                 .await?;
-            let diff = project
-                .update(cx, |project, cx| {
-                    project.open_uncommitted_diff(buffer.clone(), cx)
-                })
-                .await?;
+            let loaded_diff_buffer =
+                Self::buffer_diff_for_diff_base(&project, buffer, &diff_base, cx).await?;
 
             workspace_entity.update_in(cx, |workspace, window, cx| {
                 let workspace_handle = cx.entity();
@@ -104,8 +114,8 @@ impl SoloDiffView {
                         project,
                         repository,
                         repo_path,
-                        buffer,
-                        diff,
+                        diff_base,
+                        loaded_diff_buffer,
                         workspace_handle,
                         window,
                         cx,
@@ -118,20 +128,76 @@ impl SoloDiffView {
         })
     }
 
+    async fn buffer_diff_for_diff_base(
+        project: &Entity<Project>,
+        worktree_buffer: Entity<Buffer>,
+        diff_base: &DiffBase,
+        cx: &mut AsyncApp,
+    ) -> Result<LoadedDiffBuffer> {
+        let (display_buffer, diff) = match diff_base {
+            DiffBase::Head | DiffBase::Merge { .. } => {
+                let diff = project
+                    .update(cx, |project, cx| {
+                        project.open_uncommitted_diff(worktree_buffer.clone(), cx)
+                    })
+                    .await?;
+                (worktree_buffer.clone(), diff)
+            }
+            DiffBase::Index => {
+                let diff = project
+                    .update(cx, |project, cx| {
+                        project.open_unstaged_diff(worktree_buffer.clone(), cx)
+                    })
+                    .await?;
+                (worktree_buffer.clone(), diff)
+            }
+            DiffBase::Staged => {
+                let (diff, index_buffer) = project
+                    .update(cx, |project, cx| {
+                        project.open_staged_diff(worktree_buffer.clone(), cx)
+                    })
+                    .await?;
+                (index_buffer, diff)
+            }
+        };
+        Ok(LoadedDiffBuffer {
+            display_buffer,
+            main_buffer: worktree_buffer,
+            diff,
+            conflict_set: None,
+        })
+    }
+
+    fn diff_hunk_renderer_for_diff_base(diff_base: &DiffBase) -> Arc<dyn DiffHunkRenderer> {
+        match diff_base {
+            DiffBase::Head | DiffBase::Merge { .. } => Arc::new(DefaultDiffHunkRenderer),
+            DiffBase::Index => Arc::new(UnstagedDiffHunkRenderer),
+            DiffBase::Staged => Arc::new(StagedDiffHunkRenderer),
+        }
+    }
+
     fn new(
         project: Entity<Project>,
         repository: Entity<Repository>,
         repo_path: RepoPath,
-        buffer: Entity<Buffer>,
-        diff: Entity<buffer_diff::BufferDiff>,
+        diff_base: DiffBase,
+        loaded_diff_buffer: LoadedDiffBuffer,
         workspace: Entity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let repository_id = repository.read(cx).id;
         let showing_full_file = EditorSettings::get_global(cx).file_diff.show_full_file;
-        let multibuffer = cx
-            .new(|cx| Self::build_multibuffer(buffer.clone(), diff.clone(), showing_full_file, cx));
+        let multibuffer = cx.new(|cx| {
+            Self::build_multibuffer(
+                loaded_diff_buffer.display_buffer.clone(),
+                loaded_diff_buffer.diff.clone(),
+                showing_full_file,
+                cx,
+            )
+        });
+        let is_read_only = diff_base == DiffBase::Staged;
+        let renderer = Self::diff_hunk_renderer_for_diff_base(&diff_base);
         let editor = cx.new(|cx| {
             let editor = SplittableEditor::new(
                 EditorSettings::get_global(cx).diff_view_style,
@@ -141,7 +207,9 @@ impl SoloDiffView {
                 window,
                 cx,
             );
+            editor.set_diff_hunk_renderer(Some(renderer), cx);
             editor.rhs_editor().update(cx, |editor, cx| {
+                editor.set_read_only(is_read_only);
                 editor.set_should_serialize(false, cx);
                 editor.set_allow_git_diff_scrollbar_markers(showing_full_file, cx);
                 let snapshot = editor.snapshot(window, cx);
@@ -176,8 +244,8 @@ impl SoloDiffView {
             repository,
             repository_id,
             repo_path,
-            buffer,
-            diff,
+            diff_base,
+            loaded_diff_buffer,
             editor,
             workspace: workspace.downgrade(),
             showing_full_file,
@@ -238,18 +306,20 @@ impl SoloDiffView {
             return;
         }
 
+        let display_buffer = self.loaded_diff_buffer.display_buffer.clone();
+        let diff = self.loaded_diff_buffer.diff.clone();
         let (ranges, context_line_count) =
-            Self::excerpt_ranges(&self.buffer, &self.diff, showing_full_file, cx);
+            Self::excerpt_ranges(&display_buffer, &diff, showing_full_file, cx);
 
         self.editor.update(cx, |editor, cx| {
-            let path = PathKey::for_buffer(&self.buffer, cx);
+            let path = PathKey::for_buffer(&display_buffer, cx);
             editor.remove_excerpts_for_path(path.clone(), cx);
             editor.update_excerpts_for_path(
                 path,
-                self.buffer.clone(),
+                display_buffer,
                 ranges,
                 context_line_count,
-                self.diff.clone(),
+                diff,
                 cx,
             );
             editor.rhs_editor().update(cx, |editor, cx| {
@@ -261,8 +331,64 @@ impl SoloDiffView {
         cx.notify();
     }
 
-    fn matches(&self, repository: &Entity<Repository>, repo_path: &RepoPath, cx: &App) -> bool {
-        self.repository_id == repository.read(cx).id && &self.repo_path == repo_path
+    fn matches(
+        &self,
+        repository: &Entity<Repository>,
+        repo_path: &RepoPath,
+        diff_base: &DiffBase,
+        cx: &App,
+    ) -> bool {
+        self.repository_id == repository.read(cx).id
+            && &self.repo_path == repo_path
+            && &self.diff_base == diff_base
+    }
+
+    pub fn diff_base_for_repo_path(
+        &self,
+        repository: &Entity<Repository>,
+        repo_path: &RepoPath,
+        cx: &App,
+    ) -> Option<DiffBase> {
+        if self.repository_id == repository.read(cx).id && &self.repo_path == repo_path {
+            Some(self.diff_base.clone())
+        } else {
+            None
+        }
+    }
+
+    fn open_diff_base(
+        solo_diff: &Entity<Self>,
+        diff_base: DiffBase,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let solo_diff = solo_diff.read(cx);
+        let Some(status_entry) = solo_diff
+            .repository
+            .read(cx)
+            .status_for_path(&solo_diff.repo_path)
+        else {
+            return;
+        };
+        let entry = GitStatusEntry {
+            repo_path: solo_diff.repo_path.clone(),
+            status: status_entry.status,
+            staging: status_entry.status.staging(),
+            diff_stat: status_entry.diff_stat,
+        };
+        let repository = solo_diff.repository.clone();
+        let workspace = solo_diff.workspace.clone();
+        Self::open_or_focus(entry, repository, diff_base, workspace.clone(), window, cx)
+            .detach_and_notify_err(workspace, window, cx);
+    }
+
+    /// Returns the project path of the buffer's file, if it has one. Unlike
+    /// `Buffer::file` + `File::as_local`, this also works for remote files.
+    fn buffer_project_path(buffer: &Entity<Buffer>, cx: &App) -> Option<ProjectPath> {
+        buffer.read(cx).file().map(|file| ProjectPath {
+            worktree_id: file.worktree_id(cx),
+            path: file.path().clone(),
+        })
     }
 
     fn button_states(&self, cx: &App) -> SoloDiffButtonStates {
@@ -294,19 +420,27 @@ impl SoloDiffView {
         let mut stage = false;
         let mut unstage = false;
         for hunk in editor.diff_hunks_in_ranges(&ranges, &snapshot) {
-            match hunk.status.secondary {
-                DiffHunkSecondaryStatus::HasSecondaryHunk
-                | DiffHunkSecondaryStatus::SecondaryHunkAdditionPending => {
+            match self.diff_base {
+                DiffBase::Index => {
                     stage = true;
                 }
-                DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk => {
-                    stage = true;
+                DiffBase::Staged => {
                     unstage = true;
                 }
-                DiffHunkSecondaryStatus::NoSecondaryHunk
-                | DiffHunkSecondaryStatus::SecondaryHunkRemovalPending => {
-                    unstage = true;
-                }
+                DiffBase::Head | DiffBase::Merge { .. } => match hunk.status.secondary {
+                    DiffHunkSecondaryStatus::HasSecondaryHunk
+                    | DiffHunkSecondaryStatus::SecondaryHunkAdditionPending => {
+                        stage = true;
+                    }
+                    DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk => {
+                        stage = true;
+                        unstage = true;
+                    }
+                    DiffHunkSecondaryStatus::NoSecondaryHunk
+                    | DiffHunkSecondaryStatus::SecondaryHunkRemovalPending => {
+                        unstage = true;
+                    }
+                },
             }
         }
 
@@ -316,15 +450,23 @@ impl SoloDiffView {
             .status_for_path(&self.repo_path)
             .map(|entry| entry.status.staging())
             .unwrap_or(StageStatus::Unstaged);
+        let stage_file = stage_status.has_unstaged();
+        let show_stage_file = match self.diff_base {
+            DiffBase::Index => true,
+            DiffBase::Staged => false,
+            DiffBase::Head | DiffBase::Merge { .. } => stage_file,
+        };
 
         SoloDiffButtonStates {
             stage,
             unstage,
-            restore: stage || unstage,
+            // The staged view is read-only, so restoring its hunks is a no-op.
+            restore: (stage || unstage) && self.diff_base != DiffBase::Staged,
             prev_next,
             selection,
-            stage_file: stage_status.has_unstaged(),
+            stage_file,
             unstage_file: stage_status.has_staged(),
+            show_stage_file,
         }
     }
 
@@ -378,7 +520,9 @@ impl Item for SoloDiffView {
     }
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
-        self.buffer
+        let file_name = self
+            .loaded_diff_buffer
+            .main_buffer
             .read(cx)
             .file()
             .and_then(|file| {
@@ -394,13 +538,19 @@ impl Item for SoloDiffView {
                     .as_ref()
                     .display(PathStyle::local())
                     .into_owned()
-            })
-            .into()
+            });
+        match self.diff_base {
+            DiffBase::Index | DiffBase::Staged => {
+                format!("{file_name} ({})", diff_base_label(&self.diff_base)).into()
+            }
+            DiffBase::Head | DiffBase::Merge { .. } => file_name.into(),
+        }
     }
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
         Some(
-            self.buffer
+            self.loaded_diff_buffer
+                .main_buffer
                 .read(cx)
                 .file()
                 .map(|file| file.full_path(cx).compact().to_string_lossy().into_owned())
@@ -454,7 +604,12 @@ impl Item for SoloDiffView {
     }
 
     fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
-        self.editor.read(cx).active_project_path(cx)
+        // The index buffer's historic file is excluded from editor project paths,
+        // so staged views need the worktree buffer's path instead.
+        self.editor
+            .read(cx)
+            .active_project_path(cx)
+            .or_else(|| Self::buffer_project_path(&self.loaded_diff_buffer.main_buffer, cx))
     }
 
     fn set_nav_history(
@@ -712,6 +867,7 @@ struct SoloDiffButtonStates {
     selection: bool,
     stage_file: bool,
     unstage_file: bool,
+    show_stage_file: bool,
 }
 
 #[cfg(test)]
@@ -753,6 +909,292 @@ mod tests {
         assert_eq!(buffer_count, 1);
         assert!(has_expand_controls);
     }
+
+    fn init_test(cx: &mut TestAppContext) {
+        zlog::init_test();
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            language_model::init(cx);
+            editor::init(cx);
+            crate::init(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_solo_diff_view_diff_bases(cx: &mut TestAppContext) {
+        use git::repository::repo_path;
+        use git::status::{StatusCode, TrackedStatus};
+        use std::path::Path;
+        use util::path;
+        use workspace::MultiWorkspace;
+
+        init_test(cx);
+        let fs = project::FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            serde_json::json!({
+                ".git": {},
+                "partial.rs": "worktree one\nworktree two\nworktree three\n",
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            Path::new(path!("/project/.git")),
+            &[(
+                "partial.rs",
+                TrackedStatus {
+                    index_status: StatusCode::Modified,
+                    worktree_status: StatusCode::Modified,
+                }
+                .into(),
+            )],
+        );
+        fs.with_git_state(Path::new(path!("/project/.git")), true, |state| {
+            state.head_contents.insert(
+                repo_path("partial.rs"),
+                "head one\nhead two\nhead three\nhead four\n".into(),
+            );
+            state
+                .index_contents
+                .insert(repo_path("partial.rs"), "index one\nindex two\n".into());
+        })
+        .expect("fake repository should exist");
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |p, cx| p.active_repository(cx).unwrap());
+        let entry = GitStatusEntry {
+            repo_path: repo_path("partial.rs"),
+            status: TrackedStatus {
+                index_status: StatusCode::Modified,
+                worktree_status: StatusCode::Modified,
+            }
+            .into(),
+            staging: git::status::StageStatus::PartiallyStaged,
+            diff_stat: None,
+        };
+
+        let workspace_handle = workspace.downgrade();
+        let unstaged_view = cx
+            .update(|window, cx| {
+                SoloDiffView::open_or_focus(
+                    entry.clone(),
+                    repository.clone(),
+                    DiffBase::Index,
+                    workspace_handle.clone(),
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        unstaged_view.read_with(cx, |view, cx| {
+            assert_eq!(view.diff_base, DiffBase::Index);
+            assert_eq!(view.tab_content_text(0, cx), "partial.rs (Unstaged)");
+            assert_eq!(
+                view.loaded_diff_buffer.display_buffer.read(cx).text(),
+                "worktree one\nworktree two\nworktree three\n"
+            );
+            assert_eq!(
+                view.loaded_diff_buffer
+                    .diff
+                    .read(cx)
+                    .base_text_string(cx)
+                    .as_deref(),
+                Some("index one\nindex two\n")
+            );
+            assert!(!view.editor.read(cx).rhs_editor().read(cx).read_only(cx));
+            let button_states = view.button_states(cx);
+            assert!(button_states.show_stage_file);
+            assert!(button_states.stage_file);
+        });
+
+        let staged_view = cx
+            .update(|window, cx| {
+                SoloDiffView::open_or_focus(
+                    entry,
+                    repository,
+                    DiffBase::Staged,
+                    workspace_handle,
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        staged_view.read_with(cx, |view, cx| {
+            assert_eq!(view.diff_base, DiffBase::Staged);
+            assert_eq!(view.tab_content_text(0, cx), "partial.rs (Staged)");
+            assert_eq!(
+                view.loaded_diff_buffer.display_buffer.read(cx).text(),
+                "index one\nindex two\n"
+            );
+            assert_eq!(
+                view.loaded_diff_buffer
+                    .diff
+                    .read(cx)
+                    .base_text_string(cx)
+                    .as_deref(),
+                Some("head one\nhead two\nhead three\nhead four\n")
+            );
+            assert!(view.editor.read(cx).rhs_editor().read(cx).read_only(cx));
+            let button_states = view.button_states(cx);
+            assert!(!button_states.restore);
+            assert!(!button_states.show_stage_file);
+            assert!(button_states.unstage_file);
+        });
+
+        let project_path = project.read_with(cx, |project, cx| {
+            project
+                .find_project_path(path!("/project/partial.rs"), cx)
+                .expect("partial.rs should have a project path")
+        });
+        staged_view.read_with(cx, |view, cx| {
+            assert!(view.editor.read(cx).active_project_path(cx).is_none());
+            assert_eq!(view.active_project_path(cx), Some(project_path.clone()));
+        });
+
+        let buffer =
+            staged_view.read_with(cx, |view, _| view.loaded_diff_buffer.main_buffer.clone());
+        buffer.update(cx, |buffer, cx| {
+            let mut file = project::File::from_dyn(buffer.file())
+                .expect("worktree buffer should have a project file")
+                .clone();
+            file.is_local = false;
+            buffer.file_updated(Arc::new(file), cx);
+        });
+
+        staged_view.read_with(cx, |view, cx| {
+            assert!(
+                view.loaded_diff_buffer
+                    .main_buffer
+                    .read(cx)
+                    .file()
+                    .expect("file should exist")
+                    .as_local()
+                    .is_none()
+            );
+            assert_eq!(view.active_project_path(cx), Some(project_path));
+        });
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(crate::file_diff_entry(workspace, cx).is_some());
+        });
+
+        cx.update(|window, cx| {
+            SoloDiffView::open_diff_base(&staged_view, DiffBase::Index, window, cx);
+        });
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(
+                workspace.active_item_as::<SoloDiffView>(cx),
+                Some(unstaged_view.clone())
+            );
+            assert_eq!(workspace.items_of_type::<SoloDiffView>(cx).count(), 2);
+        });
+
+        cx.update(|window, cx| {
+            SoloDiffView::open_diff_base(&unstaged_view, DiffBase::Head, window, cx);
+        });
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            let view = workspace
+                .active_item_as::<SoloDiffView>(cx)
+                .expect("a solo diff should be active");
+            assert_eq!(view.read(cx).diff_base, DiffBase::Head);
+            assert_eq!(view.read(cx).tab_content_text(0, cx), "partial.rs");
+            assert!(
+                view.read(cx)
+                    .editor
+                    .read(cx)
+                    .rhs_editor()
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .all_diff_hunks_expanded()
+            );
+            assert_eq!(workspace.items_of_type::<SoloDiffView>(cx).count(), 3);
+        });
+    }
+}
+
+fn diff_base_label(diff_base: &DiffBase) -> &'static str {
+    match diff_base {
+        DiffBase::Head | DiffBase::Merge { .. } => "Uncommitted",
+        DiffBase::Index => "Unstaged",
+        DiffBase::Staged => "Staged",
+    }
+}
+
+fn render_diff_base_picker(solo_diff: &Entity<SoloDiffView>, cx: &App) -> impl IntoElement {
+    let selected_diff_base = solo_diff.read(cx).diff_base.clone();
+    let solo_diff = solo_diff.downgrade();
+    PopoverMenu::new("solo-diff-base-picker")
+        .menu(move |window, cx| {
+            let solo_diff = solo_diff.upgrade()?;
+            let (selected_diff_base, stage_status) = {
+                let solo_diff = solo_diff.read(cx);
+                let stage_status = solo_diff
+                    .repository
+                    .read(cx)
+                    .status_for_path(&solo_diff.repo_path)
+                    .map(|entry| entry.status.staging());
+                (solo_diff.diff_base.clone(), stage_status)
+            };
+            Some(ContextMenu::build(window, cx, move |mut menu, _, _| {
+                for diff_base in [DiffBase::Head, DiffBase::Index, DiffBase::Staged] {
+                    let has_changes = stage_status.is_some_and(|stage_status| match diff_base {
+                        DiffBase::Index => stage_status.has_unstaged(),
+                        DiffBase::Staged => stage_status.has_staged(),
+                        DiffBase::Head | DiffBase::Merge { .. } => true,
+                    });
+                    let is_selected = diff_base == selected_diff_base;
+                    let solo_diff = solo_diff.clone();
+                    menu = menu.toggleable_entry_disabled_when(
+                        diff_base_label(&diff_base),
+                        is_selected,
+                        !is_selected && !has_changes,
+                        IconPosition::Start,
+                        None,
+                        move |window, cx| {
+                            SoloDiffView::open_diff_base(&solo_diff, diff_base.clone(), window, cx);
+                        },
+                    );
+                }
+                menu
+            }))
+        })
+        .trigger_with_tooltip(
+            Button::new("solo-diff-base", diff_base_label(&selected_diff_base)).end_icon(
+                Icon::new(IconName::ChevronDown)
+                    .size(IconSize::XSmall)
+                    .color(Color::Muted),
+            ),
+            Tooltip::text("Select Diff Base"),
+        )
 }
 
 impl Render for SoloDiffGitToolbar {
@@ -762,14 +1204,18 @@ impl Render for SoloDiffGitToolbar {
         };
 
         let focus_handle = solo_diff.focus_handle(cx);
+        let diff_base_picker = render_diff_base_picker(&solo_diff, cx);
         let solo_diff = solo_diff.read(cx);
         let button_states = solo_diff.button_states(cx);
         let status_entry = solo_diff
             .repository
             .read(cx)
             .status_for_path(&solo_diff.repo_path);
-        let diff_stat = status_entry.and_then(|entry| entry.diff_stat);
-
+        let diff_stat = status_entry.and_then(|entry| match solo_diff.diff_base {
+            DiffBase::Staged => entry.staged_diff_stat,
+            DiffBase::Index => entry.unstaged_diff_stat,
+            _ => entry.diff_stat,
+        });
         h_flex()
             .my_neg_1()
             .py_1()
@@ -780,6 +1226,8 @@ impl Render for SoloDiffGitToolbar {
                 DiffStat::new("solo-diff-stat", stat.added as usize, stat.deleted as usize)
             }))
             .child(Divider::vertical().ml_1())
+            .child(diff_base_picker)
+            .child(Divider::vertical())
             .child(
                 h_group_sm()
                     .child(
@@ -866,7 +1314,7 @@ impl Render for SoloDiffGitToolbar {
                     ),
             )
             .child(Divider::vertical())
-            .child(h_group_sm().child(if button_states.stage_file {
+            .child(h_group_sm().child(if button_states.show_stage_file {
                 Button::new("stage-file", "Stage All")
                     .width(rems_from_px(80_f32))
                     .disabled(!button_states.stage_file)
