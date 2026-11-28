@@ -3,17 +3,18 @@ mod icon_theme_selector;
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, UpdateGlobal, WeakEntity,
-    Window, actions,
+    App, Context, DismissEvent, Entity, EventEmitter, Focusable, KeybindingKeystroke, Keystroke,
+    Modifiers, ModifiersChangedEvent, MouseButton, Render, UpdateGlobal, WeakEntity, Window,
+    actions,
 };
 use picker::{Picker, PickerDelegate};
 use settings::{Settings, SettingsStore, update_settings_file};
-use std::sync::Arc;
+use std::{rc::Rc, sync::Arc};
 use theme::{Appearance, SystemAppearance, Theme, ThemeMeta, ThemeRegistry};
 use theme_settings::{
     ThemeAppearanceMode, ThemeName, ThemeSelection, ThemeSettings, appearance_to_mode,
 };
-use ui::{ListItem, ListItemSpacing, prelude::*, v_flex};
+use ui::{KeyBinding, ListItem, ListItemSpacing, prelude::*, v_flex};
 use util::ResultExt;
 use workspace::{ModalView, Workspace, ui::HighlightedLabel, with_active_or_new_workspace};
 use zed_actions::{ExtensionCategoryFilter, Extensions};
@@ -55,6 +56,7 @@ fn toggle_theme_selector(
             cx.entity().downgrade(),
             fs,
             toggle.themes_filter.as_ref(),
+            window,
             cx,
         );
         ThemeSelector::new(delegate, window, cx)
@@ -73,6 +75,7 @@ fn toggle_icon_theme_selector(
             cx.entity().downgrade(),
             fs,
             toggle.themes_filter.as_ref(),
+            window,
             cx,
         );
         IconThemeSelector::new(delegate, window, cx)
@@ -105,10 +108,11 @@ impl Focusable for ThemeSelector {
 }
 
 impl Render for ThemeSelector {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("ThemeSelector")
             .w(rems(34.))
+            .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .child(self.picker.clone())
     }
 }
@@ -120,7 +124,31 @@ impl ThemeSelector {
         cx: &mut Context<Self>,
     ) -> Self {
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        cx.observe_pending_input(window, Self::observe_pending_input)
+            .detach();
+
         Self { picker }
+    }
+
+    fn handle_modifiers_changed(
+        &mut self,
+        event: &ModifiersChangedEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.picker.update(cx, |picker, cx| {
+            picker
+                .delegate
+                .set_compare_key_held(event.modifiers.alt, cx);
+        });
+    }
+
+    fn observe_pending_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.picker.update(cx, |picker, cx| {
+            picker
+                .delegate
+                .set_compare_key_held(window.modifiers().alt, cx)
+        })
     }
 }
 
@@ -131,7 +159,10 @@ struct ThemeSelectorDelegate {
     /// The theme that was selected before the `ThemeSelector` menu was opened.
     ///
     /// We use this to return back to theme that was set if the user dismisses the menu.
-    original_theme_settings: ThemeSettings,
+    /// Only the theme selection is kept, rather than all of the theme settings,
+    /// so that returning to it doesn't undo changes made to other settings
+    /// while the menu is open.
+    original_theme_selection: ThemeSelection,
     /// The current system appearance.
     original_system_appearance: Appearance,
     /// The id of the original theme in the list of themes.
@@ -144,6 +175,10 @@ struct ThemeSelectorDelegate {
     original_theme_id: Option<usize>,
     /// The currently selected new theme.
     new_theme: Arc<Theme>,
+    /// Whether the original theme is temporarily being shown instead of the
+    /// currently selected new theme.
+    compare_button_held: bool,
+    compare_key_held: bool,
     selection_completed: bool,
     selected_theme: Option<Arc<Theme>>,
     selected_index: usize,
@@ -155,10 +190,11 @@ impl ThemeSelectorDelegate {
         selector: WeakEntity<ThemeSelector>,
         fs: Arc<dyn Fs>,
         themes_filter: Option<&Vec<String>>,
+        window: &Window,
         cx: &mut Context<ThemeSelector>,
     ) -> Self {
         let original_theme = cx.theme().clone();
-        let original_theme_settings = ThemeSettings::get_global(cx).clone();
+        let original_theme_selection = ThemeSettings::get_global(cx).theme.clone();
         let original_system_appearance = SystemAppearance::global(cx).0;
 
         let registry = ThemeRegistry::global(cx);
@@ -207,10 +243,12 @@ impl ThemeSelectorDelegate {
             fs,
             themes,
             matches,
-            original_theme_settings,
+            original_theme_selection,
             original_system_appearance,
             original_theme_id,
-            new_theme: original_theme, // Start with the original theme.
+            new_theme: original_theme,
+            compare_button_held: false,
+            compare_key_held: window.modifiers().alt,
             selected_index,
             selection_completed: false,
             selected_theme: None,
@@ -249,26 +287,136 @@ impl ThemeSelectorDelegate {
 
     fn revert_theme(&mut self, cx: &mut App) {
         if !self.selection_completed {
-            SettingsStore::update_global(cx, |store, _| {
-                store.override_global(self.original_theme_settings.clone());
-            });
+            self.restore_original_theme(cx);
             self.selection_completed = true;
         }
     }
 
+    /// Updates the global (in-memory) theme settings to show the theme that
+    /// was set before the selector was opened.
+    fn restore_original_theme(&self, cx: &mut App) {
+        SettingsStore::update_global(cx, |store, _| {
+            let mut theme_settings = store.get::<ThemeSettings>(None).clone();
+            theme_settings.theme = self.original_theme_selection.clone();
+            store.override_global(theme_settings);
+        });
+    }
+
     fn set_theme(&mut self, new_theme: Arc<Theme>, cx: &mut App) {
-        // Update the global (in-memory) theme settings.
+        self.new_theme = new_theme;
+
+        if !self.showing_original_theme() {
+            self.override_global_theme(cx);
+        }
+    }
+
+    /// Updates the global (in-memory) theme settings to show the currently
+    /// selected new theme.
+    fn override_global_theme(&self, cx: &mut App) {
         SettingsStore::update_global(cx, |store, _| {
             override_global_theme(
                 store,
-                &new_theme,
-                &self.original_theme_settings.theme,
+                &self.new_theme,
+                &self.original_theme_selection,
                 self.original_system_appearance,
             )
         });
-
-        self.new_theme = new_theme;
     }
+
+    fn set_compare_key_held(
+        &mut self,
+        state: bool,
+        cx: &mut Context<Picker<ThemeSelectorDelegate>>,
+    ) {
+        if self.selection_completed || self.compare_key_held == state {
+            return;
+        }
+
+        self.compare_key_held = state;
+        self.update_showing_original_theme(cx);
+    }
+
+    fn set_compare_button_held(
+        &mut self,
+        state: bool,
+        cx: &mut Context<Picker<ThemeSelectorDelegate>>,
+    ) {
+        if self.selection_completed || self.compare_button_held == state {
+            return;
+        }
+
+        self.compare_button_held = state;
+        self.update_showing_original_theme(cx);
+    }
+
+    fn showing_original_theme(&self) -> bool {
+        self.compare_button_held || self.compare_key_held
+    }
+
+    fn update_showing_original_theme(&mut self, cx: &mut Context<Picker<ThemeSelectorDelegate>>) {
+        if self.showing_original_theme() {
+            self.restore_original_theme(cx);
+        } else {
+            self.override_global_theme(cx);
+        }
+
+        cx.notify();
+    }
+}
+
+/// Renders the footer button that, while pressed, shows the theme that was set
+/// before the selector was opened, just like holding `alt` does.
+pub(crate) fn render_compare_button(
+    set_compare_button_held: impl Fn(bool, &mut App) + 'static,
+    cx: &App,
+) -> impl IntoElement {
+    let set_compare_button_held = Rc::new(set_compare_button_held);
+
+    // There's no action bound to holding `alt`, so the keystroke is built by
+    // hand, using `alt` as the key in order to have it rendered just like the
+    // keybindings of other buttons.
+    let alt_keystroke = KeybindingKeystroke::from_keystroke(Keystroke {
+        modifiers: Modifiers::none(),
+        key: "alt".into(),
+        key_char: None,
+    });
+
+    // `Button` only reports clicks, so pressing and releasing is handled by a
+    // wrapping element.
+    div()
+        .on_mouse_down(MouseButton::Left, {
+            let set_compare_button_held = set_compare_button_held.clone();
+            move |_, window, cx| {
+                // Like clickable buttons do, keep the mouse down from moving
+                // focus away from the picker's editor.
+                window.prevent_default();
+                set_compare_button_held(true, cx);
+            }
+        })
+        // The mouse may be released anywhere in the window, so the release is
+        // handled both over and outside of the button. The original theme is
+        // kept if `alt` is still being held.
+        .capture_any_mouse_up({
+            let set_compare_button_held = set_compare_button_held.clone();
+            move |event, _window, cx| {
+                if event.button == MouseButton::Left {
+                    set_compare_button_held(false, cx);
+                }
+            }
+        })
+        .on_mouse_up_out(MouseButton::Left, move |_, _window, cx| {
+            set_compare_button_held(false, cx);
+        })
+        .child(
+            div()
+                .debug_selector(|| "compare-theme-button".to_string())
+                .child(Button::new("compare-theme", "Compare").key_binding(
+                    KeyBinding::from_keystrokes(
+                        [alt_keystroke].into(),
+                        KeyBinding::is_vim_mode(cx),
+                    ),
+                )),
+        )
 }
 
 /// Overrides the global (in-memory) theme settings.
@@ -532,6 +680,25 @@ impl PickerDelegate for ThemeSelectorDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<gpui::AnyElement> {
+        // The button is kept while the original theme is being shown, even if the selection moves
+        // to the original theme, so that releasing the button is still handled.
+        let show_compare_button =
+            self.showing_original_theme() || !self.is_original_theme(self.selected_index);
+        let compare_button = show_compare_button.then(|| {
+            let picker = cx.entity().downgrade();
+
+            render_compare_button(
+                move |state, cx| {
+                    picker
+                        .update(cx, |picker, cx| {
+                            picker.delegate.set_compare_button_held(state, cx);
+                        })
+                        .log_err();
+                },
+                cx,
+            )
+        });
+
         Some(
             h_flex()
                 .p_2()
@@ -551,7 +718,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
                             cx.open_url("https://zed.dev/docs/themes");
                         })),
                 )
-                .child(
+                .child(h_flex().gap_2().children(compare_button).child(
                     Button::new("more-themes", "Install Themes").on_click(cx.listener({
                         move |_, _, window, cx| {
                             window.dispatch_action(
@@ -563,7 +730,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
                             );
                         }
                     })),
-                )
+                ))
                 .into_any_element(),
         )
     }
@@ -575,9 +742,10 @@ mod tests {
     use gpui::{TestAppContext, VisualTestContext};
     use project::Project;
     use serde_json::json;
+    use settings::FontSize;
     use theme::{Appearance, ThemeFamily, ThemeRegistry, default_color_scales};
     use util::path;
-    use workspace::MultiWorkspace;
+    use workspace::{MultiWorkspace, Workspace};
 
     fn init_test(cx: &mut TestAppContext) -> Arc<workspace::AppState> {
         cx.update(|cx| {
@@ -618,7 +786,9 @@ mod tests {
         });
     }
 
-    async fn setup_test(cx: &mut TestAppContext) -> Arc<workspace::AppState> {
+    async fn setup_workspace(
+        cx: &mut TestAppContext,
+    ) -> (Entity<Workspace>, &mut VisualTestContext) {
         let app_state = init_test(cx);
         register_test_themes(cx);
         app_state
@@ -626,7 +796,14 @@ mod tests {
             .as_fake()
             .insert_tree(path!("/test"), json!({}))
             .await;
-        app_state
+
+        let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+
+        (workspace, cx)
     }
 
     fn open_theme_selector(
@@ -669,14 +846,130 @@ mod tests {
         picker.read_with(cx, |picker, _| picker.delegate.new_theme.name.to_string())
     }
 
+    fn shown_theme_name(cx: &mut VisualTestContext) -> String {
+        cx.read(|cx| {
+            ThemeSettings::get_global(cx)
+                .theme
+                .name(SystemAppearance::global(cx).0)
+                .0
+                .to_string()
+        })
+    }
+
+    fn select_theme(
+        picker: &Entity<Picker<ThemeSelectorDelegate>>,
+        theme_name: &str,
+        cx: &mut VisualTestContext,
+    ) {
+        let target_index = picker.read_with(cx, |picker, _| {
+            picker
+                .delegate
+                .matches
+                .iter()
+                .position(|theme_match| theme_match.string == theme_name)
+                .expect("theme should be in the list of matches")
+        });
+        picker.update_in(cx, |picker, window, cx| {
+            picker.set_selected_index(target_index, None, true, window, cx);
+        });
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_theme_selector_shows_original_while_alt_is_held(cx: &mut TestAppContext) {
+        let (workspace, cx) = setup_workspace(cx).await;
+        let original_theme_name = shown_theme_name(cx);
+        let picker = open_theme_selector(&workspace, cx);
+
+        select_theme(&picker, "Test Light", cx);
+        assert_eq!(shown_theme_name(cx), "Test Light");
+
+        cx.simulate_modifiers_change(Modifiers::alt());
+        assert_eq!(
+            shown_theme_name(cx),
+            original_theme_name,
+            "original theme should be shown while alt is held"
+        );
+
+        select_theme(&picker, "Test Dark A", cx);
+        assert_eq!(
+            shown_theme_name(cx),
+            original_theme_name,
+            "changing the selection while alt is held should keep showing the original theme"
+        );
+        assert_eq!(previewed_theme_name(&picker, cx), "Test Dark A");
+
+        cx.simulate_modifiers_change(Modifiers::none());
+        assert_eq!(
+            shown_theme_name(cx),
+            "Test Dark A",
+            "selected theme should be shown again once alt is released"
+        );
+    }
+
+    #[gpui::test]
+    async fn shows_selected_theme_when_binding_starts_with_alt(cx: &mut TestAppContext) {
+        let (workspace, cx) = setup_workspace(cx).await;
+        let original_theme_name = shown_theme_name(cx);
+
+        // With a binding that starts with a lone `alt`, releasing `alt` is
+        // handled as the first keystroke of that binding, so the modifiers
+        // changed event for the release never reaches the theme selector.
+        cx.update(|_, cx| cx.bind_keys([gpui::KeyBinding::new("alt x", Reload, None)]));
+        let picker = open_theme_selector(&workspace, cx);
+
+        select_theme(&picker, "Test Light", cx);
+        assert_ne!(shown_theme_name(cx), original_theme_name);
+        assert_eq!(shown_theme_name(cx), "Test Light");
+
+        cx.simulate_modifiers_change(Modifiers::alt());
+        assert_eq!(
+            shown_theme_name(cx),
+            original_theme_name,
+            "original theme should be shown while alt is held"
+        );
+
+        cx.simulate_modifiers_change(Modifiers::none());
+        assert_eq!(
+            shown_theme_name(cx),
+            "Test Light",
+            "selected theme should be shown again once alt is released"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_theme_selector_shows_original_while_button_is_held(cx: &mut TestAppContext) {
+        let (workspace, cx) = setup_workspace(cx).await;
+        let original_theme_name = shown_theme_name(cx);
+        let picker = open_theme_selector(&workspace, cx);
+
+        select_theme(&picker, "Test Light", cx);
+        assert_eq!(shown_theme_name(cx), "Test Light");
+        assert_ne!(shown_theme_name(cx), original_theme_name);
+
+        let button_center = cx
+            .debug_bounds("compare-theme-button")
+            .expect("should be able to find button's bounds")
+            .center();
+
+        cx.simulate_mouse_down(button_center, MouseButton::Left, Modifiers::none());
+        assert_eq!(shown_theme_name(cx), original_theme_name);
+
+        // Simulate pressing and then releasing `alt` to ensure it doesn't
+        // affect the theme comparison, as the mouse button is still held.
+        cx.simulate_modifiers_change(Modifiers::alt());
+        assert_eq!(shown_theme_name(cx), original_theme_name);
+        cx.simulate_modifiers_change(Modifiers::none());
+        assert_eq!(shown_theme_name(cx), original_theme_name);
+
+        cx.simulate_mouse_up(button_center, MouseButton::Left, Modifiers::none());
+        assert_eq!(shown_theme_name(cx), "Test Light");
+        assert_ne!(shown_theme_name(cx), original_theme_name);
+    }
+
     #[gpui::test]
     async fn test_theme_selector_preserves_selection_on_empty_filter(cx: &mut TestAppContext) {
-        let app_state = setup_test(cx).await;
-        let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace =
-            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let (workspace, cx) = setup_workspace(cx).await;
         let picker = open_theme_selector(&workspace, cx);
 
         let target_index = picker.read_with(cx, |picker, _| {
@@ -714,5 +1007,41 @@ mod tests {
             "Test Light",
             "previewed theme should be preserved after clearing an empty filter"
         );
+    }
+
+    #[gpui::test]
+    async fn does_not_revert_ui_font_size_setting(cx: &mut TestAppContext) {
+        let (workspace, cx) = setup_workspace(cx).await;
+        let original_theme_name = shown_theme_name(cx);
+        let picker = open_theme_selector(&workspace, cx);
+
+        select_theme(&picker, "Test Light", cx);
+        assert_eq!(shown_theme_name(cx), "Test Light");
+        assert_ne!(shown_theme_name(cx), original_theme_name);
+
+        let ui_font_size = |cx: &mut VisualTestContext| {
+            cx.read(|cx| ThemeSettings::get_global(cx).ui_font_size_settings())
+        };
+
+        // Update the `ui_font_size` setting to a different value to verify that
+        // holding `alt` only restores `ThemeSettings::theme` and not the other
+        // fields.
+        assert_ne!(ui_font_size(cx), px(18.0));
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.ui_font_size = Some(FontSize(18.0))
+                });
+            });
+        });
+        assert_eq!(ui_font_size(cx), px(18.0));
+
+        cx.simulate_modifiers_change(Modifiers::alt());
+        assert_eq!(shown_theme_name(cx), original_theme_name);
+        assert_eq!(ui_font_size(cx), px(18.0));
+
+        cx.simulate_modifiers_change(Modifiers::none());
+        assert_eq!(shown_theme_name(cx), "Test Light");
+        assert_eq!(ui_font_size(cx), px(18.0));
     }
 }

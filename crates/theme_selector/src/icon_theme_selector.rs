@@ -1,8 +1,8 @@
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, UpdateGlobal, WeakEntity,
-    Window,
+    App, Context, DismissEvent, Entity, EventEmitter, Focusable, ModifiersChangedEvent, Render,
+    UpdateGlobal, WeakEntity, Window,
 };
 use picker::{Picker, PickerDelegate};
 use settings::{Settings as _, SettingsStore, update_settings_file};
@@ -13,6 +13,8 @@ use ui::{ListItem, ListItemSpacing, prelude::*, v_flex};
 use util::ResultExt;
 use workspace::{ModalView, ui::HighlightedLabel};
 use zed_actions::{ExtensionCategoryFilter, Extensions};
+
+use crate::render_compare_button;
 
 pub(crate) struct IconThemeSelector {
     picker: Entity<Picker<IconThemeSelectorDelegate>>,
@@ -46,15 +48,40 @@ impl IconThemeSelector {
         cx: &mut Context<Self>,
     ) -> Self {
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        cx.observe_pending_input(window, Self::observe_pending_input)
+            .detach();
+
         Self { picker }
+    }
+
+    fn handle_modifiers_changed(
+        &mut self,
+        event: &ModifiersChangedEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.picker.update(cx, |picker, cx| {
+            picker
+                .delegate
+                .set_compare_key_held(event.modifiers.alt, cx);
+        });
+    }
+
+    fn observe_pending_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.picker.update(cx, |picker, cx| {
+            picker
+                .delegate
+                .set_compare_key_held(window.modifiers().alt, cx)
+        })
     }
 }
 
 impl Render for IconThemeSelector {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("IconThemeSelector")
             .w(rems(34.))
+            .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .child(self.picker.clone())
     }
 }
@@ -64,6 +91,8 @@ pub(crate) struct IconThemeSelectorDelegate {
     themes: Vec<ThemeMeta>,
     matches: Vec<StringMatch>,
     original_theme: IconThemeName,
+    compare_button_held: bool,
+    compare_key_held: bool,
     selection_completed: bool,
     selected_theme: Option<IconThemeName>,
     selected_index: usize,
@@ -75,6 +104,7 @@ impl IconThemeSelectorDelegate {
         selector: WeakEntity<IconThemeSelector>,
         fs: Arc<dyn Fs>,
         themes_filter: Option<&Vec<String>>,
+        window: &Window,
         cx: &mut Context<IconThemeSelector>,
     ) -> Self {
         let theme_settings = ThemeSettings::get_global(cx);
@@ -115,6 +145,8 @@ impl IconThemeSelectorDelegate {
             themes,
             matches,
             original_theme: original_theme.clone(),
+            compare_button_held: false,
+            compare_key_held: window.modifiers().alt,
             selected_index: 0,
             selected_theme: None,
             selection_completed: false,
@@ -131,8 +163,63 @@ impl IconThemeSelectorDelegate {
     ) -> Option<IconThemeName> {
         let mat = self.matches.get(self.selected_index)?;
         let name = IconThemeName(mat.string.clone().into());
-        Self::set_icon_theme(name.clone(), cx);
+        if !self.showing_original_theme() {
+            Self::set_icon_theme(name.clone(), cx);
+        }
         Some(name)
+    }
+
+    fn is_original_theme(&self, index: usize) -> bool {
+        self.matches
+            .get(index)
+            .is_some_and(|mat| mat.string.as_str() == self.original_theme.0.as_ref())
+    }
+
+    fn set_compare_key_held(
+        &mut self,
+        state: bool,
+        cx: &mut Context<Picker<IconThemeSelectorDelegate>>,
+    ) {
+        if self.selection_completed || self.compare_key_held == state {
+            return;
+        }
+
+        self.compare_key_held = state;
+        self.update_showing_original_theme(cx);
+    }
+
+    fn set_compare_button_held(
+        &mut self,
+        state: bool,
+        cx: &mut Context<Picker<IconThemeSelectorDelegate>>,
+    ) {
+        if self.selection_completed || self.compare_button_held == state {
+            return;
+        }
+
+        self.compare_button_held = state;
+        self.update_showing_original_theme(cx);
+    }
+
+    fn showing_original_theme(&self) -> bool {
+        self.compare_button_held || self.compare_key_held
+    }
+
+    fn update_showing_original_theme(
+        &mut self,
+        cx: &mut Context<Picker<IconThemeSelectorDelegate>>,
+    ) {
+        let theme = if self.showing_original_theme() {
+            Some(self.original_theme.clone())
+        } else {
+            self.selected_theme.clone()
+        };
+
+        if let Some(theme) = theme {
+            Self::set_icon_theme(theme, cx);
+        }
+
+        cx.notify();
     }
 
     fn select_if_matching(&mut self, theme_name: &str) {
@@ -182,10 +269,13 @@ impl PickerDelegate for IconThemeSelectorDelegate {
     ) {
         self.selection_completed = true;
 
-        let theme_settings = ThemeSettings::get_global(cx);
-        let theme_name = theme_settings
-            .icon_theme
-            .name(SystemAppearance::global(cx).0);
+        // The global settings can't be relied upon here, as they hold the original icon theme
+        // while it is temporarily being shown.
+        let theme_name = self.selected_theme.clone().unwrap_or_else(|| {
+            ThemeSettings::get_global(cx)
+                .icon_theme
+                .name(SystemAppearance::global(cx).0)
+        });
 
         telemetry::event!(
             "Settings Changed",
@@ -301,7 +391,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
         _cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let theme_match = &self.matches.get(ix)?;
-        let is_original_theme = theme_match.string.as_str() == self.original_theme.0.as_ref();
+        let is_original_theme = self.is_original_theme(ix);
 
         Some(
             ListItem::new(ix)
@@ -323,6 +413,26 @@ impl PickerDelegate for IconThemeSelectorDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<gpui::AnyElement> {
+        // The button is kept while the original icon theme is being shown, even
+        // if the selection moves to the original icon theme, so that releasing
+        // the button is still handled.
+        let show_compare_button =
+            self.showing_original_theme() || !self.is_original_theme(self.selected_index);
+        let compare_button = show_compare_button.then(|| {
+            let picker = cx.entity().downgrade();
+
+            render_compare_button(
+                move |state, cx| {
+                    picker
+                        .update(cx, |picker, cx| {
+                            picker.delegate.set_compare_button_held(state, cx);
+                        })
+                        .log_err();
+                },
+                cx,
+            )
+        });
+
         Some(
             h_flex()
                 .p_2()
@@ -342,7 +452,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
                             cx.open_url("https://zed.dev/docs/icon-themes");
                         }),
                 )
-                .child(
+                .child(h_flex().gap_2().children(compare_button).child(
                     Button::new("more-icon-themes", "Install Icon Themes").on_click(
                         move |_event, window, cx| {
                             window.dispatch_action(
@@ -354,7 +464,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
                             );
                         },
                     ),
-                )
+                ))
                 .into_any_element(),
         )
     }
@@ -365,12 +475,12 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::{Modifiers, MouseButton, TestAppContext, VisualTestContext};
     use project::Project;
     use serde_json::json;
     use theme::{ChevronIcons, DirectoryIcons, IconTheme, ThemeRegistry};
     use util::path;
-    use workspace::MultiWorkspace;
+    use workspace::{MultiWorkspace, Workspace};
 
     fn init_test(cx: &mut TestAppContext) -> Arc<workspace::AppState> {
         cx.update(|cx| {
@@ -410,7 +520,9 @@ mod tests {
         });
     }
 
-    async fn setup_test(cx: &mut TestAppContext) -> Arc<workspace::AppState> {
+    async fn setup_workspace(
+        cx: &mut TestAppContext,
+    ) -> (Entity<Workspace>, &mut VisualTestContext) {
         let app_state = init_test(cx);
         register_test_icon_themes(cx);
         app_state
@@ -418,7 +530,14 @@ mod tests {
             .as_fake()
             .insert_tree(path!("/test"), json!({}))
             .await;
-        app_state
+
+        let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+
+        (workspace, cx)
     }
 
     fn open_icon_theme_selector(
@@ -454,10 +573,7 @@ mod tests {
         })
     }
 
-    fn previewed_theme_name(
-        _picker: &Entity<Picker<IconThemeSelectorDelegate>>,
-        cx: &mut VisualTestContext,
-    ) -> String {
+    fn shown_theme_name(cx: &mut VisualTestContext) -> String {
         cx.read(|cx| {
             ThemeSettings::get_global(cx)
                 .icon_theme
@@ -469,12 +585,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_icon_theme_selector_preserves_selection_on_empty_filter(cx: &mut TestAppContext) {
-        let app_state = setup_test(cx).await;
-        let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace =
-            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let (workspace, cx) = setup_workspace(cx).await;
         let picker = open_icon_theme_selector(&workspace, cx);
 
         let target_index = picker.read_with(cx, |picker, _| {
@@ -490,7 +601,7 @@ mod tests {
         });
         cx.run_until_parked();
 
-        assert_eq!(previewed_theme_name(&picker, cx), "Test Icons A");
+        assert_eq!(shown_theme_name(cx), "Test Icons A");
 
         picker.update_in(cx, |picker, window, cx| {
             picker.update_matches("zzz".to_string(), window, cx);
@@ -508,9 +619,123 @@ mod tests {
             "selected icon theme should be preserved after clearing an empty filter"
         );
         assert_eq!(
-            previewed_theme_name(&picker, cx),
+            shown_theme_name(cx),
             "Test Icons A",
             "previewed icon theme should be preserved after clearing an empty filter"
         );
+    }
+
+    fn select_theme(
+        picker: &Entity<Picker<IconThemeSelectorDelegate>>,
+        theme_name: &str,
+        cx: &mut VisualTestContext,
+    ) {
+        let target_index = picker.read_with(cx, |picker, _| {
+            picker
+                .delegate
+                .matches
+                .iter()
+                .position(|theme_match| theme_match.string == theme_name)
+                .expect("icon theme should be in the list of matches")
+        });
+        picker.update_in(cx, |picker, window, cx| {
+            picker.set_selected_index(target_index, None, true, window, cx);
+        });
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_icon_theme_selector_shows_original_while_alt_is_held(cx: &mut TestAppContext) {
+        let (workspace, cx) = setup_workspace(cx).await;
+        let picker = open_icon_theme_selector(&workspace, cx);
+        let original_theme_name =
+            picker.read_with(cx, |picker, _| picker.delegate.original_theme.0.to_string());
+
+        select_theme(&picker, "Test Icons A", cx);
+        assert_eq!(shown_theme_name(cx), "Test Icons A");
+
+        cx.simulate_modifiers_change(Modifiers::alt());
+        assert_eq!(
+            shown_theme_name(cx),
+            original_theme_name,
+            "original icon theme should be shown while alt is held"
+        );
+
+        select_theme(&picker, "Test Icons B", cx);
+        assert_eq!(
+            shown_theme_name(cx),
+            original_theme_name,
+            "changing the selection while alt is held should keep showing the original icon theme"
+        );
+        assert_eq!(selected_theme_name(&picker, cx), "Test Icons B");
+
+        cx.simulate_modifiers_change(Modifiers::none());
+        assert_eq!(
+            shown_theme_name(cx),
+            "Test Icons B",
+            "selected icon theme should be shown again once alt is released"
+        );
+    }
+
+    #[gpui::test]
+    async fn shows_selected_theme_when_binding_starts_with_alt(cx: &mut TestAppContext) {
+        let (workspace, cx) = setup_workspace(cx).await;
+
+        // With a binding that starts with a lone `alt`, releasing `alt` is
+        // handled as the first keystroke of that binding, so the modifiers
+        // changed event for the release never reaches the icon theme selector.
+        cx.update(|_, cx| cx.bind_keys([gpui::KeyBinding::new("alt x", crate::Reload, None)]));
+        let picker = open_icon_theme_selector(&workspace, cx);
+        let original_theme_name =
+            picker.read_with(cx, |picker, _| picker.delegate.original_theme.0.to_string());
+
+        select_theme(&picker, "Test Icons A", cx);
+        assert_ne!(shown_theme_name(cx), original_theme_name);
+        assert_eq!(shown_theme_name(cx), "Test Icons A");
+
+        cx.simulate_modifiers_change(Modifiers::alt());
+        assert_eq!(
+            shown_theme_name(cx),
+            original_theme_name,
+            "original icon theme should be shown while alt is held"
+        );
+
+        cx.simulate_modifiers_change(Modifiers::none());
+        assert_eq!(
+            shown_theme_name(cx),
+            "Test Icons A",
+            "selected icon theme should be shown again once alt is released"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_icon_theme_selector_shows_original_while_button_is_held(cx: &mut TestAppContext) {
+        let (workspace, cx) = setup_workspace(cx).await;
+        let picker = open_icon_theme_selector(&workspace, cx);
+        let original_theme_name =
+            picker.read_with(cx, |picker, _| picker.delegate.original_theme.0.to_string());
+
+        select_theme(&picker, "Test Icons A", cx);
+        assert_eq!(shown_theme_name(cx), "Test Icons A");
+        assert_ne!(shown_theme_name(cx), original_theme_name);
+
+        let button_center = cx
+            .debug_bounds("compare-theme-button")
+            .expect("should be able to find button's bounds")
+            .center();
+
+        cx.simulate_mouse_down(button_center, MouseButton::Left, Modifiers::none());
+        assert_eq!(shown_theme_name(cx), original_theme_name);
+
+        // Simulate pressing and then releasing `alt` to ensure it doesn't
+        // affect the theme comparison, as the mouse button is still held.
+        cx.simulate_modifiers_change(Modifiers::alt());
+        assert_eq!(shown_theme_name(cx), original_theme_name);
+        cx.simulate_modifiers_change(Modifiers::none());
+        assert_eq!(shown_theme_name(cx), original_theme_name);
+
+        cx.simulate_mouse_up(button_center, MouseButton::Left, Modifiers::none());
+        assert_eq!(shown_theme_name(cx), "Test Icons A");
+        assert_ne!(shown_theme_name(cx), original_theme_name);
     }
 }
