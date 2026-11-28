@@ -66,5 +66,6 @@ parking_lot.workspace = true
 project = { workspace = true, "features" = ["test-support"] }
 rand.workspace = true
 tempfile.workspace = true
+terminal = { workspace = true, features = ["test-support"] }
 util.workspace = true
 settings.workspace = true
