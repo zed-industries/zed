@@ -217,6 +217,29 @@ Open the Settings Editor and search for “Threads Sidebar Auto Open”. Or add 
 }
 ```
 
+### Threads Sidebar Group By {#agent-threads-sidebar-group-by}
+
+- Description: How the [Threads Sidebar](../ai/parallel-agents.md#threads-sidebar) groups threads.
+- Setting: `agent.threads_sidebar.group_by`
+- Default: `"project"`
+
+**Options**
+
+- `"project"`: Show the threads of a repository and all of its git worktrees in one group.
+- `"worktree"`: Within each repository's group, show the threads of each git worktree under their own heading. Groups whose threads all belong to one worktree show no extra heading.
+
+Open the Settings Editor and search for “Threads Sidebar Group By”. Or add this to your `settings.json`:
+
+```json [settings]
+{
+  "agent": {
+    "threads_sidebar": {
+      "group_by": "worktree"
+    }
+  }
+}
+```
+
 ## Agent UI Font Family {#agent-ui-font-family}
 
 - Description: Font family for agent responses in the Agent Panel.
