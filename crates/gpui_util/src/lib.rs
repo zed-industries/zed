@@ -33,6 +33,21 @@ pub fn new_std_command(program: impl AsRef<OsStr>) -> std::process::Command {
 }
 
 #[cfg(target_os = "windows")]
+fn find_pwsh_msix_alias(
+    windows_apps_directory: &std::path::Path,
+    find_preview: bool,
+) -> Option<std::path::PathBuf> {
+    let executable_name = if find_preview {
+        "pwsh-preview.exe"
+    } else {
+        "pwsh.exe"
+    };
+    // A package-family executable path may not be a valid process entry point.
+    let alias_path = windows_apps_directory.join(executable_name);
+    alias_path.exists().then_some(alias_path)
+}
+
+#[cfg(target_os = "windows")]
 pub fn get_powershell() -> Option<String> {
     use std::path::PathBuf;
 
@@ -85,13 +100,7 @@ pub fn get_powershell() -> Option<String> {
     fn find_pwsh_in_msix(find_preview: bool) -> Option<PathBuf> {
         let msix_app_dir =
             PathBuf::from(std::env::var_os("LOCALAPPDATA")?).join("Microsoft\\WindowsApps");
-        let package_family_name = if find_preview {
-            "Microsoft.PowerShellPreview_8wekyb3d8bbwe"
-        } else {
-            "Microsoft.PowerShell_8wekyb3d8bbwe"
-        };
-        let pwsh_exe = msix_app_dir.join(package_family_name).join("pwsh.exe");
-        pwsh_exe.exists().then_some(pwsh_exe)
+        find_pwsh_msix_alias(&msix_app_dir, find_preview)
     }
 
     fn find_pwsh_in_scoop() -> Option<PathBuf> {
@@ -152,6 +161,46 @@ pub fn get_windows_system_shell() -> String {
             .into_owned()
     });
     get_powershell().unwrap_or_else(|| (*CMD).clone())
+}
+
+#[cfg(all(test, windows))]
+mod powershell_msix_tests {
+    use super::find_pwsh_msix_alias;
+    use std::{fs, time::SystemTime};
+
+    #[test]
+    fn msix_alias_lookup_ignores_package_specific_executable() -> std::io::Result<()> {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_err(std::io::Error::other)?
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "zed-msix-alias-test-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&directory)?;
+        let result = (|| {
+            let package_directory = directory.join("Microsoft.PowerShell_8wekyb3d8bbwe");
+            fs::create_dir(&package_directory)?;
+            fs::write(
+                package_directory.join("pwsh.exe"),
+                b"invalid package executable",
+            )?;
+            assert_eq!(find_pwsh_msix_alias(&directory, false), None);
+
+            let stable_alias = directory.join("pwsh.exe");
+            fs::write(&stable_alias, b"stable alias fixture")?;
+            assert_eq!(find_pwsh_msix_alias(&directory, false), Some(stable_alias));
+            assert_eq!(find_pwsh_msix_alias(&directory, true), None);
+
+            let preview_alias = directory.join("pwsh-preview.exe");
+            fs::write(&preview_alias, b"preview alias fixture")?;
+            assert_eq!(find_pwsh_msix_alias(&directory, true), Some(preview_alias));
+            Ok::<(), std::io::Error>(())
+        })();
+        fs::remove_dir_all(&directory)?;
+        result
+    }
 }
 
 #[inline]

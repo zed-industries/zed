@@ -217,6 +217,7 @@ impl ShellKind {
         match &*program {
             "powershell" => ShellKind::PowerShell,
             "pwsh" => ShellKind::Pwsh,
+            "pwsh-preview" if is_windows => ShellKind::Pwsh,
             "cmd" => ShellKind::Cmd,
             "nu" => ShellKind::Nushell,
             "fish" => ShellKind::Fish,
@@ -789,6 +790,8 @@ mod tests {
             ("CMD.EXE", ShellKind::Cmd),
             ("PowerShell.exe", ShellKind::PowerShell),
             ("PwSh.ExE", ShellKind::Pwsh),
+            ("PwSh-PrEvIeW.ExE", ShellKind::Pwsh),
+            ("C:/Users/test/AppData/Local/Microsoft/WindowsApps/pwsh-preview.exe", ShellKind::Pwsh),
             ("NU.EXE", ShellKind::Nushell),
             ("FISH.EXE", ShellKind::Fish),
             ("CSH.EXE", ShellKind::Csh),
@@ -808,11 +811,31 @@ mod tests {
     }
 
     #[test]
+    fn test_pwsh_preview_windows_argument_quoting() {
+        let preview = ShellKind::new(
+            "C:/Users/test/AppData/Local/Microsoft/WindowsApps/pwsh-preview.exe",
+            true,
+        );
+        let stable = ShellKind::new("pwsh.exe", true);
+
+        assert_eq!(preview, ShellKind::Pwsh);
+        for argument in ["", "hello world", "embedded \"quote\"", "single'quote"] {
+            assert_eq!(preview.try_quote(argument), stable.try_quote(argument));
+        }
+        assert_eq!(preview.try_quote("").as_deref(), Some("''"));
+        assert_eq!(
+            preview.try_quote("embedded \"quote\"").as_deref(),
+            Some("'embedded \"quote\"'")
+        );
+    }
+
+    #[test]
     fn test_shell_kind_unix_case_sensitive() {
         for (program, expected) in [
             ("/bin/nu", ShellKind::Nushell),
             ("/bin/NU", ShellKind::Posix),
             ("/bin/pwsh", ShellKind::Pwsh),
+            ("/bin/pwsh-preview", ShellKind::Posix),
             ("/bin/PWSH", ShellKind::Posix),
             ("/bin/bash", ShellKind::Posix),
             ("/bin/unknown", ShellKind::Posix),
