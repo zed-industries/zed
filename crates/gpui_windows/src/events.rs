@@ -1071,6 +1071,27 @@ impl WindowsWindowInner {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> Option<isize> {
+        // A left press on a resize border starts the system's modal resize loop in
+        // `DefWindowProc`, which also takes the button release. The press must not reach the
+        // elements under the border (with a hidden title bar the top border lies over the client
+        // area): one that stops propagation would block the resize, and the others would keep
+        // a pending press that turns the next mouse move into a drag.
+        if button == MouseButton::Left
+            && matches!(
+                wparam.0 as u32,
+                HTLEFT
+                    | HTRIGHT
+                    | HTTOP
+                    | HTTOPLEFT
+                    | HTTOPRIGHT
+                    | HTBOTTOM
+                    | HTBOTTOMLEFT
+                    | HTBOTTOMRIGHT
+            )
+        {
+            return None;
+        }
+
         if let Some(mut func) = self.state.callbacks.input.take() {
             let scale_factor = self.state.scale_factor.get();
             let mut cursor_point = POINT {
