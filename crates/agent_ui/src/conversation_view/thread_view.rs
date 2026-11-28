@@ -4872,6 +4872,7 @@ impl ThreadView {
             .w_full()
             .gap_1()
             .justify_between()
+            .flex_wrap()
             .when(self.queue_expanded, |this| {
                 this.border_b_1().border_color(cx.theme().colors().border)
             })
