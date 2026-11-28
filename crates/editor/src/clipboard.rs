@@ -24,9 +24,17 @@ impl ClipboardSelection {
         project: Option<&Entity<Project>>,
         cx: &App,
     ) -> Self {
-        let first_line_indent = buffer
-            .indent_size_for_line(MultiBufferRow(range.start.row))
-            .len;
+        let tab_size = buffer.language_settings_at(range.start, cx).tab_size.get();
+        let first_line_indent = if let Some((snapshot, line_range)) =
+            buffer.buffer_line_for_row(MultiBufferRow(range.start.row))
+        {
+            text::visual_column_for_text(
+                snapshot.text_for_range(line_range).flat_map(|s| s.chars()),
+                tab_size,
+            )
+        } else {
+            0
+        };
 
         let file_path = util::maybe!({
             let project = project?.read(cx);
