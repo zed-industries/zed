@@ -23,7 +23,7 @@ use gpui::{
 use language::{Buffer, LanguageRegistry};
 use markdown::{
     CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownFont,
-    MarkdownOptions, MarkdownStyle,
+    MarkdownOptions, MarkdownStyle, filter_non_rendered_matches,
 };
 use project::search::SearchQuery;
 use project::{Project, ProjectPath, image_store};
@@ -2192,25 +2192,6 @@ impl SearchableItem for MarkdownPreviewView {
     }
 }
 
-/// `non_rendered_ranges` must be sorted by start and disjoint, as returned by
-/// [`Markdown::non_rendered_source_ranges`]. Matches may arrive in any order.
-fn filter_non_rendered_matches(
-    matches: Vec<Range<usize>>,
-    non_rendered_ranges: &[Range<usize>],
-) -> Vec<Range<usize>> {
-    matches
-        .into_iter()
-        .filter(|match_range| {
-            let candidate =
-                non_rendered_ranges.partition_point(|range| range.end <= match_range.start);
-
-            !non_rendered_ranges
-                .get(candidate)
-                .is_some_and(|range| range.start < match_range.end)
-        })
-        .collect()
-}
-
 impl SerializableItem for MarkdownPreviewView {
     fn serialized_item_kind() -> &'static str {
         "MarkdownPreviewView"
@@ -2389,31 +2370,7 @@ mod tests {
         WorkspaceId, open_paths,
     };
 
-    use super::{
-        MarkdownPreviewView, filter_non_rendered_matches, open_preview_url,
-        reset_persisted_font_size,
-    };
-
-    #[test]
-    fn filters_matches_in_non_rendered_link_source() {
-        let matches = vec![1..9, 30..37, 58..65];
-        let non_rendered_ranges = vec![0..1, 9..38];
-
-        assert_eq!(
-            filter_non_rendered_matches(matches, &non_rendered_ranges),
-            vec![1..9, 58..65]
-        );
-    }
-
-    #[test]
-    fn filters_matches_regardless_of_match_order() {
-        let non_rendered_ranges = vec![0..1, 9..38];
-
-        assert_eq!(
-            filter_non_rendered_matches(vec![58..65, 1..9, 30..37], &non_rendered_ranges),
-            vec![58..65, 1..9]
-        );
-    }
+    use super::{MarkdownPreviewView, open_preview_url, reset_persisted_font_size};
 
     #[gpui::test]
     async fn preview_tab_tooltip_matches_source_file_path(cx: &mut TestAppContext) {
