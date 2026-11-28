@@ -4127,6 +4127,7 @@ impl MarkdownElementBuilder {
             .table
             .in_cell
             .then(|| self.table.current_cell_alignment());
+        self.div_stack.last_mut().unwrap().line_break_mode = LineBreakMode::FlexWrap;
         self.modify_current_div(|el| {
             let el = el.flex().flex_row().flex_wrap();
             // Table cells center their content vertically and apply column alignment via a
@@ -4151,7 +4152,6 @@ impl MarkdownElementBuilder {
                 }
             }
         });
-        self.div_stack.last_mut().unwrap().line_break_mode = LineBreakMode::FlexWrap;
         self.append_child(child.into_any_element());
     }
 
@@ -4487,13 +4487,16 @@ impl MarkdownElementBuilder {
             code_chips: line.code_chips.into_iter().collect(),
         });
         self.rendered_lines.push(rendered_line.clone());
-        self.append_child(
-            RenderedLineElement {
-                text,
-                line: rendered_line,
-            }
-            .into_any_element(),
-        );
+        let child = RenderedLineElement {
+            text,
+            line: rendered_line,
+        }
+        .into_any_element();
+        if self.uses_flex_line_breaks() {
+            self.append_child(div().min_w_0().child(child).into_any_element());
+        } else {
+            self.append_child(child);
+        }
     }
 
     fn build(mut self) -> RenderedMarkdown {
@@ -6223,6 +6226,68 @@ mod tests {
         assert!(
             !text.contains("textthat"),
             "soft break between words must not be dropped; got: {text:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn test_long_text_before_image_wraps(cx: &mut TestAppContext) {
+        let image = test_image(cx);
+        let long_text = "word ".repeat(200);
+        let rendered = render_markdown_with_image_resolver(
+            &format!("{long_text}\n![alt](https://example.com/a.png)"),
+            MarkdownOptions::default(),
+            move |_, _| Some(ImageSource::Render(image.clone())),
+            cx,
+        );
+        let first_line = rendered
+            .lines
+            .first()
+            .expect("paragraph text should render a line");
+        let wrapped = first_line.layout.wrapped_text();
+        assert!(
+            wrapped.contains('\n'),
+            "long text sharing a paragraph with an image should wrap to the pane width; got: {wrapped:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn test_long_text_after_image_wraps(cx: &mut TestAppContext) {
+        let image = test_image(cx);
+        let long_text = "word ".repeat(200);
+        let rendered = render_markdown_with_image_resolver(
+            &format!("![alt](https://example.com/a.png)\n{long_text}"),
+            MarkdownOptions::default(),
+            move |_, _| Some(ImageSource::Render(image.clone())),
+            cx,
+        );
+        let first_line = rendered
+            .lines
+            .first()
+            .expect("paragraph text should render a line");
+        let wrapped = first_line.layout.wrapped_text();
+        assert!(
+            wrapped.contains('\n'),
+            "long text following an image in the same paragraph should wrap; got: {wrapped:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn test_long_text_without_image_wraps(cx: &mut TestAppContext) {
+        let long_text = "word ".repeat(200);
+        let rendered = render_markdown_with_image_resolver(
+            &long_text,
+            MarkdownOptions::default(),
+            |_, _| None,
+            cx,
+        );
+        let first_line = rendered
+            .lines
+            .first()
+            .expect("paragraph text should render a line");
+        let wrapped = first_line.layout.wrapped_text();
+        assert!(
+            wrapped.contains('\n'),
+            "long text in a plain paragraph should wrap; got: {wrapped:?}"
         );
     }
 
