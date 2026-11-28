@@ -28,6 +28,19 @@ Set [`preview_tabs.enable_preview_from_project_panel`](./reference/all-settings.
 to `false` to open permanent tabs with a single click or {#action project_panel::Open}
 ({#kb project_panel::Open}).
 
+On macOS, right-click a local file and choose **Quick Look** to preview it in
+the system preview panel. To use the space bar for this action, add the
+following binding to your keymap:
+
+```json [keymap]
+[
+  {
+    "context": "ProjectPanel && not_editing && quick_look_available",
+    "bindings": { "space": "project_panel::QuickLook" }
+  }
+]
+```
+
 ### Auto-reveal
 
 By default, switching to a file in the editor will automatically highlight it in the

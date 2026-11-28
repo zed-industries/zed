@@ -9,6 +9,7 @@ mod display_link;
 mod events;
 mod keyboard;
 mod pasteboard;
+mod quick_look;
 mod system_notifications;
 
 #[cfg(feature = "screen-capture")]
