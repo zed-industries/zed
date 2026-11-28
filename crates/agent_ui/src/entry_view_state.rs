@@ -1,6 +1,8 @@
 use std::{ops::Range, sync::Arc};
 
-use acp_thread::{AcpThread, AgentThreadEntry, AssistantMessageChunk, ToolCall};
+use acp_thread::{
+    AcpThread, AgentThreadEntry, AssistantMessageChunk, PermissionRequest, ToolCall, ToolCallStatus,
+};
 use agent::ThreadStore;
 use agent_client_protocol::v2::schema as acp_v2;
 use agent_settings::AgentSettings;
@@ -65,6 +67,9 @@ pub struct EntryViewState {
     user_toggled_thinking_blocks: HashSet<(usize, usize)>,
     expanded_compactions: HashSet<usize>,
     expanded_tool_calls: HashSet<acp_v2::ToolCallId>,
+    /// Tool activity groups the user expanded, keyed by the first tool call of the group.
+    /// The first tool call stays stable while the agent appends entries to the group.
+    expanded_tool_activity_groups: HashSet<acp_v2::ToolCallId>,
     /// Subagent cards shown for an ACP parent's outgoing session messages.
     expanded_session_message_cards: HashSet<acp_v2::MessageId>,
 }
@@ -89,6 +94,7 @@ impl EntryViewState {
             user_toggled_thinking_blocks: HashSet::default(),
             expanded_compactions: HashSet::default(),
             expanded_tool_calls: HashSet::default(),
+            expanded_tool_activity_groups: HashSet::default(),
             expanded_session_message_cards: HashSet::default(),
         }
     }
@@ -112,6 +118,31 @@ impl EntryViewState {
     pub(crate) fn toggle_tool_call_expansion(&mut self, tool_call_id: &acp_v2::ToolCallId) {
         if !self.expanded_tool_calls.remove(tool_call_id) {
             self.expanded_tool_calls.insert(tool_call_id.clone());
+        }
+    }
+
+    pub(crate) fn is_tool_activity_group_expanded(&self, group_id: &acp_v2::ToolCallId) -> bool {
+        self.expanded_tool_activity_groups.contains(group_id)
+    }
+
+    pub(crate) fn is_hidden_by_tool_activity(
+        &self,
+        thread: &AcpThread,
+        entry_ix: usize,
+        cx: &App,
+    ) -> bool {
+        let entries = thread.entries();
+        AgentSettings::get_global(cx).collapse_tool_activity
+            && entries
+                .get(entry_ix)
+                .is_some_and(|entry| !entry_needs_user_input(entry, thread))
+            && tool_activity_group(entries, entry_ix)
+                .is_some_and(|group| !self.is_tool_activity_group_expanded(&group.id))
+    }
+
+    pub(crate) fn toggle_tool_activity_group_expansion(&mut self, group_id: &acp_v2::ToolCallId) {
+        if !self.expanded_tool_activity_groups.remove(group_id) {
+            self.expanded_tool_activity_groups.insert(group_id.clone());
         }
     }
 
@@ -665,6 +696,128 @@ impl EntryViewState {
 }
 
 impl EventEmitter<EntryViewEvent> for EntryViewState {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ToolActivityGroup {
+    pub range: Range<usize>,
+    pub id: acp_v2::ToolCallId,
+}
+
+pub(crate) fn entry_needs_user_input(entry: &AgentThreadEntry, thread: &AcpThread) -> bool {
+    let AgentThreadEntry::ToolCall(tool_call) = entry else {
+        return false;
+    };
+    // ACP v2 permission requests don't set the tool call's authorization, so the
+    // status doesn't change. Their prompt renders inside the tool call it names.
+    tool_call.status() == ToolCallStatus::WaitingForConfirmation
+        || thread
+            .pending_permission_requests()
+            .any(|request| permission_request_tool_call_id(request) == Some(&tool_call.id))
+}
+
+pub(crate) fn permission_request_tool_call_id(
+    request: &PermissionRequest,
+) -> Option<&acp_v2::ToolCallId> {
+    if let Some(tool_call_id) = request.legacy_tool_call_id() {
+        return Some(tool_call_id);
+    }
+    match request.generic_request()?.subject.as_ref()? {
+        acp_v2::RequestPermissionSubject::ToolCall(subject) => {
+            Some(&subject.tool_call.tool_call_id)
+        }
+        _ => None,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ToolActivitySummary {
+    pub tool_count: usize,
+    pub failed_count: usize,
+    pub is_running: bool,
+}
+
+impl ToolActivitySummary {
+    pub(crate) fn new(entries: &[AgentThreadEntry], cx: &App) -> Self {
+        let mut summary = Self {
+            tool_count: 0,
+            failed_count: 0,
+            is_running: false,
+        };
+        for entry in entries {
+            let AgentThreadEntry::ToolCall(tool_call) = entry else {
+                continue;
+            };
+            summary.tool_count += 1;
+            match tool_call.status() {
+                ToolCallStatus::Failed => summary.failed_count += 1,
+                ToolCallStatus::Pending
+                | ToolCallStatus::WaitingForConfirmation
+                | ToolCallStatus::InProgress
+                | ToolCallStatus::Paused => summary.is_running = true,
+                ToolCallStatus::Completed | ToolCallStatus::Rejected | ToolCallStatus::Canceled => {
+                }
+            }
+            // A terminal keeps running after its tool call ends when the agent runs
+            // the command in the background. Its card shows it as running.
+            if tool_call
+                .terminals()
+                .any(|terminal| terminal.read(cx).output().is_none())
+            {
+                summary.is_running = true;
+            }
+        }
+        summary
+    }
+}
+
+fn is_tool_activity_entry(entry: &AgentThreadEntry) -> bool {
+    match entry {
+        AgentThreadEntry::ToolCall(_) => true,
+        AgentThreadEntry::AssistantMessage(message) => {
+            !message.indented
+                && !message.chunks.is_empty()
+                && message
+                    .chunks
+                    .iter()
+                    .all(|chunk| matches!(chunk, AssistantMessageChunk::Thought { .. }))
+        }
+        AgentThreadEntry::UserMessage(_)
+        | AgentThreadEntry::SessionMessage(_)
+        | AgentThreadEntry::Elicitation(_)
+        | AgentThreadEntry::ContextCompaction(_) => false,
+    }
+}
+
+/// Finds the tool activity group that contains `entry_ix`. A group must have at
+/// least two entries and one tool call, because collapsing a single entry hides
+/// nothing.
+pub(crate) fn tool_activity_group(
+    entries: &[AgentThreadEntry],
+    entry_ix: usize,
+) -> Option<ToolActivityGroup> {
+    if !is_tool_activity_entry(entries.get(entry_ix)?) {
+        return None;
+    }
+    let start = entries[..entry_ix]
+        .iter()
+        .rposition(|entry| !is_tool_activity_entry(entry))
+        .map_or(0, |ix| ix + 1);
+    let end = entries[entry_ix..]
+        .iter()
+        .position(|entry| !is_tool_activity_entry(entry))
+        .map_or(entries.len(), |offset| entry_ix + offset);
+    let range = start..end;
+    if range.len() < 2 {
+        return None;
+    }
+    let id = entries[range.clone()]
+        .iter()
+        .find_map(|entry| match entry {
+            AgentThreadEntry::ToolCall(tool_call) => Some(tool_call.id.clone()),
+            _ => None,
+        })?;
+    Some(ToolActivityGroup { range, id })
+}
 
 pub struct EntryViewEvent {
     pub entry_index: usize,

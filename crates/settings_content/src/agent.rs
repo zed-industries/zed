@@ -361,6 +361,11 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub expand_terminal_card: Option<bool>,
+    /// Whether to collapse consecutive tool calls and thinking blocks in the agent panel
+    /// into a single summary row. Tool calls that wait for user input are always shown.
+    ///
+    /// Default: false
+    pub collapse_tool_activity: Option<bool>,
     /// Command to automatically run when Zed creates a Terminal Thread shell in the agent panel.
     /// The command is sent to the shell as if typed, so it is interpreted by your
     /// configured shell (including on Windows and remote/WSL projects).

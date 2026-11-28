@@ -364,6 +364,8 @@ actions!(
         OpenPermissionDropdown,
         /// Toggles thinking mode for models that support extended thinking.
         ToggleThinkingMode,
+        /// Toggles collapsing consecutive tool calls and thinking blocks into one summary row.
+        ToggleCollapseToolActivity,
         /// Cycles through available thinking effort levels for the current model.
         CycleThinkingEffort,
         /// Toggles the thinking effort selector menu open or closed.
@@ -1204,6 +1206,7 @@ mod tests {
             enable_feedback: false,
             expand_edit_card: true,
             expand_terminal_card: true,
+            collapse_tool_activity: false,
             terminal_init_command: None,
             cancel_generation_on_terminal_stop: true,
             use_modifier_to_send: true,

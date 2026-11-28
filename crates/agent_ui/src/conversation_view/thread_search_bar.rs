@@ -345,6 +345,9 @@ impl ThreadSearchBar {
         let thread = self.thread.read(cx);
         let entry_view_state = self.entry_view_state.read(cx);
         for (entry_ix, entry) in thread.entries().iter().enumerate() {
+            if entry_view_state.is_hidden_by_tool_activity(thread, entry_ix, cx) {
+                continue;
+            }
             match entry {
                 // Past user messages render through `MessageEditor`, not markdown.
                 AgentThreadEntry::UserMessage(_) => {
