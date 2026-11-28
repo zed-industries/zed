@@ -1791,8 +1791,12 @@ fn is_color_glyph(
 
 const DEFAULT_LOCALE_NAME: PCWSTR = windows::core::w!("en-US");
 
+// DirectWrite breaks the line at each of these even with unlimited width.
 fn is_line_separator(character: char) -> bool {
-    matches!(character, '\u{2028}' | '\u{2029}')
+    matches!(
+        character,
+        '\r' | '\u{b}' | '\u{c}' | '\u{85}' | '\u{2028}' | '\u{2029}'
+    )
 }
 
 #[cfg(test)]
@@ -1938,6 +1942,14 @@ mod tests {
     #[test]
     fn unicode_paragraph_separators_preserve_shaped_line_cursor() -> Result<()> {
         check_unicode_separator_cursor('\u{2029}')
+    }
+
+    #[test]
+    fn control_character_breaks_preserve_shaped_line_cursor() -> Result<()> {
+        for separator in ['\r', '\u{b}', '\u{c}', '\u{85}'] {
+            check_unicode_separator_cursor(separator)?;
+        }
+        Ok(())
     }
 
     fn check_unicode_separator_cursor(separator: char) -> Result<()> {
