@@ -294,7 +294,7 @@ fn html_path_to_markdown(path: &str) -> Option<String> {
     if !path.starts_with("/docs/") && path != "/docs" && !path.ends_with(".html") {
         return None;
     }
-    let markdown_path = path.strip_suffix(".html").unwrap_or(path);
+    let markdown_path = path.trim_suffix(".html");
     Some(format!("{markdown_path}.md{fragment}"))
 }
 

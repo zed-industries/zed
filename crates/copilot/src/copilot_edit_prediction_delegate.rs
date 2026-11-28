@@ -751,7 +751,7 @@ mod tests {
                 },
             }],
         );
-        _ = editor.update_in(cx, |editor, window, cx| {
+        editor.update_in(cx, |editor, window, cx| {
             // Ensure copilot suggestions are shown for the first excerpt.
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_ranges([Point::new(1, 5)..Point::new(1, 5)])
@@ -759,7 +759,7 @@ mod tests {
             editor.show_edit_prediction(&Default::default(), window, cx);
         });
         executor.advance_clock(COPILOT_TEST_DEBOUNCE);
-        _ = editor.update_in(cx, |editor, _, _| {
+        editor.update_in(cx, |editor, _, _| {
             assert!(editor.has_active_edit_prediction());
         });
         pretty_assertions::assert_eq!(
@@ -788,7 +788,7 @@ mod tests {
                 },
             }],
         );
-        _ = editor.update_in(cx, |editor, window, cx| {
+        editor.update_in(cx, |editor, window, cx| {
             // Move to another excerpt, ensuring the suggestion gets cleared.
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_ranges([Point::new(4, 5)..Point::new(4, 5)])
@@ -828,7 +828,7 @@ mod tests {
 
         // Ensure the new suggestion is displayed when the debounce timeout expires.
         executor.advance_clock(COPILOT_TEST_DEBOUNCE);
-        _ = editor.update(cx, |editor, _| {
+        editor.update(cx, |editor, _| {
             assert!(editor.has_active_edit_prediction());
         });
         assert_eq!(

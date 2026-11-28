@@ -69,7 +69,7 @@ objc2-metal = { version = "0.3.2", default-features = false, features = [
     "MTLTypes",
 ] }
 objc2-foundation = { workspace = true, features = ["NSThread", "NSNotification", "NSOperation", "NSProcessInfo", "block2"] }
-objc2-quartz-core = { workspace = true, features = ["objc2-core-foundation", "objc2-core-graphics", "objc2-metal"] }
+objc2-quartz-core = { workspace = true, features = ["CADisplayLink", "objc2-core-foundation", "objc2-core-graphics", "objc2-metal"] }
 objc2-security.workspace = true
 parking_lot.workspace = true
 pathfinder_geometry = { workspace = true, optional = true }

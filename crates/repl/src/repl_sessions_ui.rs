@@ -368,7 +368,6 @@ mod tests {
         fn meta(&self) -> ToolchainMetadata {
             ToolchainMetadata {
                 term: SharedString::new_static("Python"),
-                new_toolchain_placeholder: SharedString::default(),
                 manifest_name: ManifestName::from(SharedString::new_static("pyproject.toml")),
             }
         }

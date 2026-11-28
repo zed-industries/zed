@@ -87,6 +87,8 @@ impl Global for TelemetryReporterState {}
 
 /// Nanosecond boundaries for the time-range buckets used in telemetry.
 /// These match the display distribution in format_report so the two stay in sync.
+const MS1_NS: u64 = 1_000_000;
+const MS2_NS: u64 = 2_000_000;
 const MS4_NS: u64 = 4_000_000;
 const MS8_NS: u64 = 8_000_000;
 const MS16_NS: u64 = 16_000_000;
@@ -147,19 +149,26 @@ pub fn report_input_latency_telemetry(window: &Window, cx: &mut App) {
     state.previous.insert(window_id, (now, current));
 
     // Frames over 100 ms, or with 4+ events, are implied by total_frames.
-    let latency_counts =
-        histogram_bucket_counts(&delta_latency, [MS4_NS, MS8_NS, MS16_NS, MS33_NS, MS100_NS]);
+    let latency_counts = histogram_bucket_counts(
+        &delta_latency,
+        [MS1_NS, MS2_NS, MS4_NS, MS8_NS, MS16_NS, MS33_NS, MS100_NS],
+    );
     let coalesce_counts = histogram_bucket_counts(&delta_coalesce, [1, 2, 3]);
     let latency = |index: usize| latency_counts.get(index).copied().unwrap_or_default();
     let coalesce = |index: usize| coalesce_counts.get(index).copied().unwrap_or_default();
 
     telemetry::event!(
         "Latency Report",
-        frames_sub4 = latency(0),
-        frames_4to8 = latency(1),
-        frames_8to16 = latency(2),
-        frames_16to33 = latency(3),
-        frames_33to100 = latency(4),
+        frames_sub1 = latency(0),
+        frames_1to2 = latency(1),
+        frames_2to4 = latency(2),
+        // Kept alongside its split so queries over earlier measurement
+        // versions don't need a special case.
+        frames_sub4 = latency(0) + latency(1) + latency(2),
+        frames_4to8 = latency(3),
+        frames_8to16 = latency(4),
+        frames_16to33 = latency(5),
+        frames_33to100 = latency(6),
         total_frames = total_frames,
         frames_with_1_event = coalesce(0),
         frames_with_2_events = coalesce(1),
@@ -516,7 +525,9 @@ fn write_latency_percentiles(
 
 fn write_latency_distribution(report: &mut String, heading: &str, histogram: &Histogram<u64>) {
     const BUCKETS: &[(u64, u64, &str, &str)] = &[
-        (0, 4_000_000, "0\u{2013}4ms", "(excellent)"),
+        (0, 1_000_000, "0\u{2013}1ms", "(excellent)"),
+        (1_000_000, 2_000_000, "1\u{2013}2ms", "(excellent)"),
+        (2_000_000, 4_000_000, "2\u{2013}4ms", "(excellent)"),
         (4_000_000, 8_000_000, "4\u{2013}8ms", "(120fps)"),
         (8_000_000, 16_000_000, "8\u{2013}16ms", "(60fps)"),
         (16_000_000, 33_000_000, "16\u{2013}33ms", "(30fps)"),

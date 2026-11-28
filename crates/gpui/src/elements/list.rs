@@ -67,7 +67,6 @@ struct StateInner {
     alignment: ListAlignment,
     overdraw: Pixels,
     reset: bool,
-    #[allow(clippy::type_complexity)]
     scroll_handler: Option<Box<dyn FnMut(&ListScrollEvent, &mut Window, &mut App)>>,
     scrollbar_drag_start_height: Option<Pixels>,
     measuring_behavior: ListMeasuringBehavior,
@@ -1506,8 +1505,9 @@ impl Element for List {
                     let summary = state.items.summary();
                     let total_height = summary.height;
 
-                    window.request_measured_layout(
+                    window.request_keyed_measured_layout(
                         style,
+                        (max_element_width, total_height),
                         move |known_dimensions, available_space, _window, _cx| {
                             let width =
                                 known_dimensions

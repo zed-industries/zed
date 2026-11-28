@@ -87,7 +87,7 @@ pub use pane_group::{
     SplitDirection,
 };
 pub use persistence::{
-    RecentWorkspace, WorkspaceDb, delete_unloaded_items,
+    RecentWorkspace, WorkspaceDb, dedupe_recent_workspaces, delete_unloaded_items,
     model::{
         DockData, DockStructure, ItemId, MultiWorkspaceState, SerializedMultiWorkspace,
         SerializedProjectGroup, SerializedWorkspaceLocation, SessionWorkspace,
@@ -443,8 +443,6 @@ actions!(
         OpenInTerminal,
         /// Opens the component preview.
         OpenComponentPreview,
-        /// Reloads the active item.
-        ReloadActiveItem,
         /// Reopens the most recently dismissed picker in the current window.
         ReopenLastPicker,
         /// Resets the active dock to its default size.
@@ -2049,8 +2047,7 @@ impl Workspace {
             .flatten()
             .map(|mw| mw.downgrade());
         let status_bar = cx.new(|cx| {
-            let mut status_bar =
-                StatusBar::new(&center_pane.clone(), multi_workspace.clone(), window, cx);
+            let mut status_bar = StatusBar::new(&center_pane, multi_workspace.clone(), window, cx);
             status_bar.add_left_item(left_dock_buttons, window, cx);
             status_bar.add_right_item(right_dock_buttons, window, cx);
             status_bar.add_right_item(bottom_dock_buttons, window, cx);
@@ -2152,9 +2149,7 @@ impl Workspace {
             this.show_initial_notifications(cx);
         });
 
-        let mut center = PaneGroup::new(center_pane.clone());
-        center.set_is_center(true);
-        center.mark_positions(cx);
+        let center = PaneGroup::new(center_pane.clone());
 
         Workspace {
             weak_self: weak_handle.clone(),
@@ -2302,7 +2297,7 @@ impl Workspace {
             let toolchains = db.toolchains(workspace_id).await?;
 
             for (toolchain, worktree_path, path) in toolchains {
-                let toolchain_path = PathBuf::from(toolchain.path.clone().to_string());
+                let toolchain_path = PathBuf::from(toolchain.path.to_string());
                 let Some(worktree_id) = project_handle.read_with(cx, |this, cx| {
                     this.find_worktree(&worktree_path, cx)
                         .and_then(|(worktree, rel_path)| {
@@ -2552,21 +2547,6 @@ impl Workspace {
         &self.bottom_dock
     }
 
-    pub fn set_bottom_dock_layout(
-        &mut self,
-        layout: BottomDockLayout,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let fs = self.project().read(cx).fs();
-        settings::update_settings_file(fs.clone(), cx, move |content, _cx| {
-            content.workspace.bottom_dock_layout = Some(layout);
-        });
-
-        cx.notify();
-        self.serialize_workspace(window, cx);
-    }
-
     pub fn right_dock(&self) -> &Entity<Dock> {
         &self.right_dock
     }
@@ -2716,13 +2696,6 @@ impl Workspace {
             DockPosition::Bottom => &self.bottom_dock,
             DockPosition::Right => &self.right_dock,
         }
-    }
-
-    pub fn agent_panel_position(&self, cx: &App) -> Option<DockPosition> {
-        self.all_docks().into_iter().find_map(|dock| {
-            let dock = dock.read(cx);
-            dock.has_agent_panel(cx).then_some(dock.position())
-        })
     }
 
     pub fn panel_size_state<T: Panel>(&self, cx: &App) -> Option<dock::PanelSizeState> {
@@ -4066,18 +4039,6 @@ impl Workspace {
         state.task.clone().unwrap()
     }
 
-    /// Prompts the user to save or discard each dirty item, returning
-    /// `true` if they confirmed (saved/discarded everything) or `false`
-    /// if they cancelled. Used before removing worktree roots during
-    /// thread archival.
-    pub fn prompt_to_save_or_discard_dirty_items(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<bool>> {
-        self.save_all_internal(SaveIntent::Close, true, window, cx)
-    }
-
     fn save_all_internal(
         &mut self,
         mut save_intent: SaveIntent,
@@ -4224,7 +4185,6 @@ impl Workspace {
         })
     }
 
-    #[allow(clippy::type_complexity)]
     pub fn open_paths(
         &mut self,
         mut abs_paths: Vec<PathBuf>,
@@ -4643,7 +4603,13 @@ impl Workspace {
         }
     }
 
-    /// Closes the active item across all panes.
+    /// Closes the active item, along with every other item for the same file,
+    /// across all panes.
+    ///
+    /// Items are matched across panes by `single_file_project_path`, so only
+    /// items that stand for a single file are closed together.
+    /// Any other item, such as a multibuffer, whose project path is just the
+    /// file under its cursor, is closed on its own in the active pane.
     pub fn close_item_in_all_panes(
         &mut self,
         action: &CloseItemInAllPanes,
@@ -4657,7 +4623,7 @@ impl Workspace {
         let save_intent = action.save_intent.unwrap_or(SaveIntent::Close);
         let close_pinned = action.close_pinned;
 
-        if let Some(project_path) = active_item.project_path(cx) {
+        if let Some(project_path) = active_item.single_file_project_path(cx) {
             self.close_items_with_project_path(
                 &project_path,
                 save_intent,
@@ -5683,19 +5649,6 @@ impl Workspace {
         item.and_then(|item| item.downcast::<T>())
     }
 
-    pub fn is_project_item_open<T>(
-        &self,
-        pane: &Entity<Pane>,
-        project_item: &Entity<T::Item>,
-        cx: &App,
-    ) -> bool
-    where
-        T: ProjectItem,
-    {
-        self.find_project_item::<T>(pane, project_item, cx)
-            .is_some()
-    }
-
     /// Passing `None` for `pane` uses the active pane as the default destination
     /// and honors `reveal_if_open`. Passing a pane explicitly limits reuse and
     /// opening to that pane.
@@ -5943,7 +5896,7 @@ impl Workspace {
                     .find_pane_in_direction(direction, cx)
                     .unwrap_or_else(|| self.active_pane.clone());
                 let new_pane = self.add_pane(window, cx);
-                self.center.split(&split_off_pane, &new_pane, direction, cx);
+                self.center.split(&split_off_pane, &new_pane, direction);
                 new_pane
             }
         };
@@ -6215,7 +6168,7 @@ impl Workspace {
                 }
                 let new_pane = self.add_pane(window, cx);
                 self.center
-                    .split(&self.active_pane, &new_pane, action.direction, cx);
+                    .split(&self.active_pane, &new_pane, action.direction);
                 new_pane
             }
         };
@@ -6264,7 +6217,7 @@ impl Workspace {
 
     pub fn swap_pane_in_direction(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
         if let Some(to) = self.find_pane_in_direction(direction, cx) {
-            self.center.swap(&self.active_pane, &to, cx);
+            self.center.swap(&self.active_pane, &to);
             cx.notify();
         }
     }
@@ -6272,7 +6225,7 @@ impl Workspace {
     pub fn move_pane_to_border(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
         if self
             .center
-            .move_to_border(&self.active_pane, direction, cx)
+            .move_to_border(&self.active_pane, direction)
             .unwrap()
         {
             cx.notify();
@@ -6303,13 +6256,13 @@ impl Workspace {
             }
         } else {
             self.center
-                .resize(&self.active_pane, axis, amount, &self.bounds, cx);
+                .resize(&self.active_pane, axis, amount, &self.bounds);
         }
         cx.notify();
     }
 
     pub fn reset_pane_sizes(&mut self, cx: &mut Context<Self>) {
-        self.center.reset_pane_sizes(cx);
+        self.center.reset_pane_sizes();
         cx.notify();
     }
 
@@ -6553,7 +6506,7 @@ impl Workspace {
     ) -> Entity<Pane> {
         let new_pane = self.add_pane(window, cx);
         self.center
-            .split(&pane_to_split, &new_pane, split_direction, cx);
+            .split(&pane_to_split, &new_pane, split_direction);
         cx.notify();
         new_pane
     }
@@ -6572,7 +6525,7 @@ impl Workspace {
         new_pane.update(cx, |pane, cx| {
             pane.add_item(item, true, true, None, window, cx)
         });
-        self.center.split(&pane, &new_pane, direction, cx);
+        self.center.split(&pane, &new_pane, direction);
         cx.notify();
     }
 
@@ -6599,7 +6552,7 @@ impl Workspace {
                         pane.set_nav_history(nav_history, cx);
                         pane.add_item(clone, true, true, None, window, cx)
                     });
-                    this.center.split(&pane, &new_pane, direction, cx);
+                    this.center.split(&pane, &new_pane, direction);
                     cx.notify();
                     new_pane
                 })
@@ -6646,7 +6599,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.center.remove(&pane, cx).unwrap() {
+        if self.center.remove(&pane).unwrap() {
             if self
                 .maximized_pane
                 .as_ref()
@@ -6684,11 +6637,10 @@ impl Workspace {
 
     pub fn focused_pane(&self, window: &Window, cx: &App) -> Entity<Pane> {
         for dock in self.all_docks() {
-            if dock.focus_handle(cx).contains_focused(window, cx)
-                && let Some(pane) = dock
-                    .read(cx)
-                    .active_panel()
-                    .and_then(|panel| panel.pane(cx))
+            // A zoomed panel renders outside its dock.
+            if let Some(panel) = dock.read(cx).active_panel()
+                && panel.panel_focus_handle(cx).contains_focused(window, cx)
+                && let Some(pane) = panel.pane(cx)
             {
                 return pane;
             }
@@ -8326,8 +8278,6 @@ impl Workspace {
 
                     // Swap workspace center group
                     workspace.center = PaneGroup::with_root(center_group);
-                    workspace.center.set_is_center(true);
-                    workspace.center.mark_positions(cx);
 
                     if let Some(active_pane) = active_pane {
                         workspace.set_active_pane(&active_pane, window, cx);
@@ -11862,7 +11812,6 @@ pub fn open_workspace_by_id(
     })
 }
 
-#[allow(clippy::type_complexity)]
 pub fn open_paths(
     abs_paths: &[PathBuf],
     app_state: Arc<AppState>,
@@ -19072,6 +19021,67 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_close_item_in_all_panes_closes_invalid_items(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "file.bin": "" }))
+            .await;
+
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let pane_a = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let pane_b =
+            workspace.update_in(cx, |workspace, window, cx| workspace.add_pane(window, cx));
+
+        assert_eq!(pane_a.read_with(cx, |pane, _| pane.items_len()), 0);
+        assert_eq!(pane_b.read_with(cx, |pane, _| pane.items_len()), 0);
+
+        let invalid_item_view = |cx: &mut VisualTestContext| {
+            cx.update(|window, cx| {
+                let absolute_path = path!("/root/file.bin").as_ref();
+                let (worktree, path) = project.read(cx).find_worktree(absolute_path, cx).unwrap();
+                let worktree_id = worktree.read(cx).id();
+                let project_path = ProjectPath { worktree_id, path };
+
+                cx.new(|cx| {
+                    InvalidItemView::new(
+                        absolute_path,
+                        true,
+                        &anyhow::anyhow!("binary file"),
+                        window,
+                        cx,
+                    )
+                    .with_project_path(worktree, project_path)
+                })
+            })
+        };
+
+        let item = invalid_item_view(cx);
+        pane_a.update_in(cx, |pane, window, cx| {
+            pane.add_item(Box::new(item), true, true, None, window, cx)
+        });
+
+        let item = invalid_item_view(cx);
+        pane_b.update_in(cx, |pane, window, cx| {
+            pane.add_item(Box::new(item), true, true, None, window, cx)
+        });
+
+        assert_eq!(pane_a.read_with(cx, |pane, _| pane.items_len()), 1);
+        assert_eq!(pane_b.read_with(cx, |pane, _| pane.items_len()), 1);
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.close_item_in_all_panes(&CloseItemInAllPanes::default(), window, cx)
+        });
+        cx.executor().run_until_parked();
+
+        assert_eq!(pane_a.read_with(cx, |pane, _| pane.items_len()), 0);
+        assert_eq!(pane_b.read_with(cx, |pane, _| pane.items_len()), 0);
+    }
+
+    #[gpui::test]
     async fn test_restoring_pinned_tabs_when_items_fail_to_deserialize(cx: &mut TestAppContext) {
         init_test(cx);
         cx.update(|cx| {
@@ -19131,6 +19141,42 @@ mod tests {
             pinned_count, 2,
             "an unpinned item failing to restore should not unpin anything"
         );
+    }
+
+    #[gpui::test]
+    async fn test_restoring_pinned_tabs_past_max_tabs(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.workspace.max_tabs = std::num::NonZero::new(1);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "test.txt": "" })).await;
+        let project = Project::test(fs, ["root".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let (item, missing) = ("TestItem", "Unrestorable");
+        for (kinds, pinned_count, expected) in [
+            (vec![item; 3], 3, (3, 3)),
+            // A pinned item that fails to restore must not shield the tab that shifts into its place.
+            (vec![missing, item, item, item], 1, (1, 0)),
+        ] {
+            let children = kinds
+                .iter()
+                .enumerate()
+                .map(|(id, kind)| SerializedItem::new(kind, id as u64, false, false))
+                .collect();
+            let serialized_pane = SerializedPane::new(children, true, pinned_count);
+            let pane = restore_pane(&workspace, serialized_pane, cx).await;
+            let restored = pane.read_with(cx, |pane, _| (pane.items_len(), pane.pinned_count()));
+            assert_eq!(restored, expected);
+        }
     }
 
     #[gpui::test]

@@ -89,8 +89,6 @@ impl ToolchainScope {
 pub struct ToolchainMetadata {
     /// Returns a term which we should use in UI to refer to toolchains produced by a given `ToolchainLister`.
     pub term: SharedString,
-    /// A user-facing placeholder describing the semantic meaning of a path to a new toolchain.
-    pub new_toolchain_placeholder: SharedString,
     /// The name of the manifest file for this toolchain.
     pub manifest_name: ManifestName,
 }
@@ -106,19 +104,5 @@ pub struct ToolchainList {
 impl ToolchainList {
     pub fn toolchains(&self) -> &[Toolchain] {
         &self.toolchains
-    }
-    pub fn default_toolchain(&self) -> Option<Toolchain> {
-        self.default.and_then(|ix| self.toolchains.get(ix)).cloned()
-    }
-    pub fn group_for_index(&self, index: usize) -> Option<(usize, SharedString)> {
-        if index >= self.toolchains.len() {
-            return None;
-        }
-        let first_equal_or_greater = self
-            .groups
-            .partition_point(|(group_lower_bound, _)| group_lower_bound <= &index);
-        self.groups
-            .get(first_equal_or_greater.checked_sub(1)?)
-            .cloned()
     }
 }

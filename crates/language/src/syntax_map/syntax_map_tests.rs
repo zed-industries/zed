@@ -344,6 +344,59 @@ fn test_syntax_map_languages_match_layers_for_range(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_contains_wrap_characters(cx: &mut App) {
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    let markdown = markdown_lang();
+    registry.add(markdown.clone());
+    registry.add(Arc::new(Language::new(
+        LanguageConfig {
+            name: "Ruby".into(),
+            matcher: (LanguageMatcher {
+                path_suffixes: vec!["rb".into()],
+                ..Default::default()
+            })
+            .into(),
+            wrap_characters: Some(crate::WrapCharactersConfig {
+                start_prefix: "<".into(),
+                start_suffix: ">".into(),
+                end_prefix: "</".into(),
+                end_suffix: ">".into(),
+            }),
+            ..Default::default()
+        },
+        Some(tree_sitter_ruby::LANGUAGE.into()),
+    )));
+
+    let mut buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        r#"
+            This is a code block:
+
+            ```txt
+            a = 1
+            ```
+        "#
+        .unindent(),
+    );
+
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry);
+    syntax_map.reparse(markdown.clone(), &buffer);
+    assert!(!syntax_map.contains_wrap_characters());
+
+    buffer.edit([(range_for_text(&buffer, "txt"), "rb")]);
+    syntax_map.interpolate(&buffer);
+    syntax_map.reparse(markdown.clone(), &buffer);
+    assert!(syntax_map.contains_wrap_characters());
+
+    buffer.edit([(range_for_text(&buffer, "rb"), "txt")]);
+    syntax_map.interpolate(&buffer);
+    syntax_map.reparse(markdown, &buffer);
+    assert!(!syntax_map.contains_wrap_characters());
+}
+
+#[gpui::test]
 fn test_dynamic_language_injection(cx: &mut App) {
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let markdown = markdown_lang();

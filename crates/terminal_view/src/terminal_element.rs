@@ -1,3 +1,4 @@
+use collections::HashMap;
 use editor::{CursorLayout, EditorSettings, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     AbsoluteLength, AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Element,
@@ -449,6 +450,9 @@ impl TerminalElement {
     ) {
         let start_time = Instant::now();
         let theme = cx.theme();
+        // A grid repeats few color pairs, and each contrast check costs several `powf` calls
+        // (dozens when the color needs adjusting).
+        let mut contrast_cache = HashMap::default();
 
         // Pre-allocate with estimated capacity to reduce reallocations
         let estimated_cells = grid.size_hint().0;
@@ -505,9 +509,13 @@ impl TerminalElement {
                 if cell.is_wide_char_spacer() {
                     continue;
                 }
+                let character = match cell.character() {
+                    '\t' => ' ',
+                    character => character,
+                };
 
                 // Skip spaces that follow cells with extras (emoji variation sequences)
-                if cell.character() == ' ' && previous_cell_had_extras {
+                if character == ' ' && previous_cell_had_extras {
                     previous_cell_had_extras = false;
                     continue;
                 }
@@ -528,12 +536,13 @@ impl TerminalElement {
                             text_style,
                             hyperlink,
                             minimum_contrast,
+                            &mut contrast_cache,
                         );
 
                         let cell_point = LayoutPoint::new(display_line, point.column as i32);
                         if Self::collect_block_element_regions(
                             cell_point,
-                            cell.character(),
+                            character,
                             cell_style.color,
                             &mut block_element_regions,
                         ) {
@@ -552,7 +561,7 @@ impl TerminalElement {
                                 && batch.start_point.column + batch.cell_count as i32
                                     == cell_point.column
                             {
-                                batch.append_char(cell.character());
+                                batch.append_char(character);
                                 if let Some(chars) = zero_width_chars {
                                     batch.append_zero_width_chars(chars);
                                 }
@@ -562,7 +571,7 @@ impl TerminalElement {
                                 batched_runs.push(old_batch);
                                 let mut new_batch = BatchedTextRun::new_from_char(
                                     cell_point,
-                                    cell.character(),
+                                    character,
                                     cell_style,
                                     text_style.font_size,
                                 );
@@ -575,7 +584,7 @@ impl TerminalElement {
                             // Start new batch
                             let mut new_batch = BatchedTextRun::new_from_char(
                                 cell_point,
-                                cell.character(),
+                                character,
                                 cell_style,
                                 text_style.font_size,
                             );
@@ -874,13 +883,19 @@ impl TerminalElement {
         text_style: &TextStyle,
         hyperlink: Option<(HighlightStyle, &Range)>,
         minimum_contrast: f32,
+        contrast_cache: &mut HashMap<(Hsla, Hsla), Hsla>,
     ) -> TextRun {
         let skip_contrast = Self::is_app_chosen_exact_color(&fg);
         let mut fg = convert_color(&fg, colors);
         let bg = convert_color(&bg, colors);
 
-        if !skip_contrast && !Self::is_decorative_character(cell.character()) {
-            fg = ensure_minimum_contrast(fg, bg, minimum_contrast);
+        if minimum_contrast > 0.0
+            && !skip_contrast
+            && !Self::is_decorative_character(cell.character())
+        {
+            fg = *contrast_cache
+                .entry((fg, bg))
+                .or_insert_with(|| ensure_minimum_contrast(fg, bg, minimum_contrast));
         }
 
         // Use a dim multiplier that stays close to the existing Alacritty look.
@@ -1330,9 +1345,10 @@ impl Element for TerminalElement {
 
                 let background_color = theme.colors().terminal_background;
 
+                let mouse_input_mode = self.terminal_view.read(cx).mouse_input_mode();
                 let (hover_tooltip, hover_match) = self.terminal.update(cx, |terminal, cx| {
                     terminal.set_size(dimensions);
-                    terminal.sync(window, cx);
+                    terminal.sync(mouse_input_mode, window, cx);
 
                     if window.modifiers().secondary(cx)
                         && bounds.contains(&window.mouse_position())
@@ -1640,7 +1656,12 @@ impl Element for TerminalElement {
                             }
 
                             this.update(cx, |term, cx| {
-                                term.try_modifiers_change(&event.modifiers, window, cx)
+                                term.try_modifiers_change(
+                                    &event.modifiers,
+                                    mouse_input_mode,
+                                    window,
+                                    cx,
+                                )
                             });
                         }
                     });
@@ -1870,7 +1891,7 @@ impl InputHandler for TerminalInputHandler {
 }
 
 pub fn is_blank(cell: &Cell) -> bool {
-    if cell.character() != ' ' {
+    if !matches!(cell.character(), ' ' | '\t') {
         return false;
     }
 
@@ -2376,6 +2397,67 @@ mod tests {
         assert!(!TerminalElement::is_decorative_character('1'));
         assert!(!TerminalElement::is_decorative_character('$'));
         assert!(!TerminalElement::is_decorative_character(' '));
+    }
+
+    #[gpui::test]
+    fn test_cell_style_caches_contrast_per_color_pair(cx: &mut TestAppContext) {
+        use terminal::{Color, NamedColor};
+
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+        cx.update(|cx| {
+            let theme = cx.theme();
+            let pairs = [
+                (
+                    Color::Named(NamedColor::BrightBlack),
+                    Color::Named(NamedColor::Background),
+                ),
+                (
+                    Color::Named(NamedColor::Foreground),
+                    Color::Named(NamedColor::Background),
+                ),
+                (
+                    Color::Named(NamedColor::BrightBlack),
+                    Color::Named(NamedColor::White),
+                ),
+                (Color::Indexed(8), Color::Named(NamedColor::Black)),
+            ];
+            let cell_color = |fg: &Color, bg: &Color, minimum_contrast, contrast_cache: &mut _| {
+                TerminalElement::cell_style(
+                    Point::new(0, 0),
+                    &Cell::default(),
+                    *fg,
+                    *bg,
+                    theme,
+                    &TextStyle::default(),
+                    None,
+                    minimum_contrast,
+                    contrast_cache,
+                )
+                .color
+            };
+            for minimum_contrast in [0.0, 45.0, 90.0] {
+                let mut contrast_cache = HashMap::default();
+                for (fg, bg) in pairs.iter().chain(pairs.iter().rev()) {
+                    let key = (convert_color(fg, theme), convert_color(bg, theme));
+                    let expected = ensure_minimum_contrast(key.0, key.1, minimum_contrast);
+                    assert_eq!(
+                        cell_color(fg, bg, minimum_contrast, &mut contrast_cache),
+                        expected,
+                        "{fg:?} on {bg:?} at {minimum_contrast}"
+                    );
+                    let cached = contrast_cache.get(&key);
+                    assert_eq!(cached, (minimum_contrast > 0.0).then_some(&expected));
+                }
+            }
+            let (fg, bg) = &pairs[0];
+            let key = (convert_color(fg, theme), convert_color(bg, theme));
+            let mut contrast_cache = HashMap::from_iter([(key, gpui::red())]);
+            assert_eq!(cell_color(fg, bg, 45.0, &mut contrast_cache), gpui::red());
+        });
     }
 
     #[test]
@@ -2924,6 +3006,24 @@ mod tests {
             0,
             "Should have no cells when all are skipped"
         );
+    }
+
+    #[gpui::test]
+    async fn test_layout_grid_draws_tab_cells_as_spaces(cx: &mut TestAppContext) {
+        let (project, _, window) = crate::tests::init_test_with_window(cx).await;
+        let (_, terminal, _) =
+            crate::tests::add_display_only_terminal(&project, window, true, true, cx);
+        let mut cx = gpui::VisualTestContext::from_window(window.into(), cx);
+        terminal.update(&mut cx, |terminal, cx| {
+            terminal.write_output(b" ab\r\t\n\x1b[41m ab\x1b[0m\r\t", cx);
+        });
+        cx.run_until_parked();
+        let cells = terminal.read_with(&cx, |terminal, _| terminal.last_content().cells.clone());
+        let (_, runs, _) = cx.update(|_, cx| {
+            TerminalElement::layout_grid(cells.iter(), 0, &TextStyle::default(), None, 0., cx)
+        });
+        let texts = runs.iter().map(|run| run.text.as_str()).collect::<Vec<_>>();
+        assert_eq!(texts, ["ab", " ab"]);
     }
 
     #[test]

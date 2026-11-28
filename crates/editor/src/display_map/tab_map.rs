@@ -4,7 +4,7 @@ use super::{
 };
 
 use language::{LanguageAwareStyling, Point};
-use multi_buffer::{MultiBufferRow, MultiBufferSnapshot};
+use multi_buffer::MultiBufferSnapshot;
 use std::{cmp, num::NonZeroU32, ops::Range};
 use sum_tree::Bias;
 
@@ -411,11 +411,6 @@ impl TabSnapshot {
             expanded_char_column,
             to_next_stop,
         )
-    }
-
-    pub fn buffer_row_to_tab_row(&self, buffer_row: MultiBufferRow) -> u32 {
-        self.point_to_tab_point(Point::new(buffer_row.0, 0), Bias::Left)
-            .row()
     }
 
     #[ztracing::instrument(skip_all)]
@@ -1243,8 +1238,6 @@ mod tests {
     #[gpui::test]
     fn test_to_fold_point_panic_reproduction(cx: &mut gpui::App) {
         // This test reproduces a specific panic where to_fold_point returns incorrect results
-        let _text = "use macro_rules_attribute::apply;\nuse serde_json::Value;\nuse smol::{\n    io::AsyncReadExt,\n    process::{Command, Stdio},\n};\nuse smol_macros::main;\nuse std::io;\n\nfn test_random() {\n    // Generate a random value\n    let random_value = std::time::SystemTime::now()\n        .duration_since(std::time::UNIX_EPOCH)\n        .unwrap()\n        .as_secs()\n        % 100;\n\n    // Create some complex nested data structures\n    let mut vector = Vec::new();\n    for i in 0..random_value {\n        vector.push(i);\n    }\n    ";
-
         let text = "γ\tw⭐\n🍐🍗 \t";
         let buffer = MultiBuffer::build_simple(text, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);

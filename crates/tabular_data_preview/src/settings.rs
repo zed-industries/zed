@@ -4,7 +4,7 @@ pub enum RowRenderMechanism {
     #[default]
     VariableList,
     /// Default behaviour for now while resizable columns are being stabilized.
-    #[allow(dead_code)] // Will be used when settings ui is added
+    #[cfg_attr(not(feature = "dev-tools"), expect(dead_code))]
     UniformList,
 }
 

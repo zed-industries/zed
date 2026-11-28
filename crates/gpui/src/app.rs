@@ -4,7 +4,7 @@ use std::{
     cell::{Cell, Ref, RefCell, RefMut},
     ffi::OsString,
     marker::PhantomData,
-    mem,
+    mem::{self, DropGuard},
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     rc::{Rc, Weak},
@@ -912,6 +912,7 @@ pub struct App {
     pub(crate) keystroke_observers: SingleSubscriberSet<KeystrokeObserver>,
     pub(crate) keystroke_interceptors: SingleSubscriberSet<KeystrokeObserver>,
     pub(crate) keyboard_layout_observers: SingleSubscriberSet<Handler>,
+    pub(crate) text_scale_factor_observers: SingleSubscriberSet<Handler>,
     missing_glyph_callback: Rc<MissingGlyphCallbackSlot>,
     pub(crate) thermal_state_observers: SingleSubscriberSet<Handler>,
     pub(crate) display_observers: SingleSubscriberSet<DisplayHandler>,
@@ -999,7 +1000,6 @@ pub(crate) struct WindowUpdateEntry {
 }
 
 impl App {
-    #[allow(clippy::new_ret_no_self)]
     pub(crate) fn new_app(
         platform: Rc<dyn Platform>,
         asset_source: Arc<dyn AssetSource>,
@@ -1069,6 +1069,7 @@ impl App {
                 keystroke_observers: SingleSubscriberSet::new(),
                 keystroke_interceptors: SingleSubscriberSet::new(),
                 keyboard_layout_observers: SingleSubscriberSet::new(),
+                text_scale_factor_observers: SingleSubscriberSet::new(),
                 missing_glyph_callback: Rc::default(),
                 thermal_state_observers: SingleSubscriberSet::new(),
                 display_observers: SingleSubscriberSet::new(),
@@ -1121,6 +1122,18 @@ impl App {
                     cx.keyboard_layout = cx.platform.keyboard_layout();
                     cx.keyboard_mapper = cx.platform.keyboard_mapper();
                     cx.keyboard_layout_observers
+                        .clone()
+                        .retain(move |callback| (callback)(cx));
+                }
+            }
+        }));
+
+        platform.on_text_scale_factor_change(Box::new({
+            let app = Rc::downgrade(&app);
+            move || {
+                if let Some(app) = app.upgrade() {
+                    let cx = &mut app.borrow_mut();
+                    cx.text_scale_factor_observers
                         .clone()
                         .retain(move |callback| (callback)(cx));
                 }
@@ -1346,6 +1359,17 @@ impl App {
         }))
     }
 
+    /// Invokes a handler when the text scale factor changes
+    pub fn on_text_scale_factor_change<F>(&self, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(&mut App),
+    {
+        self.text_scale_factor_observers.insert(Box::new(move |cx| {
+            callback(cx);
+            true
+        }))
+    }
+
     /// Gracefully quit the application via the platform's standard routine.
     pub fn quit(&self) {
         self.platform.quit();
@@ -1426,6 +1450,26 @@ impl App {
     /// multiple times in an update cycle and still result in a single redraw.
     pub fn refresh_windows(&mut self) {
         self.pending_effects.push_back(Effect::RefreshWindows);
+    }
+
+    /// Returns whether a window's last frame read this entity without drawing it as a view.
+    /// Notifying such an entity doesn't redraw the views that read it.
+    ///
+    /// A window that is being updated counts as such a read. `false` covers only the views
+    /// on the path from the entity's view node to the window root. A frame keeps one view
+    /// node per entity, so notifying doesn't redraw other cached views that read the entity
+    /// or draw it a second time.
+    pub fn is_read_without_view(&self, entity_id: EntityId) -> bool {
+        self.tracked_entities
+            .iter()
+            .filter(|(_, entities)| entities.contains(&entity_id))
+            .any(|(window_id, _)| {
+                let Some(Some(window)) = self.windows.get(*window_id) else {
+                    return true;
+                };
+                let dispatch_tree = &window.rendered_frame.dispatch_tree;
+                dispatch_tree.view_path_reversed(entity_id).next().is_none()
+            })
     }
 
     #[inline(always)]
@@ -1933,6 +1977,11 @@ impl App {
     /// Returns the window button layout configuration when supported.
     pub fn button_layout(&self) -> Option<WindowButtonLayout> {
         self.platform.button_layout()
+    }
+
+    /// Returns the factor by which text should be scaled, on top of the window's scale factor.
+    pub fn text_scale_factor(&self) -> f32 {
+        self.platform.text_scale_factor()
     }
 
     /// Reads data from the platform clipboard.
@@ -3742,8 +3791,7 @@ impl HttpClient for NullHttpClient {
 
 /// A mutable reference to an entity owned by GPUI
 pub struct GpuiBorrow<'a, T> {
-    inner: Option<Lease<T>>,
-    app: &'a mut App,
+    guard: DropGuard<(Lease<T>, &'a mut App), fn((Lease<T>, &'a mut App))>,
 }
 
 impl<'a, T: 'static> GpuiBorrow<'a, T> {
@@ -3751,21 +3799,24 @@ impl<'a, T: 'static> GpuiBorrow<'a, T> {
         app.start_update();
         let lease = app.entities.lease(&inner);
         Self {
-            inner: Some(lease),
-            app,
+            guard: DropGuard::new((lease, app), |(lease, app)| {
+                app.notify(lease.id);
+                app.entities.end_lease(lease);
+                app.finish_update();
+            }),
         }
     }
 }
 
 impl<'a, T: 'static> std::borrow::Borrow<T> for GpuiBorrow<'a, T> {
     fn borrow(&self) -> &T {
-        self.inner.as_ref().unwrap().borrow()
+        &self.guard.0
     }
 }
 
 impl<'a, T: 'static> std::borrow::BorrowMut<T> for GpuiBorrow<'a, T> {
     fn borrow_mut(&mut self) -> &mut T {
-        self.inner.as_mut().unwrap().borrow_mut()
+        &mut self.guard.0
     }
 }
 
@@ -3773,22 +3824,13 @@ impl<'a, T: 'static> std::ops::Deref for GpuiBorrow<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        self.inner.as_ref().unwrap()
+        &self.guard.0
     }
 }
 
 impl<'a, T: 'static> std::ops::DerefMut for GpuiBorrow<'a, T> {
     fn deref_mut(&mut self) -> &mut T {
-        self.inner.as_mut().unwrap()
-    }
-}
-
-impl<'a, T> Drop for GpuiBorrow<'a, T> {
-    fn drop(&mut self) {
-        let lease = self.inner.take().unwrap();
-        self.app.notify(lease.id);
-        self.app.entities.end_lease(lease);
-        self.app.finish_update();
+        &mut self.guard.0
     }
 }
 

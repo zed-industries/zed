@@ -82,6 +82,7 @@ pub fn original_repo_path_from_common_dir(common_dir: &Path) -> Option<PathBuf> 
 
 fn linked_worktree_git_dir(worktree_path: &Path) -> Result<PathBuf> {
     let dot_git_path = worktree_path.join(".git");
+    anyhow::ensure!(dot_git_path.is_file(), "{dot_git_path:?} is not a file");
     let git_file = std::fs::read_to_string(&dot_git_path)
         .with_context(|| format!("failed to read {}", dot_git_path.display()))?;
     let git_dir = git_file
@@ -242,15 +243,7 @@ pub struct Branch {
 pub struct BranchesScanResult {
     pub branches: Vec<Branch>,
     pub error: Option<SharedString>,
-}
-
-impl From<Vec<Branch>> for BranchesScanResult {
-    fn from(branches: Vec<Branch>) -> Self {
-        Self {
-            branches,
-            error: None,
-        }
-    }
+    pub remote_default_branch: Option<SharedString>,
 }
 
 impl Branch {
@@ -270,21 +263,6 @@ impl Branch {
         self.ref_name
             .strip_prefix("refs/remotes/")
             .and_then(|stripped| stripped.split("/").next())
-    }
-
-    pub fn tracking_status(&self) -> Option<UpstreamTrackingStatus> {
-        self.upstream
-            .as_ref()
-            .and_then(|upstream| upstream.tracking.status())
-    }
-
-    pub fn priority_key(&self) -> (bool, Option<i64>) {
-        (
-            self.is_head,
-            self.most_recent_commit
-                .as_ref()
-                .map(|commit| commit.commit_timestamp),
-        )
     }
 }
 
@@ -428,6 +406,25 @@ pub fn parse_worktrees_from_str<T: AsRef<str>>(
     worktrees
 }
 
+fn main_worktree_index(raw_worktrees: &str, worktrees: &[Worktree]) -> Option<usize> {
+    let normalized = raw_worktrees.replace("\r\n", "\n");
+    let main_entry = normalized.split("\n\n").next()?;
+    let mut main_worktree_path = None;
+    for line in main_entry.lines() {
+        let line = line.trim();
+        if line == "bare" {
+            return None;
+        }
+        if let Some(path) = line.strip_prefix("worktree ") {
+            main_worktree_path = Some(Path::new(path));
+        }
+    }
+    let main_worktree_path = main_worktree_path?;
+    worktrees
+        .iter()
+        .position(|worktree| worktree.path == main_worktree_path)
+}
+
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Upstream {
     pub ref_name: SharedString,
@@ -443,10 +440,6 @@ impl Upstream {
         self.ref_name
             .strip_prefix("refs/remotes/")
             .and_then(|stripped| stripped.split("/").next())
-    }
-
-    pub fn stripped_ref_name(&self) -> Option<&str> {
-        self.ref_name.strip_prefix("refs/remotes/")
     }
 
     pub fn branch_name(&self) -> Option<&str> {
@@ -479,10 +472,6 @@ impl From<UpstreamTrackingStatus> for UpstreamTracking {
 }
 
 impl UpstreamTracking {
-    pub fn is_gone(&self) -> bool {
-        matches!(self, UpstreamTracking::Gone)
-    }
-
     pub fn status(&self) -> Option<UpstreamTrackingStatus> {
         match self {
             UpstreamTracking::Gone => None,
@@ -1126,6 +1115,10 @@ pub trait GitRepository: Send + Sync {
 
     fn set_trusted(&self, trusted: bool);
     fn is_trusted(&self) -> bool;
+
+    fn git_binary_path(&self) -> Option<PathBuf> {
+        None
+    }
 }
 
 pub enum DiffType {
@@ -1660,6 +1653,10 @@ impl GitRepository for RealGitRepository {
                     path
                 };
 
+                if !path.is_file() {
+                    log::warn!("failed to read commit template {path:?}: not a file");
+                    return Ok(None);
+                }
                 let template = match std::fs::read_to_string(&path) {
                     Ok(s) if !s.trim().is_empty() => Some(s),
                     Err(err) => {
@@ -1883,7 +1880,13 @@ impl GitRepository for RealGitRepository {
     fn merge_message(&self) -> BoxFuture<'_, Option<String>> {
         let path = self.path().join("MERGE_MSG");
         self.executor
-            .spawn(async move { std::fs::read_to_string(&path).ok() })
+            .spawn(async move {
+                if path.is_file() {
+                    std::fs::read_to_string(&path).ok()
+                } else {
+                    None
+                }
+            })
             .boxed()
     }
 
@@ -2180,6 +2183,7 @@ impl GitRepository for RealGitRepository {
                     "%(committerdate:unix)",
                     "%(authorname)",
                     "%(contents:subject)",
+                    "%(symref)",
                 ]
                 .join("%00");
                 let args = vec![
@@ -2201,6 +2205,7 @@ impl GitRepository for RealGitRepository {
 
                 let input = String::from_utf8_lossy(&output.stdout);
                 let mut branches = parse_branch_input(&input)?;
+                let remote_default_branch = parse_remote_default_branch(&input);
                 if branches.is_empty() {
                     let args = vec!["symbolic-ref", "--quiet", "HEAD"];
 
@@ -2220,7 +2225,11 @@ impl GitRepository for RealGitRepository {
                     }
                 }
 
-                Ok(BranchesScanResult { branches, error })
+                Ok(BranchesScanResult {
+                    branches,
+                    error,
+                    remote_default_branch,
+                })
             })
             .boxed()
     }
@@ -2228,6 +2237,9 @@ impl GitRepository for RealGitRepository {
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>> {
         let git = self.git_binary();
         let main_worktree_path = original_repo_path_from_common_dir(&self.common_dir);
+        let own_working_directory = (self.git_dir == self.common_dir)
+            .then(|| self.working_directory.clone())
+            .flatten();
         self.executor
             .spawn(async move {
                 let output = git
@@ -2236,10 +2248,23 @@ impl GitRepository for RealGitRepository {
                     .await?;
                 if output.status.success() {
                     let stdout = String::from_utf8_lossy(&output.stdout);
-                    Ok(parse_worktrees_from_str(
-                        &stdout,
-                        main_worktree_path.as_deref(),
-                    ))
+                    let mut worktrees =
+                        parse_worktrees_from_str(&stdout, main_worktree_path.as_deref());
+                    // When the common directory is not `<checkout>/.git`, `git worktree list` prints the Git directory itself as the main worktree.
+                    if main_worktree_path.is_none()
+                        && let Some(index) = main_worktree_index(&stdout, &worktrees)
+                    {
+                        match (own_working_directory, worktrees.get_mut(index)) {
+                            (Some(working_directory), Some(worktree)) => {
+                                worktree.path = working_directory;
+                                worktree.is_main = true;
+                            }
+                            _ => {
+                                worktrees.remove(index);
+                            }
+                        }
+                    }
+                    Ok(worktrees)
                 } else {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     anyhow::bail!("git worktree list failed: {stderr}");
@@ -2788,7 +2813,7 @@ impl GitRepository for RealGitRepository {
         async move {
             let git = git?;
             git.run_remote_command(Some(askpass), &env, &["commit", "--quiet", "-m"], |cmd| {
-                cmd.arg(&message.to_string())
+                cmd.arg(message.as_str())
                     .arg("--cleanup=strip")
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped());
@@ -3188,26 +3213,8 @@ impl GitRepository for RealGitRepository {
                     .filter_map(|line| line.split_once('\t'))
                     .collect();
 
-                if let Some(target) = refs.get("refs/remotes/upstream/HEAD") {
-                    let strip_prefix = if include_remote_name {
-                        "refs/remotes/"
-                    } else {
-                        "refs/remotes/upstream/"
-                    };
-                    if let Some(branch) = target.strip_prefix(strip_prefix) {
-                        return Ok(Some(branch.into()));
-                    }
-                }
-
-                if let Some(target) = refs.get("refs/remotes/origin/HEAD") {
-                    let strip_prefix = if include_remote_name {
-                        "refs/remotes/"
-                    } else {
-                        "refs/remotes/origin/"
-                    };
-                    if let Some(branch) = target.strip_prefix(strip_prefix) {
-                        return Ok(Some(branch.into()));
-                    }
+                if let Some(branch) = remote_head_branch(&refs, include_remote_name) {
+                    return Ok(Some(branch));
                 }
 
                 let local_branch_exists =
@@ -3503,6 +3510,10 @@ impl GitRepository for RealGitRepository {
     fn is_trusted(&self) -> bool {
         self.is_trusted.load(std::sync::atomic::Ordering::Acquire)
     }
+
+    fn git_binary_path(&self) -> Option<PathBuf> {
+        Some(self.any_git_binary_path.clone())
+    }
 }
 
 async fn run_commit_data_reader(
@@ -3680,6 +3691,22 @@ fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
     args
 }
 
+pub fn untrusted_git_command<S: AsRef<OsStr>>(
+    git_binary_path: &Path,
+    working_directory: &Path,
+    executor: BackgroundExecutor,
+    args: &[S],
+) -> util::command::Command {
+    GitBinary::new(
+        git_binary_path.to_path_buf(),
+        working_directory.to_path_buf(),
+        working_directory.to_path_buf(),
+        executor,
+        false,
+    )
+    .build_command(args)
+}
+
 pub(crate) struct GitBinary {
     git_binary_path: PathBuf,
     working_directory: PathBuf,
@@ -3782,7 +3809,6 @@ impl GitBinary {
         Ok(String::from_utf8(output.stdout)?)
     }
 
-    #[allow(clippy::disallowed_methods)]
     pub(crate) fn build_command<S>(&self, args: &[S]) -> util::command::Command
     where
         S: AsRef<OsStr>,
@@ -4106,6 +4132,36 @@ impl MapSeekTarget<RepoPath> for RepoPathDescendants<'_> {
             self.0.cmp(key)
         }
     }
+}
+
+fn parse_remote_default_branch(input: &str) -> Option<SharedString> {
+    let symrefs = input
+        .split('\n')
+        .filter_map(|line| {
+            let mut fields = line.split('\x00');
+            let ref_name = fields.nth(3)?;
+            let symref = fields.nth(5)?;
+            (!symref.is_empty()).then_some((ref_name, symref))
+        })
+        .collect::<HashMap<_, _>>();
+    remote_head_branch(&symrefs, true)
+}
+
+fn remote_head_branch(
+    refs: &HashMap<&str, &str>,
+    include_remote_name: bool,
+) -> Option<SharedString> {
+    ["upstream", "origin"].into_iter().find_map(|remote| {
+        let target = refs.get(format!("refs/remotes/{remote}/HEAD").as_str())?;
+        let strip_prefix = if include_remote_name {
+            "refs/remotes/".to_string()
+        } else {
+            format!("refs/remotes/{remote}/")
+        };
+        target
+            .strip_prefix(strip_prefix.as_str())
+            .map(SharedString::from)
+    })
 }
 
 fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
@@ -6403,6 +6459,103 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_worktrees_of_a_repository_with_a_separate_git_dir(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let git_dir = temp_dir.path().join("clones").join("repo.git");
+        let checkout_dir = temp_dir.path().join("checkouts").join("repo");
+        let linked_dir = temp_dir.path().join("linked");
+        fs::create_dir_all(temp_dir.path().join("clones")).unwrap();
+        fs::create_dir_all(&checkout_dir).unwrap();
+        git_command(
+            &checkout_dir,
+            [
+                OsStr::new("init"),
+                OsStr::new("-b"),
+                OsStr::new("main"),
+                OsStr::new("--separate-git-dir"),
+                git_dir.as_os_str(),
+            ],
+        );
+        git_command(
+            &checkout_dir,
+            ["commit", "--allow-empty", "-m", "Initial commit"],
+        );
+        git_command(
+            &checkout_dir,
+            [
+                OsStr::new("worktree"),
+                OsStr::new("add"),
+                linked_dir.as_os_str(),
+            ],
+        );
+        let checkout = RealGitRepository::new(
+            &checkout_dir.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        let linked = RealGitRepository::new(
+            &linked_dir.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        let checkout_path = fs::canonicalize(&checkout_dir).unwrap();
+        let linked_path = fs::canonicalize(&linked_dir).unwrap();
+        let paths_and_main_flags = |worktrees: Vec<Worktree>| {
+            worktrees
+                .into_iter()
+                .map(|worktree| (fs::canonicalize(worktree.path).unwrap(), worktree.is_main))
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            paths_and_main_flags(checkout.worktrees().await.unwrap()),
+            vec![(checkout_path, true), (linked_path.clone(), false)]
+        );
+        assert_eq!(
+            paths_and_main_flags(linked.worktrees().await.unwrap()),
+            vec![(linked_path, false)]
+        );
+    }
+
+    #[test]
+    fn test_main_worktree_index() {
+        let worktree = |path: &str, is_bare: bool| Worktree {
+            path: PathBuf::from(path),
+            ref_name: None,
+            sha: "abc123".into(),
+            is_main: false,
+            is_bare,
+        };
+        let indices = [
+            (
+                "worktree /clones/repo.git\nHEAD abc123\n\nworktree /linked\nHEAD abc123\n\n",
+                vec![worktree("/clones/repo.git", false), worktree("/linked", false)],
+            ),
+            (
+                "worktree /clones/repo.git\r\nHEAD abc123\r\n\r\nworktree /linked\r\nHEAD abc123\r\n",
+                vec![worktree("/linked", false), worktree("/clones/repo.git", false)],
+            ),
+            (
+                "worktree /repo.git\nHEAD abc123\nbare\n\nworktree /linked\nHEAD abc123\n\n",
+                vec![worktree("/repo.git", true), worktree("/linked", false)],
+            ),
+            (
+                "worktree /repo.git\nbare\n\nworktree /linked\nHEAD abc123\n\n",
+                vec![worktree("/linked", false)],
+            ),
+        ]
+        .map(|(raw_worktrees, worktrees)| main_worktree_index(raw_worktrees, &worktrees));
+        assert_eq!(indices, [Some(0), Some(1), None, None]);
+    }
+
+    #[gpui::test]
     async fn test_remove_worktree(cx: &mut TestAppContext) {
         disable_git_global_config();
         cx.executor().allow_parking();
@@ -6847,6 +7000,68 @@ mod tests {
         assert_eq!(
             repo.default_branch(true).await.unwrap(),
             Some("origin/main".into())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_branch_scan_reads_the_remote_default_branch(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some(PathBuf::from("git")),
+            cx.executor(),
+        )
+        .unwrap();
+        fs::write(repo_dir.path().join("message"), b"Latin-1 subject \xe9\n").unwrap();
+        git_command(
+            repo_dir.path(),
+            [
+                "-c",
+                "i18n.commitEncoding=ISO-8859-1",
+                "commit",
+                "--quiet",
+                "--allow-empty",
+                "--file",
+                "message",
+            ],
+        );
+
+        let mut remote_default_branches = Vec::new();
+        for remote in ["origin", "upstream"] {
+            git_command(
+                repo_dir.path(),
+                ["update-ref", &format!("refs/remotes/{remote}/main"), "HEAD"],
+            );
+            git_command(
+                repo_dir.path(),
+                [
+                    "symbolic-ref",
+                    &format!("refs/remotes/{remote}/HEAD"),
+                    &format!("refs/remotes/{remote}/main"),
+                ],
+            );
+            remote_default_branches.push((
+                repo.branches().await.unwrap().remote_default_branch,
+                repo.default_branch(true).await.unwrap(),
+            ));
+        }
+        assert_eq!(
+            remote_default_branches,
+            [
+                (
+                    Some(SharedString::from("origin/main")),
+                    Some(SharedString::from("origin/main")),
+                ),
+                (
+                    Some(SharedString::from("upstream/main")),
+                    Some(SharedString::from("upstream/main")),
+                ),
+            ]
         );
     }
 

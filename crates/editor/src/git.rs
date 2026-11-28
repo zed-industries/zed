@@ -444,7 +444,6 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.toggle_git_blame_inline_internal(true, window, cx);
-        cx.notify();
     }
 
     /// Hides the inline blame popover element, in case it's already visible, or
@@ -1118,7 +1117,6 @@ impl Editor {
             .map(|overlay| overlay.block_id)
             .collect();
         self.remove_blocks(block_ids, None, cx);
-        cx.notify();
     }
 
     /// Action handler for SubmitDiffReviewComment.
@@ -2102,17 +2100,6 @@ impl Editor {
         .detach_and_log_err(cx);
     }
 
-    pub fn restore_diff_hunks_in_ranges(
-        &mut self,
-        ranges: Vec<Range<Anchor>>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let hunks = self.diff_hunks_in_ranges(&ranges, &snapshot).collect();
-        self.apply_restore(hunks, window, cx);
-    }
-
     fn toggle_diff_hunks_in_ranges(
         &mut self,
         ranges: Vec<Range<Anchor>>,
@@ -2433,7 +2420,6 @@ impl Editor {
 
         if !block_ids_to_remove.is_empty() {
             self.remove_blocks(block_ids_to_remove, None, cx);
-            cx.notify();
         }
     }
 
@@ -2464,7 +2450,6 @@ impl Editor {
         };
 
         // Calculate new height
-        let snapshot = self.buffer.read(cx).snapshot(cx);
         let new_height = self.calculate_overlay_height(hunk_key, comments_expanded, &snapshot);
 
         // Update the block height using resize_blocks (avoids flicker)

@@ -102,7 +102,70 @@ use workspace::{
     ToggleWorkspaceSidebar, ToggleZoom, ToolbarItemView, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
     item::{ItemEvent, ItemHandle},
+    notifications::NotifyTaskExt as _,
 };
+
+struct AgentAccountLabels {
+    status: watch::Receiver<Option<acp_v2::AuthStatusResponse>>,
+    _updates: Task<()>,
+}
+
+impl AgentAccountLabels {
+    fn new(
+        status: watch::Receiver<Option<acp_v2::AuthStatusResponse>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut updates = status.clone();
+        Self {
+            status,
+            _updates: cx.spawn(async move |this, cx| {
+                while updates.changed().await.is_ok() {
+                    if this.update(cx, |_, cx| cx.notify()).is_err() {
+                        break;
+                    }
+                }
+            }),
+        }
+    }
+}
+
+impl Render for AgentAccountLabels {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let status = self.status.borrow();
+        let mut rows = v_flex().px_2();
+        if let Some(status) = status.as_ref() {
+            let has_active = status
+                .accounts
+                .iter()
+                .any(|account| account.active == Some(true));
+            for account in &status.accounts {
+                if has_active && account.active != Some(true) {
+                    continue;
+                }
+                let detail = [
+                    &account.organization,
+                    &account.name,
+                    &account.email,
+                    &account.description,
+                ]
+                .into_iter()
+                .filter_map(|field| field.as_deref())
+                .find(|text| !text.is_empty());
+                let label = match detail {
+                    Some(detail) => format!("{} · {detail}", account.label),
+                    None => account.label.clone(),
+                };
+                rows = rows.child(
+                    Label::new(label)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .truncate(),
+                );
+            }
+        }
+        rows
+    }
+}
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
 const MIN_PANEL_WIDTH: Pixels = px(300.);
@@ -154,6 +217,11 @@ fn terminal_program_to_report(
 pub struct TerminalId(uuid::Uuid);
 
 impl TerminalId {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_new() -> Self {
+        Self::new()
+    }
+
     pub(crate) fn new() -> Self {
         Self(uuid::Uuid::new_v4())
     }
@@ -248,18 +316,59 @@ fn project_agents_md_path(
         })
 }
 
-fn open_global_rules(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
-    workspace
-        .open_abs_path(
-            paths::agents_file().clone(),
-            workspace::OpenOptions {
-                focus: Some(true),
-                ..Default::default()
-            },
-            window,
-            cx,
-        )
-        .detach_and_log_err(cx);
+pub(crate) fn open_global_rules(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let agents_file = paths::agents_file().clone();
+    if workspace.project().read(cx).is_local() {
+        workspace
+            .open_abs_path(
+                agents_file,
+                workspace::OpenOptions {
+                    focus: Some(true),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+            .detach_and_log_err(cx);
+        return;
+    }
+
+    // The global rules are on this machine, and `open_abs_path` would look for
+    // them on the project's machine, so show them read-only.
+    let fs = workspace.app_state().fs.clone();
+    cx.spawn_in(window, async move |workspace, cx| {
+        // A local project opens the missing file so it can be created, but a
+        // read-only buffer can't create it.
+        if !fs.is_file(&agents_file).await {
+            return workspace.update(cx, |workspace, cx| {
+                struct NoGlobalRulesToast;
+                workspace.show_toast(
+                    workspace::Toast::new(
+                        workspace::notifications::NotificationId::unique::<NoGlobalRulesToast>(),
+                        format!(
+                            "No global rules yet. Create {} on this machine to add them.",
+                            agents_file.display()
+                        ),
+                    )
+                    .autohide(),
+                    cx,
+                );
+            });
+        }
+        let content = fs.load(&agents_file).await?;
+        let title = agents_file
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        workspace.update_in(cx, |workspace, window, cx| {
+            crate::ui::open_read_only_markdown_buffer(workspace, title, content, window, cx);
+        })
+    })
+    .detach_and_notify_err(workspace.weak_handle(), window, cx);
 }
 
 fn open_project_rules(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
@@ -1784,6 +1893,10 @@ impl AgentPanel {
 
         self.set_last_created_entry_kind_from_user_action(AgentPanelEntryKind::Thread, cx);
 
+        if let Some(draft) = self.draft_thread.clone() {
+            self.reset_empty_thread_only_draft(&draft, cx);
+        }
+
         // If the user is viewing a *parked* draft and the ephemeral
         // new-draft slot is occupied, pressing `+` should just focus the
         // ephemeral draft — not park it and create yet another empty one.
@@ -1822,6 +1935,20 @@ impl AgentPanel {
             }
         }
         self.activate_draft(focus, source, window, cx);
+    }
+
+    /// An empty draft holds nothing worth keeping thread-only, and a new thread
+    /// should start on the defaults.
+    fn reset_empty_thread_only_draft(
+        &self,
+        draft: &Entity<ConversationView>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.draft_has_content(draft, cx)
+            && let Some(thread) = draft.read(cx).as_native_thread(cx)
+        {
+            thread.update(cx, |thread, cx| thread.reset_to_defaults(cx));
+        }
     }
 
     fn draft_has_content(&self, draft: &Entity<ConversationView>, cx: &App) -> bool {
@@ -3269,33 +3396,6 @@ impl AgentPanel {
         thread_id
     }
 
-    pub fn activate_retained_thread(
-        &mut self,
-        id: ThreadId,
-        focus: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let conversation_view = if let Some(view) = self.remove_retained_thread(&id) {
-            self.try_make_empty_draft_ephemeral(view.clone(), cx);
-            view
-        } else if let Some(draft) = &self.draft_thread {
-            if draft.read(cx).thread_id == id {
-                draft.clone()
-            } else {
-                return;
-            }
-        } else {
-            return;
-        };
-        self.set_base_view(
-            BaseView::AgentThread { conversation_view },
-            focus,
-            window,
-            cx,
-        );
-    }
-
     pub fn active_thread_id(&self, cx: &App) -> Option<ThreadId> {
         match &self.base_view {
             BaseView::AgentThread { conversation_view } => {
@@ -3903,7 +4003,7 @@ impl AgentPanel {
 
         cx.spawn_in(window, async move |this, cx| {
             thread_store
-                .update(&mut cx.clone(), |store, cx| {
+                .update(cx, |store, cx| {
                     store.save_thread(session_id.clone(), db_thread, Default::default(), cx)
                 })
                 .await?;
@@ -5154,10 +5254,6 @@ impl Panel for AgentPanel {
         AgentSettings::get_global(cx).enabled(cx)
     }
 
-    fn is_agent_panel(&self) -> bool {
-        true
-    }
-
     fn hide_button_setting(&self, _: &App) -> Option<workspace::HideStatusItem> {
         Some(workspace::HideStatusItem::new(|settings| {
             settings.agent.get_or_insert_default().button = Some(false);
@@ -5848,8 +5944,15 @@ impl AgentPanel {
                             .separator()
                             .action("Toggle Threads Sidebar", Box::new(ToggleWorkspaceSidebar));
 
-                        if has_auth_methods || supports_logout {
+                        let auth_status = conversation_view
+                            .as_ref()
+                            .and_then(|view| view.read(cx).agent_auth_status());
+                        if has_auth_methods || supports_logout || auth_status.is_some() {
                             menu = menu.separator()
+                        }
+                        if let Some(status) = auth_status {
+                            menu = menu
+                                .embedded_view(cx.new(|cx| AgentAccountLabels::new(status, cx)));
                         }
                         if has_auth_methods {
                             menu = menu.action("Reauthenticate", Box::new(ReauthenticateAgent))
@@ -11814,6 +11917,8 @@ mod tests {
             speed: None,
             thinking_enabled: false,
             thinking_effort: None,
+            thread_only: false,
+            profile_downgraded_for_restricted_workspace: false,
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
@@ -14924,6 +15029,225 @@ mod tests {
                 panel.selected_agent,
                 Agent::Stub,
                 "selected_agent should be restored to the original after an agent override"
+            );
+        });
+    }
+
+    async fn open_draft(
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<AgentPanel>,
+        Arc<language_model::fake_provider::FakeLanguageModelProvider>,
+        VisualTestContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let fake_provider = cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+            language_model::LanguageModelRegistry::test(cx)
+        });
+
+        fs.insert_tree("/project", json!({ "file.txt": "" })).await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        let mut cx = VisualTestContext::from_window(multi_workspace.into(), cx);
+        let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.selected_agent = Agent::NativeAgent;
+            panel.activate_draft(true, AgentThreadSource::AgentPanel, window, cx);
+        });
+        cx.run_until_parked();
+        (panel, fake_provider, cx)
+    }
+
+    fn active_thread_options(
+        panel: &Entity<AgentPanel>,
+        cx: &mut VisualTestContext,
+    ) -> (
+        agent_settings::AgentProfileId,
+        Option<String>,
+        Option<String>,
+        Option<acp_thread::AgentModelId>,
+    ) {
+        panel.read_with(cx, |panel, cx| {
+            let thread_view = panel.active_thread_view(cx).unwrap().read(cx);
+            let thread = thread_view.as_native_thread(cx).unwrap().read(cx);
+            (
+                thread.profile().clone(),
+                thread.model().map(|model| model.id().0.to_string()),
+                thread.thinking_effort().cloned(),
+                thread_view
+                    .model_selector
+                    .as_ref()
+                    .and_then(|selector| selector.read(cx).active_model(cx))
+                    .map(|model| model.id.clone()),
+            )
+        })
+    }
+
+    fn change_active_thread_options(
+        panel: &Entity<AgentPanel>,
+        fake_provider: &language_model::fake_provider::FakeLanguageModelProvider,
+        cx: &mut VisualTestContext,
+    ) {
+        let thread = panel.read_with(cx, |panel, cx| {
+            panel
+                .active_thread_view(cx)
+                .unwrap()
+                .read(cx)
+                .as_native_thread(cx)
+                .unwrap()
+        });
+        thread.update(cx, |thread, cx| {
+            thread.set_profile(agent_settings::AgentProfileId("ask".into()), cx);
+            thread.set_model(fake_provider.model("other"), cx);
+            thread.set_thinking_effort(Some("high".to_string()), cx);
+        });
+        cx.run_until_parked();
+    }
+
+    fn mark_active_thread_thread_only(panel: &Entity<AgentPanel>, cx: &mut VisualTestContext) {
+        let thread = panel.read_with(cx, |panel, cx| {
+            panel
+                .active_thread_view(cx)
+                .unwrap()
+                .read(cx)
+                .as_native_thread(cx)
+                .unwrap()
+        });
+        thread.update(cx, |thread, cx| thread.mark_thread_only(cx));
+        cx.run_until_parked();
+    }
+
+    fn active_draft_state(
+        panel: &Entity<AgentPanel>,
+        cx: &mut VisualTestContext,
+    ) -> (ThreadId, acp_v2::SessionId, bool) {
+        panel.read_with(cx, |panel, cx| {
+            let conversation_view = panel.active_conversation_view().unwrap().read(cx);
+            let thread_view = conversation_view.root_thread_view().unwrap().read(cx);
+            (
+                conversation_view.thread_id,
+                thread_view.thread.read(cx).session_id().clone(),
+                thread_view
+                    .as_native_thread(cx)
+                    .unwrap()
+                    .read(cx)
+                    .is_thread_only(),
+            )
+        })
+    }
+
+    #[gpui::test]
+    async fn test_new_thread_resets_empty_thread_only_draft_in_place(cx: &mut TestAppContext) {
+        let (panel, fake_provider, mut cx) = open_draft(cx).await;
+        let cx = &mut cx;
+
+        let (thread_id, session_id, _) = active_draft_state(&panel, cx);
+        let defaults = active_thread_options(&panel, cx);
+        change_active_thread_options(&panel, &fake_provider, cx);
+        assert_ne!(active_thread_options(&panel, cx), defaults);
+        mark_active_thread_thread_only(&panel, cx);
+
+        cx.dispatch_action(NewThread);
+        cx.run_until_parked();
+
+        let (new_thread_id, new_session_id, thread_only) = active_draft_state(&panel, cx);
+        assert_eq!(new_thread_id, thread_id);
+        assert_eq!(new_session_id, session_id);
+        assert!(!thread_only);
+        assert_eq!(active_thread_options(&panel, cx), defaults);
+    }
+
+    #[gpui::test]
+    async fn test_new_thread_from_parked_draft_resets_empty_thread_only_draft(
+        cx: &mut TestAppContext,
+    ) {
+        let (panel, fake_provider, mut cx) = open_draft(cx).await;
+        let cx = &mut cx;
+
+        let parked_thread_id = crate::test_support::active_thread_id(&panel, cx);
+        crate::test_support::type_draft_prompt(&panel, "parked draft prompt", cx);
+        cx.dispatch_action(NewThread);
+        cx.run_until_parked();
+
+        let (empty_thread_id, _, _) = active_draft_state(&panel, cx);
+        assert_ne!(empty_thread_id, parked_thread_id);
+        let defaults = active_thread_options(&panel, cx);
+        change_active_thread_options(&panel, &fake_provider, cx);
+        mark_active_thread_thread_only(&panel, cx);
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.load_agent_thread(
+                Agent::NativeAgent,
+                parked_thread_id,
+                None,
+                None,
+                true,
+                AgentThreadSource::Sidebar,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            crate::test_support::active_thread_id(&panel, cx),
+            parked_thread_id
+        );
+
+        cx.dispatch_action(NewThread);
+        cx.run_until_parked();
+
+        let (thread_id, _, thread_only) = active_draft_state(&panel, cx);
+        assert_eq!(thread_id, empty_thread_id);
+        assert!(!thread_only);
+        assert_eq!(active_thread_options(&panel, cx), defaults);
+    }
+
+    #[gpui::test]
+    async fn test_new_thread_keeps_typed_thread_only_draft(cx: &mut TestAppContext) {
+        let (panel, _fake_provider, mut cx) = open_draft(cx).await;
+        let cx = &mut cx;
+
+        let thread_view = panel.read_with(cx, |panel, cx| panel.active_thread_view(cx).unwrap());
+        let message_editor = thread_view.read_with(cx, |view, _cx| view.message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Still thread-only", window, cx);
+        });
+        cx.run_until_parked();
+        let (thread_id, session_id, _) = active_draft_state(&panel, cx);
+        mark_active_thread_thread_only(&panel, cx);
+
+        cx.dispatch_action(NewThread);
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, cx| {
+            let parked = panel.retained_threads.get(&thread_id).unwrap().read(cx);
+            assert!(
+                parked
+                    .as_native_thread(cx)
+                    .unwrap()
+                    .read(cx)
+                    .is_thread_only()
+            );
+            assert_eq!(
+                parked.root_thread(cx).unwrap().read(cx).session_id(),
+                &session_id
             );
         });
     }

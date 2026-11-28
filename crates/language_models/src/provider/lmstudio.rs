@@ -417,7 +417,7 @@ fn to_lmstudio_request(
                 ),
                 MessageContent::Thinking { .. } => {}
                 MessageContent::RedactedThinking(_) => {}
-                MessageContent::Compaction(_) => {}
+                MessageContent::Compaction(_) | MessageContent::ReasoningEffort { .. } => {}
                 MessageContent::Image(image) => {
                     add_message_content_part(
                         lmstudio::MessagePart::Image {

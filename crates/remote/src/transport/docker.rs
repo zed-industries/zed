@@ -3,14 +3,15 @@ use anyhow::Result;
 use anyhow::anyhow;
 use async_trait::async_trait;
 use collections::HashMap;
-use parking_lot::Mutex;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use semver::Version as SemanticVersion;
 use std::collections::BTreeMap;
 use std::fmt::Write;
-use std::time::Instant;
+use std::net::SocketAddr;
+use std::time::{Duration, Instant};
 use std::{
     path::{Path, PathBuf},
+    pin::pin,
     sync::Arc,
 };
 use util::ResultExt;
@@ -23,7 +24,9 @@ use util::{
 };
 
 use futures::channel::mpsc::{Sender, UnboundedReceiver, UnboundedSender};
-use gpui::{App, AppContext, AsyncApp, Task};
+use futures::future::{self, Either};
+use futures::{StreamExt, TryStreamExt};
+use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, FutureExt, Task};
 use rpc::proto::Envelope;
 
 use crate::{
@@ -56,7 +59,6 @@ pub struct DockerConnectionOptions {
 }
 
 pub(crate) struct DockerExecConnection {
-    proxy_process: Mutex<Option<u32>>,
     remote_dir_for_server: String,
     remote_binary_relpath: Option<Arc<RelPath>>,
     connection_options: DockerConnectionOptions,
@@ -67,13 +69,24 @@ pub(crate) struct DockerExecConnection {
 }
 
 impl DockerExecConnection {
+    fn remote_binary_path(&self) -> Result<String> {
+        let relative_path = self
+            .remote_binary_relpath
+            .as_ref()
+            .context("Remote binary path not set")?;
+        Ok(format!(
+            "{}/{}",
+            self.remote_dir_for_server.trim_end_matches('/'),
+            relative_path.display(PathStyle::Unix),
+        ))
+    }
+
     pub async fn new(
         connection_options: DockerConnectionOptions,
         delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         let mut this = Self {
-            proxy_process: Mutex::new(None),
             remote_dir_for_server: "/".to_string(),
             remote_binary_relpath: None,
             connection_options,
@@ -425,62 +438,138 @@ impl DockerExecConnection {
             tmp_path_gz,
             size / 1024
         );
-        self.upload_file(src_path, tmp_path_gz, remote_dir_for_server)
+        self.upload_file(src_path, tmp_path_gz, remote_dir_for_server, cx)
             .await
             .context("failed to upload server binary")?;
         log::info!("uploaded remote development server in {:?}", t0.elapsed());
         Ok(())
     }
 
-    async fn upload_and_chown(
+    /// Uploads the regular files under `src_path` to the same paths under `dst_path`
+    /// as the remote user, creating files with mode 600 and directories with mode 700;
+    /// symlinks to files are uploaded as copies of their targets,
+    /// other entries are not supported, and empty directories are not created.
+    async fn upload_directory_as_remote_user(
         docker_cli: String,
         connection_options: DockerConnectionOptions,
-        src_path: String,
+        src_path: PathBuf,
         dst_path: String,
+        executor: BackgroundExecutor,
     ) -> Result<()> {
-        let mut command = util::command::new_command(&docker_cli);
-        command.kill_on_drop(true);
-        command.arg("cp");
-        command.arg("-a");
-        command.arg(&src_path);
-        command.arg(format!("{}:{}", connection_options.container_id, dst_path));
-
-        let output = command.output().await?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            log::debug!("failed to upload via docker cp {src_path} -> {dst_path}: {stderr}",);
-            anyhow::bail!(
-                "failed to upload via docker cp {} -> {}: {}",
-                src_path,
-                dst_path,
-                stderr,
-            );
+        // More parallel podman --remote calls over SSH, as Podman machine makes,
+        // start failing at sshd's default MaxStartups of 10.
+        const MAX_CONCURRENT_UPLOADS: usize = 4;
+        let mut files = Vec::new();
+        let mut pending = vec![(src_path, dst_path)];
+        while let Some((local_directory, remote_directory)) = pending.pop() {
+            let mut entries = smol::fs::read_dir(&local_directory)
+                .await
+                .with_context(|| format!("failed to read {local_directory:?}"))?;
+            while let Some(entry) = entries.next().await {
+                let entry = entry?;
+                let remote_path =
+                    format!("{remote_directory}/{}", entry.file_name().to_string_lossy());
+                if entry.file_type().await?.is_dir() {
+                    pending.push((entry.path(), remote_path));
+                } else {
+                    files.push((entry.path(), remote_path));
+                }
+            }
         }
 
-        let mut chown_command = util::command::new_command(&docker_cli);
-        chown_command.kill_on_drop(true);
-        chown_command.arg("exec");
-        chown_command.arg(connection_options.container_id);
-        chown_command.arg("chown");
-        chown_command.arg(format!(
-            "{}:{}",
-            connection_options.remote_user, connection_options.remote_user,
-        ));
-        chown_command.arg(&dst_path);
+        let docker_cli = docker_cli.as_str();
+        let connection_options = &connection_options;
+        let executor = &executor;
+        futures::stream::iter(files.into_iter().map(anyhow::Ok))
+            .try_for_each_concurrent(
+                MAX_CONCURRENT_UPLOADS,
+                |(local_path, remote_path)| async move {
+                    Self::upload_file_as_remote_user(
+                        docker_cli,
+                        connection_options,
+                        &local_path,
+                        &remote_path,
+                        executor,
+                        EXIT_AFTER_UPLOAD_TIMEOUT,
+                    )
+                    .await
+                },
+            )
+            .await
+    }
 
-        let output = chown_command.output().await?;
-
-        if output.status.success() {
-            return Ok(());
+    async fn upload_file_as_remote_user(
+        docker_cli: &str,
+        connection_options: &DockerConnectionOptions,
+        src_path: &Path,
+        dst_path: &str,
+        executor: &BackgroundExecutor,
+        exit_timeout: Duration,
+    ) -> Result<()> {
+        let file = smol::fs::File::open(src_path)
+            .await
+            .with_context(|| format!("failed to read {src_path:?}"))?;
+        // OrbStack can lose the end of an empty docker exec -i stdin
+        // and leave cat waiting forever.
+        let content = if file.metadata().await?.len() == 0 {
+            None
+        } else {
+            Some(file)
+        };
+        let mut command = util::command::new_command(docker_cli);
+        command
+            .kill_on_drop(true)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .arg("exec");
+        if content.is_some() {
+            command.stdin(Stdio::piped()).arg("-i");
+        } else {
+            command.stdin(Stdio::null());
         }
-
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        log::debug!("failed to change ownership for via chown: {stderr}",);
-        anyhow::bail!(
-            "failed to change ownership for zed_remote_server via chown: {}",
-            stderr,
-        );
+        command.args([
+            "-u",
+            connection_options.remote_user.as_str(),
+            connection_options.container_id.as_str(),
+            "sh",
+            "-c",
+            r#"umask 077 && mkdir -p "${1%/*}" && cat > "$1""#,
+            "sh",
+            dst_path,
+        ]);
+        async move {
+            let mut child = command.spawn()?;
+            let stdin = child.stdin.take();
+            let copy = pin!(async move {
+                if let Some(content) = content {
+                    let mut stdin = stdin.context("failed to open the stdin of docker exec")?;
+                    futures::io::copy(content, &mut stdin).await?;
+                }
+                anyhow::Ok(())
+            });
+            let output = pin!(child.output());
+            let (written, output) = match future::select(copy, output).await {
+                Either::Left((written, output)) => {
+                    let Ok(output) = output.with_timeout(exit_timeout, executor).await else {
+                        written?;
+                        anyhow::bail!(
+                            "{docker_cli} exec did not exit within {exit_timeout:?} after its input was closed"
+                        );
+                    };
+                    (written, output)
+                }
+                Either::Right((output, copy)) => (copy.await, output),
+            };
+            let output = output?;
+            let status = output.status;
+            if !status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                anyhow::bail!("{docker_cli} exec ({status}): {}", stderr.trim());
+            }
+            written
+        }
+        .await
+        .with_context(|| format!("failed to upload {src_path:?} -> {dst_path}"))
     }
 
     async fn upload_file(
@@ -488,19 +577,28 @@ impl DockerExecConnection {
         src_path: &Path,
         dest_path: &RelPath,
         remote_dir_for_server: &str,
+        cx: &AsyncApp,
     ) -> Result<()> {
         log::debug!("uploading file {:?} to {:?}", src_path, dest_path);
 
-        let src_path_display = src_path.display().to_string();
         let dest_path_str = dest_path.display(self.path_style());
         let full_server_path = format!("{}/{}", remote_dir_for_server, dest_path_str);
 
-        Self::upload_and_chown(
-            self.docker_cli().to_string(),
-            self.connection_options.clone(),
-            src_path_display,
-            full_server_path,
-        )
+        let docker_cli = self.docker_cli().to_string();
+        let connection_options = self.connection_options.clone();
+        let src_path = src_path.to_path_buf();
+        let executor = cx.background_executor().clone();
+        cx.background_spawn(async move {
+            Self::upload_file_as_remote_user(
+                &docker_cli,
+                &connection_options,
+                &src_path,
+                &full_server_path,
+                &executor,
+                EXIT_AFTER_UPLOAD_TIMEOUT,
+            )
+            .await
+        })
         .await
     }
 
@@ -641,21 +739,6 @@ impl DockerExecConnection {
         }
         Ok(())
     }
-
-    fn kill_inner(&self) -> Result<()> {
-        if let Some(pid) = self.proxy_process.lock().take() {
-            if let Ok(_) = util::command::new_command("kill")
-                .arg(pid.to_string())
-                .spawn()
-            {
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!("Failed to kill process"))
-            }
-        } else {
-            Ok(())
-        }
-    }
 }
 
 #[async_trait(?Send)]
@@ -673,13 +756,6 @@ impl RemoteConnection for DockerExecConnection {
         delegate: Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Task<Result<i32>> {
-        // We'll try connecting anew every time we open a devcontainer, so proactively try to kill any old connections.
-        if !self.has_been_killed() {
-            if let Err(e) = self.kill_inner() {
-                return Task::ready(Err(e));
-            };
-        }
-
         delegate.set_status(Some("Starting proxy"), cx);
 
         let Some(remote_binary_relpath) = self.remote_binary_relpath.clone() else {
@@ -729,9 +805,6 @@ impl RemoteConnection for DockerExecConnection {
             )));
         };
 
-        let mut proxy_process = self.proxy_process.lock();
-        *proxy_process = Some(child.id());
-
         cx.spawn(async move |cx| {
             super::handle_rpc_messages_over_child_process_stdio(
                 child,
@@ -756,25 +829,51 @@ impl RemoteConnection for DockerExecConnection {
         dest_path: RemotePathBuf,
         cx: &App,
     ) -> Task<Result<()>> {
-        let dest_path_str = dest_path.to_string();
-        let src_path_display = src_path.display().to_string();
-
-        let upload_task = Self::upload_and_chown(
+        let upload_task = Self::upload_directory_as_remote_user(
             self.docker_cli().to_string(),
             self.connection_options.clone(),
-            src_path_display,
-            dest_path_str,
+            src_path,
+            dest_path.to_string(),
+            cx.background_executor().clone(),
         );
 
         cx.background_spawn(upload_task)
     }
 
     async fn kill(&self) -> Result<()> {
-        self.kill_inner()
+        Ok(())
     }
 
     fn has_been_killed(&self) -> bool {
-        self.proxy_process.lock().is_none()
+        false
+    }
+
+    fn tcp_proxy_commands(
+        &self,
+        address: SocketAddr,
+        timeout: u64,
+        program: Option<&str>,
+        args: &[String],
+    ) -> Result<Option<(CommandTemplate, CommandTemplate)>> {
+        let proxy_program = self.remote_binary_path()?;
+        let mut arguments = vec!["tcp".to_owned(), address.to_string(), timeout.to_string()];
+        let attach_arguments = arguments.clone();
+        if let Some(program) = program {
+            arguments.extend(["--".to_owned(), program.to_owned()]);
+            arguments.extend_from_slice(args);
+        }
+        Ok(Some((
+            CommandTemplate {
+                program: proxy_program.clone(),
+                args: arguments,
+                env: Default::default(),
+            },
+            CommandTemplate {
+                program: proxy_program,
+                args: attach_arguments,
+                env: Default::default(),
+            },
+        )))
     }
 
     fn build_command(
@@ -783,9 +882,13 @@ impl RemoteConnection for DockerExecConnection {
         args: &[String],
         env: &HashMap<String, String>,
         working_dir: Option<String>,
-        _port_forward: Option<(u16, String, u16)>,
+        port_forward: Option<(u16, String, u16)>,
         interactive: Interactive,
     ) -> Result<CommandTemplate> {
+        anyhow::ensure!(
+            port_forward.is_none(),
+            "Port forwarding is not supported by docker exec"
+        );
         let mut parsed_working_dir = None;
 
         let path_style = self.path_style();
@@ -849,10 +952,6 @@ impl RemoteConnection for DockerExecConnection {
         &self,
         mut command: RemoteCommand,
     ) -> Result<(CommandTemplate, Vec<u8>)> {
-        let remote_binary_relpath = self
-            .remote_binary_relpath
-            .as_ref()
-            .context("Remote binary path not set")?;
         let mut env = self
             .connection_options
             .remote_env
@@ -873,11 +972,6 @@ impl RemoteConnection for DockerExecConnection {
                 None => working_dir,
             });
         }
-        let remote_binary_path = format!(
-            "{}/{}",
-            self.remote_dir_for_server.trim_end_matches('/'),
-            remote_binary_relpath.display(PathStyle::Unix),
-        );
         let mut args = vec![
             String::from("exec"),
             String::from("-u"),
@@ -890,7 +984,7 @@ impl RemoteConnection for DockerExecConnection {
         args.extend([
             String::from("-i"),
             self.connection_options.container_id.clone(),
-            remote_binary_path,
+            self.remote_binary_path()?,
             String::from("exec"),
         ]);
         Ok((
@@ -939,6 +1033,8 @@ impl RemoteConnection for DockerExecConnection {
         String::from("/bin/sh")
     }
 }
+
+const EXIT_AFTER_UPLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 fn push_environment<'a>(
     args: &mut Vec<String>,
@@ -998,6 +1094,8 @@ fn redact_environment(assignment: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn redacts_forwarded_env() {
@@ -1112,6 +1210,77 @@ mod tests {
     }
 
     #[test]
+    fn tcp_proxy_runs_inside_container() -> Result<()> {
+        let mut connection = connection(&[("PATH", "/custom/bin")]);
+        connection.remote_binary_relpath = Some(RelPath::from_unix_str("remote server")?.into());
+        for use_podman in [false, true] {
+            connection.connection_options.use_podman = use_podman;
+            for address in ["127.0.0.1:4567", "[::1]:4567"] {
+                for program in [Some("/python with spaces"), None] {
+                    let (proxy, attach_proxy) = connection
+                        .tcp_proxy_commands(
+                            address.parse()?,
+                            1234,
+                            program,
+                            &["argument with spaces".to_owned(), "--flag".to_owned()],
+                        )?
+                        .context("Missing proxy")?;
+                    assert_eq!(attach_proxy.program, proxy.program);
+                    assert_eq!(attach_proxy.args, ["tcp", address, "1234"]);
+                    let template = connection.build_command(
+                        Some(proxy.program),
+                        &proxy.args,
+                        &HashMap::default(),
+                        Some("/workspace".to_owned()),
+                        None,
+                        Interactive::No,
+                    )?;
+                    assert_eq!(
+                        template.program,
+                        if use_podman { "podman" } else { "docker" }
+                    );
+                    let mut expected = vec![
+                        "exec",
+                        "-u",
+                        "user",
+                        "-w",
+                        "/workspace",
+                        "-e",
+                        "PATH=/custom/bin",
+                        "-i",
+                        "container_id",
+                        "/tmp/zed/remote server",
+                        "tcp",
+                        address,
+                        "1234",
+                    ];
+                    if let Some(program) = program {
+                        expected.extend(["--", program, "argument with spaces", "--flag"]);
+                    }
+                    assert_eq!(template.args, expected);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_unsupported_port_forwarding() {
+        assert!(
+            connection(&[])
+                .build_command(
+                    None,
+                    &[],
+                    &HashMap::default(),
+                    None,
+                    Some((1234, "localhost".to_owned(), 5678)),
+                    Interactive::No,
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
     fn test_build_stdio_command() -> Result<()> {
         let mut connection = connection(&[("API_KEY", "remote-secret"), ("NAME\0NUL", "dropped")]);
         let command = |env, working_dir: Option<&str>| RemoteCommand {
@@ -1178,9 +1347,205 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn uploads_as_the_remote_user() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let extension = directory.path().join("extension");
+        let language = extension.join("languages").join("rust");
+        std::fs::create_dir_all(&language)?;
+        std::fs::write(extension.join("extension.toml"), "id = \"rust\"")?;
+        std::fs::write(language.join("config.toml"), "name = \"Rust\"")?;
+        std::fs::write(extension.join("extension.wasm"), "")?;
+        let large_server = directory.path().join("large-server.gz");
+        std::fs::write(&large_server, vec![0; 1 << 22])?;
+        let remote_home = directory.path().join("remote home");
+        let remote_server = remote_home
+            .join(".zed_server")
+            .join("server.gz")
+            .to_string_lossy()
+            .into_owned();
+        let remote_extension = remote_home.join("uploads").join("rust");
+        let mut connection_options = connection(&[]).connection_options;
+        connection_options.remote_user = "user:group".to_string();
+        let executor = BackgroundExecutor::new(Arc::new(gpui::TestDispatcher::new(0)));
+        let logged_calls = |docker_cli: &str| -> Result<Vec<Vec<String>>> {
+            let mut calls = std::fs::read_dir(format!("{docker_cli}.calls"))?
+                .map(|entry| {
+                    Ok(std::fs::read_to_string(entry?.path())?
+                        .lines()
+                        .map(String::from)
+                        .collect::<Vec<_>>())
+                })
+                .collect::<Result<Vec<_>>>()?;
+            calls.sort();
+            Ok(calls)
+        };
+        let call = |arguments: &[&str]| {
+            arguments
+                .iter()
+                .map(|argument| argument.to_string())
+                .collect::<Vec<_>>()
+        };
+        let upload_script = r#"umask 077 && mkdir -p "${1%/*}" && cat > "$1""#;
+        let run_in_place = "shift\n[ \"$1\" = -i ] && shift\nshift 3\numask 0\nexec \"$@\"\n";
+
+        let directory_docker_cli =
+            fake_docker_cli(&directory.path().join("directory"), run_in_place)?;
+        let remote_extension_path = remote_extension.to_string_lossy().into_owned();
+        let remote_rust_path = format!("{remote_extension_path}/languages/rust");
+        assert_eq!(
+            smol::block_on(DockerExecConnection::upload_directory_as_remote_user(
+                directory_docker_cli.clone(),
+                connection_options.clone(),
+                extension,
+                remote_extension_path.clone(),
+                executor.clone(),
+            ))
+            .map_err(|error| format!("{error:#}")),
+            Ok(())
+        );
+        let mut expected_calls = vec![
+            call(&[
+                "exec",
+                "-i",
+                "-u",
+                "user:group",
+                "container_id",
+                "sh",
+                "-c",
+                upload_script,
+                "sh",
+                &format!("{remote_extension_path}/extension.toml"),
+            ]),
+            call(&[
+                "exec",
+                "-u",
+                "user:group",
+                "container_id",
+                "sh",
+                "-c",
+                upload_script,
+                "sh",
+                &format!("{remote_extension_path}/extension.wasm"),
+            ]),
+            call(&[
+                "exec",
+                "-i",
+                "-u",
+                "user:group",
+                "container_id",
+                "sh",
+                "-c",
+                upload_script,
+                "sh",
+                &format!("{remote_rust_path}/config.toml"),
+            ]),
+        ];
+        expected_calls.sort();
+        assert_eq!(logged_calls(&directory_docker_cli)?, expected_calls);
+        assert_eq!(
+            [
+                std::fs::read_to_string(remote_extension.join("extension.toml"))?,
+                std::fs::read_to_string(remote_extension.join("extension.wasm"))?,
+                std::fs::read_to_string(
+                    remote_extension
+                        .join("languages")
+                        .join("rust")
+                        .join("config.toml")
+                )?,
+            ],
+            ["id = \"rust\"", "", "name = \"Rust\""]
+        );
+        assert_eq!(
+            [
+                std::fs::metadata(&remote_rust_path)?.permissions().mode() & 0o777,
+                std::fs::metadata(format!("{remote_rust_path}/config.toml"))?
+                    .permissions()
+                    .mode()
+                    & 0o777,
+            ],
+            [0o700, 0o600]
+        );
+
+        let failing_docker_cli = fake_docker_cli(
+            &directory.path().join("failing"),
+            "echo 'exit 1' >&2\nexit 1\n",
+        )?;
+        assert_eq!(
+            smol::block_on(DockerExecConnection::upload_file_as_remote_user(
+                &failing_docker_cli,
+                &connection_options,
+                &large_server,
+                &remote_server,
+                &executor,
+                EXIT_AFTER_UPLOAD_TIMEOUT,
+            ))
+            .map_err(|error| format!("{error:#}")),
+            Err(format!(
+                "failed to upload {large_server:?} -> {remote_server}: {failing_docker_cli} exec (exit status: 1): exit 1"
+            ))
+        );
+
+        let quiet_docker_cli = fake_docker_cli(&directory.path().join("quiet"), "exit 0\n")?;
+        assert_eq!(
+            smol::block_on(DockerExecConnection::upload_file_as_remote_user(
+                &quiet_docker_cli,
+                &connection_options,
+                &large_server,
+                &remote_server,
+                &executor,
+                EXIT_AFTER_UPLOAD_TIMEOUT,
+            ))
+            .map_err(|error| format!("{error:#}")),
+            Err(format!(
+                "failed to upload {large_server:?} -> {remote_server}: Broken pipe (os error 32)"
+            ))
+        );
+
+        let hanging_docker_cli = fake_docker_cli(
+            &directory.path().join("hanging"),
+            "cat > /dev/null\nexec sleep 10\n",
+        )?;
+        let exit_timeout = Duration::ZERO;
+        assert_eq!(
+            smol::block_on(DockerExecConnection::upload_file_as_remote_user(
+                &hanging_docker_cli,
+                &connection_options,
+                &large_server,
+                &remote_server,
+                &executor,
+                exit_timeout,
+            ))
+            .map_err(|error| format!("{error:#}")),
+            Err(format!(
+                "failed to upload {large_server:?} -> {remote_server}: {hanging_docker_cli} exec did not exit within {exit_timeout:?} after its input was closed"
+            ))
+        );
+
+        let closing_docker_cli = fake_docker_cli(
+            &directory.path().join("closing"),
+            "exec 0<&-\nexec sleep 10\n",
+        )?;
+        assert_eq!(
+            smol::block_on(DockerExecConnection::upload_file_as_remote_user(
+                &closing_docker_cli,
+                &connection_options,
+                &large_server,
+                &remote_server,
+                &executor,
+                exit_timeout,
+            ))
+            .map_err(|error| format!("{error:#}")),
+            Err(format!(
+                "failed to upload {large_server:?} -> {remote_server}: Broken pipe (os error 32)"
+            ))
+        );
+        Ok(())
+    }
+
     fn connection(remote_env: &[(&str, &str)]) -> DockerExecConnection {
         DockerExecConnection {
-            proxy_process: Mutex::new(None),
             remote_dir_for_server: "/tmp/zed".to_string(),
             remote_binary_relpath: None,
             connection_options: DockerConnectionOptions {
@@ -1212,5 +1577,18 @@ mod tests {
             .collect::<HashMap<_, _>>();
         let args = connection.docker_exec_arguments("sh", Some("/workspace"), &env, program_args);
         redact_arguments(connection.docker_cli(), "exec", &args)
+    }
+
+    #[cfg(unix)]
+    fn fake_docker_cli(directory: &Path, behaviour: &str) -> Result<String> {
+        std::fs::create_dir_all(directory)?;
+        let docker_cli = directory.join("docker");
+        std::fs::write(
+            &docker_cli,
+            format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$0.calls/$$\"\n{behaviour}"),
+        )?;
+        std::fs::create_dir_all(directory.join("docker.calls"))?;
+        std::fs::set_permissions(&docker_cli, std::fs::Permissions::from_mode(0o755))?;
+        Ok(docker_cli.to_string_lossy().into_owned())
     }
 }

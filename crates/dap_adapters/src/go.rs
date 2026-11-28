@@ -14,7 +14,6 @@ use language::LanguageName;
 use log::warn;
 use serde_json::{Map, Value};
 use task::TcpArgumentsTemplate;
-use util;
 
 use std::{
     env::consts,
@@ -529,6 +528,7 @@ impl DebugAdapter for GoDebugAdapter {
                 host,
                 port,
                 timeout,
+                stdio_proxy: None,
             });
         } else {
             let minidelve_path = self.install_shim(delegate).await?;

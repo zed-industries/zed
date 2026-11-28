@@ -16,6 +16,7 @@ use agent_ui::{
 };
 use chrono::DateTime;
 use fs::{FakeFs, Fs};
+use git_ui_core::worktree_labels::WorkspaceMenuWorktreeLabel;
 use gpui::{
     AnyView, App, Bounds, Corners, Decorations, Hsla, Point, Rgba, ScaledPixels, TestAppContext,
     Tiling, UpdateGlobal, VisualTestContext, point,
@@ -294,6 +295,759 @@ async fn test_workspace_menu_uses_bare_repository_worktree_name(cx: &mut TestApp
     assert_eq!(labels[0].secondary_name, None);
 }
 
+#[gpui::test]
+async fn test_delta_checkout_subfolders_are_named_after_their_checkout(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        util::path!("/repo"),
+        serde_json::json!({
+            ".git": { "HEAD": "ref: refs/heads/main\n" },
+            ".delta": {
+                "clones": {
+                    "a": {
+                        "repo.git": {
+                            "HEAD": "ref: refs/heads/feature\n",
+                            "config": "[core]\n\tbare = false\n",
+                            "worktrees": {
+                                "review": {
+                                    "HEAD": "ref: refs/heads/review\n",
+                                    "commondir": "../..",
+                                    "gitdir": util::path!("/review/repo/.git"),
+                                },
+                            },
+                            "delta": { "copy-baseline": "" },
+                            "objects": {
+                                "info": {
+                                    "alternates": format!("{}\n", util::path!("/repo/.git/objects")),
+                                },
+                            },
+                        },
+                    },
+                    "b": {
+                        "repo.git": {
+                            "HEAD": "ref: refs/heads/feature\n",
+                            "config": "[core]\n\tbare = false\n",
+                            "delta": { "copy-baseline": "" },
+                            "objects": {
+                                "info": {
+                                    "alternates": format!("{}\n", util::path!("/repo/.git/objects")),
+                                },
+                            },
+                        },
+                    },
+                },
+                "worktrees": {
+                    "a": {
+                        "repo": {
+                            ".git": format!("gitdir: {}\n", util::path!("/repo/.delta/clones/a/repo.git")),
+                            "src": {},
+                        },
+                    },
+                    "review-b": {
+                        "repo": {
+                            ".git": format!("gitdir: {}\n", util::path!("/repo/.delta/clones/b/repo.git")),
+                            "src": {},
+                        },
+                    },
+                },
+            },
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        util::path!("/review/repo"),
+        serde_json::json!({
+            ".git": format!(
+                "gitdir: {}\n",
+                util::path!("/repo/.delta/clones/a/repo.git/worktrees/review")
+            ),
+        }),
+    )
+    .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+    for (name, folder_name, minute) in [("a", "a", 2), ("b", "review-b", 1)] {
+        save_thread_metadata_with_main_paths(
+            name,
+            &format!("Thread {name}"),
+            PathList::new(&[PathBuf::from(util::path!("/repo/.delta/worktrees"))
+                .join(folder_name)
+                .join("repo")
+                .join("src")]),
+            PathList::new(&[Path::new(util::path!("/repo"))]),
+            chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, minute, 0).unwrap(),
+            cx,
+        );
+    }
+    let project_a = project::Project::test(
+        fs.clone(),
+        [Path::new(util::path!("/repo/.delta/worktrees/a/repo/src"))],
+        cx,
+    )
+    .await;
+    let project_b = project::Project::test(
+        fs.clone(),
+        [Path::new(util::path!(
+            "/repo/.delta/worktrees/review-b/repo/src"
+        ))],
+        cx,
+    )
+    .await;
+    let project_review =
+        project::Project::test(fs.clone(), [Path::new(util::path!("/review/repo"))], cx).await;
+    for project in [&project_a, &project_b, &project_review] {
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+    }
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
+    let workspace_b = multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        multi_workspace.test_add_workspace(project_review, window, cx);
+        multi_workspace.test_add_workspace(project_b, window, cx)
+    });
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    sidebar.update(cx, |sidebar, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+    let mut labels = cx.update(|_window, cx| {
+        multi_workspace
+            .read(cx)
+            .workspaces()
+            .flat_map(|workspace| workspace_menu_worktree_labels(workspace, cx))
+            .map(|label| {
+                (
+                    label.primary_name.to_string(),
+                    label.secondary_name.map(|name| name.to_string()),
+                )
+            })
+            .collect::<Vec<_>>()
+    });
+    labels.sort();
+
+    assert_eq!(
+        (labels, visible_entries_as_strings(&sidebar, cx)),
+        (
+            vec![
+                ("a/repo/review/repo".to_string(), None),
+                ("src".to_string(), Some("a".to_string())),
+                ("src".to_string(), Some("b/repo".to_string())),
+            ],
+            vec![
+                "v [repo]".to_string(),
+                "  Thread a {a}".to_string(),
+                "  Thread b {b/repo}".to_string(),
+            ]
+        )
+    );
+
+    multi_workspace
+        .update_in(cx, |multi_workspace, window, cx| {
+            multi_workspace.remove([workspace_b], RemovalIntent::KeepProject, window, cx)
+        })
+        .await
+        .unwrap();
+    sidebar.update(cx, |sidebar, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [repo]", "  Thread a {a}", "  Thread b {b/repo}"]
+    );
+}
+
+#[gpui::test]
+async fn test_project_menu_of_a_group_with_delta_checkouts(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    let delta_clone = || {
+        serde_json::json!({
+            "HEAD": "ref: refs/heads/feature\n",
+            "config": "[core]\n\tbare = false\n",
+            "delta": { "copy-baseline": "" },
+            "objects": {
+                "info": {
+                    "alternates": format!("{}\n", util::path!("/repo/.git/objects")),
+                },
+            },
+        })
+    };
+    fs.insert_tree(
+        util::path!("/repo"),
+        serde_json::json!({
+            ".git": {
+                "HEAD": "ref: refs/heads/main\n",
+                "worktrees": {
+                    "feature": {
+                        "HEAD": "ref: refs/heads/feature\n",
+                        "commondir": "../..",
+                        "gitdir": util::path!("/worktrees/feature/repo/.git"),
+                    },
+                },
+            },
+            ".delta": {
+                "clones": {
+                    "a": { "repo.git": delta_clone() },
+                    "b": { "repo.git": delta_clone() },
+                },
+                "worktrees": {
+                    "a": {
+                        "repo": {
+                            ".git": format!("gitdir: {}\n", util::path!("/repo/.delta/clones/a/repo.git")),
+                            "src": {},
+                        },
+                    },
+                    "b": {
+                        "repo": {
+                            ".git": format!("gitdir: {}\n", util::path!("/repo/.delta/clones/b/repo.git")),
+                        },
+                    },
+                },
+            },
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        util::path!("/worktrees/feature/repo"),
+        serde_json::json!({
+            ".git": format!("gitdir: {}\n", util::path!("/repo/.git/worktrees/feature")),
+            "src": {},
+        }),
+    )
+    .await;
+    fs.insert_tree(util::path!("/tools"), serde_json::json!({ "bin": {} }))
+        .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let checkout_subfolder = PathBuf::from(util::path!("/repo/.delta/worktrees/a/repo/src"));
+    let root_sets = [
+        vec![PathBuf::from(util::path!("/repo/.delta/worktrees/b/repo"))],
+        vec![checkout_subfolder.clone()],
+        vec![PathBuf::from(util::path!("/worktrees/feature/repo"))],
+        vec![
+            PathBuf::from(util::path!("/repo")),
+            PathBuf::from(util::path!("/tools")),
+        ],
+        vec![
+            PathBuf::from(util::path!("/repo/.delta/worktrees/b/repo")),
+            PathBuf::from(util::path!("/tools")),
+        ],
+        vec![PathBuf::from(util::path!("/worktrees/feature/repo/src"))],
+        vec![PathBuf::from(util::path!("/repo"))],
+    ];
+    let mut projects = Vec::new();
+    for roots in &root_sets {
+        let project = project::Project::test(
+            fs.clone(),
+            roots.iter().map(|root| root.as_path()).collect::<Vec<_>>(),
+            cx,
+        )
+        .await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        projects.push(project);
+    }
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(projects[0].clone(), window, cx));
+    let sibling_workspace =
+        multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+    let mut workspaces = vec![sibling_workspace.clone()];
+    for project in &projects[1..] {
+        workspaces.push(
+            multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+                multi_workspace.test_add_workspace(project.clone(), window, cx)
+            }),
+        );
+    }
+    multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        multi_workspace.activate(sibling_workspace.clone(), None, window, cx);
+    });
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let open_labels = workspaces
+        .iter()
+        .map(|workspace| {
+            cx.update(|_window, cx| {
+                menu_label_names(&workspace_menu_worktree_labels(workspace, cx))
+            })
+        })
+        .collect::<Vec<_>>();
+    let expected_labels = vec![
+        vec![("b".to_string(), None)],
+        vec![("src".to_string(), Some("a".to_string()))],
+        vec![("feature".to_string(), None)],
+        vec![
+            ("repo".to_string(), Some("main".to_string())),
+            ("tools".to_string(), None),
+        ],
+        vec![
+            ("repo".to_string(), Some("b".to_string())),
+            ("tools".to_string(), None),
+        ],
+        vec![("src".to_string(), None)],
+        vec![("main".to_string(), None)],
+    ];
+    assert_eq!(open_labels, expected_labels);
+
+    let project_group_keys = [&workspaces[0], &workspaces[3]]
+        .map(|workspace| workspace.read_with(cx, |workspace, cx| workspace.project_group_key(cx)));
+    let group_workspaces = multi_workspace.read_with(cx, |multi_workspace, cx| {
+        multi_workspace
+            .workspaces_for_project_group(&project_group_keys[0], cx)
+            .cloned()
+            .collect::<Vec<_>>()
+    });
+    let mut creation_bases = Vec::new();
+    for active_workspace in [&workspaces[0], &workspaces[6], &workspaces[3]] {
+        creation_bases.push(cx.update(|_, cx| {
+            let mut bases = worktree_creation_base_workspaces(
+                &project_group_keys[0],
+                Some(active_workspace),
+                &group_workspaces,
+                cx,
+            )
+            .into_iter()
+            .map(|(workspace, is_named)| {
+                (
+                    git_project_group_key(&workspace, cx)
+                        .path_list()
+                        .paths()
+                        .to_vec(),
+                    is_named,
+                )
+            })
+            .collect::<Vec<_>>();
+            bases.sort();
+            bases
+        }));
+    }
+    let source_identity = vec![PathBuf::from(util::path!("/repo"))];
+    let clone_identity = |name: &str| {
+        vec![
+            Path::new(util::path!("/repo/.delta/clones"))
+                .join(name)
+                .join("repo.git"),
+        ]
+    };
+    assert_eq!(
+        creation_bases,
+        [
+            vec![(clone_identity("b"), true)],
+            vec![(source_identity.clone(), false)],
+            vec![
+                (source_identity, true),
+                (clone_identity("a"), true),
+                (clone_identity("b"), true),
+            ],
+        ],
+        "a worktree is created in the active checkout, or offered once per repository of the \
+         group; a base other than the group's own repository is named"
+    );
+
+    cx.run_until_parked();
+    let open_worktree_roots = group_workspaces
+        .iter()
+        .map(|workspace| {
+            workspace.read_with(cx, |workspace, cx| {
+                workspace
+                    .root_paths(cx)
+                    .iter()
+                    .map(|path| path.to_path_buf())
+                    .collect::<Vec<_>>()
+            })
+        })
+        .collect::<Vec<_>>();
+    let active_roots = active_root_paths(&multi_workspace, cx);
+    let inactive_worktree_row = open_worktree_roots
+        .iter()
+        .position(|roots| *roots != active_roots)
+        .unwrap();
+    let menu_handle = project_menu_handle(&sidebar, &project_group_keys[0], cx);
+    let is_menu_open_after_open_worktree =
+        confirm_project_menu_row(&menu_handle, 1 + inactive_worktree_row, cx);
+    cx.run_until_parked();
+    assert_eq!(
+        (
+            is_menu_open_after_open_worktree,
+            active_root_paths(&multi_workspace, cx),
+        ),
+        (false, open_worktree_roots[inactive_worktree_row].clone()),
+        "Enter on an open worktree's row closes the menu at once and activates that worktree"
+    );
+}
+
+#[gpui::test]
+async fn test_project_menu_opens_the_worktree_picker_of_its_group(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    let delta_clone = |branch: &str| {
+        serde_json::json!({
+            "repo.git": {
+                "HEAD": format!("ref: refs/heads/{branch}\n"),
+                "config": "[core]\n\tbare = false\n",
+                "delta": { "copy-baseline": "" },
+                "objects": {
+                    "info": {
+                        "alternates": format!("{}\n", util::path!("/repo/.git/objects")),
+                    },
+                },
+            },
+        })
+    };
+    let delta_checkout = |namespace: &str| {
+        serde_json::json!({
+            "repo": {
+                ".git": format!(
+                    "gitdir: {}/{namespace}/repo.git\n",
+                    util::path!("/repo/.delta/clones")
+                ),
+            },
+        })
+    };
+    fs.insert_tree(
+        util::path!("/repo"),
+        serde_json::json!({
+            ".delta": {
+                "clones": { "a": delta_clone("feature"), "b": delta_clone("feature-b") },
+                "worktrees": { "a": delta_checkout("a"), "b": delta_checkout("b") },
+            },
+        }),
+    )
+    .await;
+    fs.insert_tree(util::path!("/other"), serde_json::json!({ "src": {} }))
+        .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let mut projects = Vec::new();
+    for root in [
+        util::path!("/other"),
+        util::path!("/repo/.delta/worktrees/a/repo"),
+        util::path!("/repo"),
+        util::path!("/repo/.delta/worktrees/b/repo"),
+    ] {
+        let project = project::Project::test(fs.clone(), [Path::new(root)], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        projects.push(project);
+    }
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(projects[0].clone(), window, cx));
+    let checkout_workspace = multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        multi_workspace.test_add_workspace(projects[1].clone(), window, cx)
+    });
+    let source_workspace = multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        multi_workspace.test_add_workspace(projects[2].clone(), window, cx)
+    });
+    let second_checkout_workspace = multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        multi_workspace.test_add_workspace(projects[3].clone(), window, cx)
+    });
+    let other_workspace = multi_workspace.read_with(cx, |multi_workspace, _| {
+        multi_workspace.workspaces().next().unwrap().clone()
+    });
+    multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        multi_workspace.activate(source_workspace.clone(), None, window, cx);
+        multi_workspace.activate(other_workspace.clone(), None, window, cx);
+    });
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    cx.run_until_parked();
+
+    let project_group_key =
+        checkout_workspace.read_with(cx, |workspace, cx| workspace.project_group_key(cx));
+    let other_group_key =
+        other_workspace.read_with(cx, |workspace, cx| workspace.project_group_key(cx));
+    assert_eq!(
+        multi_workspace.read_with(cx, |multi_workspace, cx| {
+            (
+                source_workspace.read(cx).project_group_key(cx) == project_group_key,
+                worktree_picker_workspace(multi_workspace, &project_group_key, cx),
+                worktree_picker_workspace(multi_workspace, &other_group_key, cx),
+            )
+        }),
+        (true, Some(checkout_workspace.clone()), None),
+        "the group's last active workspace has no repository, so its checkout is used; \
+         a group without a Git repository gets no worktree picker row"
+    );
+    checkout_workspace.update_in(cx, |workspace, window, cx| {
+        let project = workspace.project().clone();
+        let workspace_handle = workspace.weak_handle();
+        workspace.toggle_modal(window, cx, |window, cx| {
+            WorktreePicker::new_modal(project, workspace_handle, None, window, cx)
+        });
+    });
+    cx.run_until_parked();
+    let stale_picker = checkout_workspace.read_with(cx, |workspace, cx| {
+        workspace
+            .active_modal::<WorktreePicker>(cx)
+            .map(|picker| picker.entity_id())
+    });
+    let menu_handle = project_menu_handle(&sidebar, &project_group_key, cx);
+    let is_menu_open = confirm_project_menu_row(&menu_handle, 5, cx);
+    cx.run_until_parked();
+    assert_eq!(
+        (
+            is_menu_open,
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone()),
+            checkout_workspace.read_with(cx, |workspace, cx| {
+                let picker = workspace
+                    .active_modal::<WorktreePicker>(cx)
+                    .map(|picker| picker.entity_id());
+                picker.is_some() && picker != stale_picker
+            }),
+        ),
+        (false, checkout_workspace, true),
+        "the group's own workspace is activated and shows the worktree picker"
+    );
+
+    multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        multi_workspace.activate(second_checkout_workspace.clone(), None, window, cx);
+        multi_workspace.activate(other_workspace.clone(), None, window, cx);
+    });
+    let host_of_last_active_checkout = multi_workspace.read_with(cx, |multi_workspace, cx| {
+        worktree_picker_workspace(multi_workspace, &project_group_key, cx)
+    });
+    cx.update_global::<SettingsStore, _>(|store, cx| {
+        store.update_user_settings(cx, |settings| {
+            settings
+                .git
+                .get_or_insert_default()
+                .enabled
+                .get_or_insert_default()
+                .enable_status = Some(false);
+        });
+    });
+    let host_without_git_status = multi_workspace.read_with(cx, |multi_workspace, cx| {
+        worktree_picker_workspace(multi_workspace, &project_group_key, cx)
+    });
+    assert_eq!(
+        (host_of_last_active_checkout, host_without_git_status),
+        (Some(second_checkout_workspace), None),
+        "the group's last active checkout hosts the picker; without Git status there is no row"
+    );
+}
+
+#[gpui::test]
+async fn test_key_change_keeps_the_group_of_closed_rows_that_stay_listed(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    let delta_clone = || {
+        serde_json::json!({
+            "HEAD": "ref: refs/heads/feature\n",
+            "config": "[core]\n\tbare = false\n",
+            "delta": { "copy-baseline": "" },
+            "objects": {
+                "info": {
+                    "alternates": format!("{}\n", util::path!("/repo/.git/objects")),
+                },
+            },
+        })
+    };
+    fs.insert_tree(
+        util::path!("/repo"),
+        serde_json::json!({
+            ".git": { "HEAD": "ref: refs/heads/main\n" },
+            ".delta": {
+                "clones": {
+                    "a": { "repo.git": delta_clone() },
+                    "b": { "repo.git": delta_clone() },
+                },
+                "worktrees": {
+                    "a": {
+                        "repo": {
+                            ".git": format!("gitdir: {}\n", util::path!("/repo/.delta/clones/a/repo.git")),
+                            "src": {},
+                        },
+                    },
+                    "b": {
+                        "repo": {
+                            ".git": format!("gitdir: {}\n", util::path!("/repo/.delta/clones/b/repo.git")),
+                        },
+                    },
+                },
+            },
+        }),
+    )
+    .await;
+    fs.insert_tree(util::path!("/tools"), serde_json::json!({ "bin": {} }))
+        .await;
+    fs.insert_tree(util::path!("/other"), serde_json::json!({ "src": {} }))
+        .await;
+    fs.insert_tree(
+        util::path!("/next"),
+        serde_json::json!({ ".git": { "HEAD": "ref: refs/heads/main\n" } }),
+    )
+    .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let checkout_a = PathBuf::from(util::path!("/repo/.delta/worktrees/a/repo"));
+    let checkout_b = PathBuf::from(util::path!("/repo/.delta/worktrees/b/repo"));
+    let clone_a = PathBuf::from(util::path!("/repo/.delta/clones/a/repo.git"));
+    let source = PathList::new(&[Path::new(util::path!("/repo"))]);
+    let saved_at =
+        |minute| chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, minute, 0).unwrap();
+    save_thread_metadata_with_worktree_paths(
+        "own-subfolder",
+        "Own subfolder",
+        WorktreePaths::from_path_lists(source.clone(), PathList::new(&[checkout_a.join("src")]))
+            .unwrap()
+            .with_delta_clones([(
+                checkout_a.join("src"),
+                project::DeltaClone {
+                    path: clone_a.clone(),
+                    is_linked_worktree: false,
+                    checkout_path: Some(checkout_a.clone()),
+                },
+            )]),
+        saved_at(1),
+        cx,
+    );
+    let other_draft_id = save_draft_metadata_with_main_paths(
+        None,
+        PathList::new(std::slice::from_ref(&checkout_b)),
+        source.clone(),
+        saved_at(2),
+        cx,
+    );
+    let project = project::Project::test(fs.clone(), [checkout_a.as_path()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    let other_project =
+        project::Project::test(fs.clone(), [Path::new(util::path!("/other"))], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let checkout_workspace =
+        multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+    multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        multi_workspace.test_add_workspace(other_project, window, cx);
+        multi_workspace.activate(checkout_workspace, None, window, cx);
+    });
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    save_thread_metadata_with_main_paths(
+        "own-root",
+        "Own root",
+        PathList::new(std::slice::from_ref(&checkout_a)),
+        source.clone(),
+        saved_at(3),
+        cx,
+    );
+
+    let mut entries = Vec::new();
+    entries.push(entries_after_folder_change(&sidebar, &project, true, cx).await);
+    entries.push(entries_after_folder_change(&sidebar, &project, false, cx).await);
+
+    let marker_path = clone_a.join("delta/copy-baseline");
+    fs.remove_file(&marker_path, fs::RemoveOptions::default())
+        .await
+        .unwrap();
+    entries.push(updated_entries(&sidebar, cx));
+    fs.insert_file(&marker_path, Vec::new()).await;
+    entries.push(updated_entries(&sidebar, cx));
+
+    let alternates_path = clone_a.join("objects/info/alternates");
+    fs.insert_file(
+        &alternates_path,
+        format!("{}\n", util::path!("/next/.git/objects")).into_bytes(),
+    )
+    .await;
+    entries.push(updated_entries(&sidebar, cx));
+    fs.insert_file(
+        &alternates_path,
+        format!("{}\n", util::path!("/repo/.git/objects")).into_bytes(),
+    )
+    .await;
+    entries.push(updated_entries(&sidebar, cx));
+
+    cx.update(|_, cx| {
+        agent_ui::draft_prompt_store::write(
+            other_draft_id,
+            &[acp_v2::ContentBlock::Text(acp_v2::TextContent::new(
+                "Other draft",
+            ))],
+            cx,
+        )
+    })
+    .await
+    .unwrap();
+    entries.push(entries_after_folder_change(&sidebar, &project, true, cx).await);
+    entries.push(entries_after_folder_change(&sidebar, &project, false, cx).await);
+
+    cx.update(|_, cx| agent_ui::draft_prompt_store::delete(other_draft_id, cx))
+        .await
+        .unwrap();
+    save_terminal_metadata_with_main_paths(
+        "Other terminal",
+        PathList::new(&[checkout_b]),
+        source,
+        saved_at(4),
+        cx,
+    );
+    entries.push(entries_after_folder_change(&sidebar, &project, true, cx).await);
+
+    assert_eq!(
+        entries,
+        vec![
+            vec!["v [other]", "v [repo, tools]", "  Own root {repo:a}"],
+            vec![
+                "v [other]",
+                "v [repo]",
+                "  Own root {a}",
+                "  Own subfolder {a}"
+            ],
+            vec![
+                "v [other]",
+                "v [repo]",
+                "  Own root {repo}",
+                "v [repo]",
+                "  Own subfolder {a}"
+            ],
+            vec![
+                "v [other]",
+                "v [repo]",
+                "  Own root {a}",
+                "  Own subfolder {a}"
+            ],
+            vec![
+                "v [other]",
+                "v [next]",
+                "  Own root {a}",
+                "v [repo]",
+                "  Own subfolder {a}"
+            ],
+            vec![
+                "v [other]",
+                "v [repo]",
+                "  Own root {a}",
+                "  Own subfolder {a}"
+            ],
+            vec![
+                "v [other]",
+                "v [repo, tools]",
+                "  Own root {repo:a}",
+                "v [repo]",
+                "  Other draft {b}",
+                "  Own subfolder {a}"
+            ],
+            vec![
+                "v [other]",
+                "v [repo]",
+                "  Own root {a}",
+                "  Other draft {b}",
+                "  Own subfolder {a}"
+            ],
+            vec![
+                "v [other]",
+                "v [repo, tools]",
+                "  Own root {repo:a}",
+                "v [repo]",
+                "  Other terminal {b}",
+                "  Own subfolder {a}"
+            ],
+        ]
+    );
+}
+
 fn setup_sidebar(
     multi_workspace: &Entity<MultiWorkspace>,
     cx: &mut gpui::VisualTestContext,
@@ -521,6 +1275,22 @@ fn save_thread_metadata_with_main_paths(
     updated_at: DateTime<Utc>,
     cx: &mut TestAppContext,
 ) {
+    save_thread_metadata_with_worktree_paths(
+        session_id,
+        title,
+        WorktreePaths::from_path_lists(main_worktree_paths, folder_paths).unwrap(),
+        updated_at,
+        cx,
+    );
+}
+
+fn save_thread_metadata_with_worktree_paths(
+    session_id: &str,
+    title: &str,
+    worktree_paths: WorktreePaths,
+    updated_at: DateTime<Utc>,
+    cx: &mut TestAppContext,
+) {
     let session_id = acp::SessionId::new(Arc::from(session_id));
     let title = SharedString::from(title.to_string());
     let thread_id = cx.update(|cx| {
@@ -540,7 +1310,7 @@ fn save_thread_metadata_with_main_paths(
         updated_at,
         created_at: None,
         interacted_at: None,
-        worktree_paths: WorktreePaths::from_path_lists(main_worktree_paths, folder_paths).unwrap(),
+        worktree_paths,
         archived: false,
         remote_connection: None,
     };
@@ -4177,6 +4947,134 @@ async fn test_thread_switcher_preserves_closed_terminal_linked_worktree_workspac
 }
 
 #[gpui::test]
+async fn test_thread_switcher_opens_closed_linked_worktree_thread_in_its_worktree(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            ".git": {
+                "worktrees": {
+                    "feature-a": {
+                        "commondir": "../../",
+                        "HEAD": "ref: refs/heads/feature-a",
+                    },
+                    "feature-b": {
+                        "commondir": "../../",
+                        "HEAD": "ref: refs/heads/feature-b",
+                    },
+                },
+            },
+            "src": {},
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/worktrees/project/feature-a/project",
+        serde_json::json!({
+            ".git": "gitdir: /project/.git/worktrees/feature-a",
+            "src": {},
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/worktrees/project/feature-b/project",
+        serde_json::json!({
+            ".git": "gitdir: /project/.git/worktrees/feature-b",
+            "src": {},
+        }),
+    )
+    .await;
+    for name in ["feature-a", "feature-b"] {
+        fs.add_linked_worktree_for_repo(
+            Path::new("/project/.git"),
+            false,
+            git::repository::Worktree {
+                path: PathBuf::from(format!("/worktrees/project/{name}/project")),
+                ref_name: Some(format!("refs/heads/{name}").into()),
+                sha: "aaa".into(),
+                is_main: false,
+                is_bare: false,
+            },
+        )
+        .await;
+    }
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+    let main_paths = PathList::new(&[PathBuf::from("/project")]);
+    let worktree_folder_paths =
+        PathList::new(&[PathBuf::from("/worktrees/project/feature-a/project")]);
+    save_thread_metadata_with_main_paths(
+        "feature-thread",
+        "Feature Thread",
+        worktree_folder_paths.clone(),
+        main_paths.clone(),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
+        cx,
+    );
+    save_thread_metadata_with_main_paths(
+        "main-thread",
+        "Main Thread",
+        main_paths.clone(),
+        main_paths,
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        cx,
+    );
+
+    let sibling_project = project::Project::test(
+        fs.clone(),
+        ["/worktrees/project/feature-b/project".as_ref()],
+        cx,
+    )
+    .await;
+    sibling_project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+        MultiWorkspace::test_new(sibling_project.clone(), window, cx)
+    });
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    sidebar.update(cx, |sidebar, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+
+    focus_sidebar(&sidebar, cx);
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.on_toggle_thread_switcher(&ToggleThreadSwitcher::default(), window, cx);
+    });
+    cx.run_until_parked();
+    let feature_selection = sidebar.read_with(cx, |sidebar, cx| {
+        sidebar
+            .thread_switcher
+            .as_ref()
+            .expect("switcher should be open")
+            .read(cx)
+            .entries()
+            .iter()
+            .find_map(|entry| match entry {
+                ThreadSwitcherEntry::Thread(thread)
+                    if thread.metadata.title.as_ref().map(|title| title.as_ref())
+                        == Some("Feature Thread") =>
+                {
+                    Some(entry.selection())
+                }
+                _ => None,
+            })
+            .expect("the closed worktree thread should be listed")
+    });
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.confirm_switcher_selection(&feature_selection, window, cx);
+    });
+    cx.run_until_parked();
+
+    let active_root_paths = multi_workspace.read_with(cx, |multi_workspace, cx| {
+        PathList::new(&multi_workspace.workspace().read(cx).root_paths(cx))
+    });
+    assert_eq!(active_root_paths, worktree_folder_paths);
+}
+
+#[gpui::test]
 async fn test_archive_selected_terminal_archives_closed_linked_worktree(cx: &mut TestAppContext) {
     init_test(cx);
 
@@ -4995,7 +5893,7 @@ async fn test_elicitation_marks_sidebar_thread_waiting_until_responded(cx: &mut 
 
     for action in [
         acp_v2::ElicitationAction::Accept(acp_v2::ElicitationAcceptAction::new().content(
-            std::collections::BTreeMap::from([(
+            agent_client_protocol::schema::IndexMap::from([(
                 "choice".to_string(),
                 acp_v2::ElicitationContentValue::from("first"),
             )]),
@@ -13369,6 +14267,407 @@ async fn test_activating_workspace_with_draft_does_not_create_extras(cx: &mut Te
 }
 
 #[gpui::test]
+async fn test_unused_legacy_delta_headers_follow_their_threads(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    let clone = |name: &str| {
+        serde_json::json!({
+            ".dotfiles.git": {
+                "HEAD": "ref: refs/heads/feature\n",
+                "config": "[core]\n\tbare = false\n",
+                "delta": { "copy-baseline": "" },
+                "objects": {
+                    "info": {
+                        "alternates": format!("{}\n", util::path!("/.dotfiles/.git/objects")),
+                    },
+                },
+            },
+            "name": name,
+        })
+    };
+    let checkout = |name: &str| {
+        serde_json::json!({
+            ".dotfiles": {
+                ".git": format!(
+                    "gitdir: {}\n",
+                    PathBuf::from(util::path!("/.dotfiles/.delta/clones"))
+                        .join(name)
+                        .join(".dotfiles.git")
+                        .display()
+                ),
+            },
+        })
+    };
+    fs.insert_tree(
+        util::path!("/.dotfiles"),
+        serde_json::json!({
+            ".git": { "HEAD": "ref: refs/heads/main\n" },
+            ".delta": {
+                "clones": { "one": clone("one"), "two": clone("two"), "three": clone("three") },
+                "worktrees": {
+                    "one": checkout("one"),
+                    "two": checkout("two"),
+                    "three": checkout("three"),
+                },
+            },
+        }),
+    )
+    .await;
+    fs.insert_tree(util::path!("/other"), serde_json::json!({ "src": {} }))
+        .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+    let legacy_key_path =
+        |name: &str| PathBuf::from(util::path!("/.dotfiles/.delta/clones")).join(name);
+    let checkout_path = |name: &str| {
+        PathBuf::from(util::path!("/.dotfiles/.delta/worktrees"))
+            .join(name)
+            .join(".dotfiles")
+    };
+    for (session_id, folder_path, main_path, minute) in [
+        ("one", checkout_path("one"), legacy_key_path("one"), 3),
+        ("two", checkout_path("two"), legacy_key_path("two"), 2),
+        (
+            "container",
+            legacy_key_path("two"),
+            legacy_key_path("two"),
+            1,
+        ),
+    ] {
+        save_thread_metadata_with_main_paths(
+            session_id,
+            session_id,
+            PathList::new(&[folder_path]),
+            PathList::new(&[main_path]),
+            chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, minute, 0).unwrap(),
+            cx,
+        );
+    }
+    let project = project::Project::test(fs.clone(), [Path::new(util::path!("/other"))], cx).await;
+    let mut open_checkout_projects = Vec::new();
+    for name in ["one", "three"] {
+        let open_checkout_project =
+            project::Project::test(fs.clone(), [checkout_path(name).as_path()], cx).await;
+        open_checkout_project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        open_checkout_projects.push(open_checkout_project);
+    }
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        for open_checkout_project in open_checkout_projects {
+            multi_workspace.test_add_workspace(open_checkout_project, window, cx);
+        }
+        multi_workspace.restore_project_groups(
+            ["one", "two", "three"]
+                .map(|name| workspace::SerializedProjectGroupState {
+                    key: ProjectGroupKey::new(None, PathList::new(&[legacy_key_path(name)])),
+                    expanded: true,
+                })
+                .into(),
+            cx,
+        );
+    });
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    sidebar.update(cx, |sidebar, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            "v [two]",
+            "  two {.dotfiles}",
+            "  container",
+            "v [.dotfiles]",
+            "  one {one}",
+            "v [other]",
+        ],
+        "rows of an open checkout join its source and its unused old header goes; \
+         rows of a closed checkout stay under their old header"
+    );
+
+    multi_workspace
+        .update_in(cx, |multi_workspace, window, cx| {
+            multi_workspace.remove_project_group(
+                &ProjectGroupKey::new(None, PathList::new(&[Path::new(util::path!("/.dotfiles"))])),
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    sidebar.update(cx, |sidebar, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [two]", "  two {.dotfiles}", "  container", "v [other]"]
+    );
+
+    let checkout_project =
+        project::Project::test(fs.clone(), [checkout_path("two").as_path()], cx).await;
+    checkout_project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        multi_workspace.test_add_workspace(checkout_project, window, cx);
+        multi_workspace.test_add_project_group(workspace::ProjectGroup {
+            key: ProjectGroupKey::new(None, PathList::new(&[legacy_key_path("one")])),
+            workspaces: Vec::new(),
+            expanded: true,
+        });
+    });
+    save_terminal_metadata_with_main_paths(
+        "container terminal",
+        PathList::new(&[legacy_key_path("one")]),
+        PathList::new(&[legacy_key_path("one")]),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 4, 0).unwrap(),
+        cx,
+    );
+    let entries_with_loaded_stores = updated_entries(&sidebar, cx);
+    let mut entries_after_each_load = Vec::new();
+    let mut legacy_groups_before_the_stores_load = Vec::new();
+    for reload_thread_store in [true, false] {
+        cx.update(|_window, cx| {
+            if reload_thread_store {
+                ThreadMetadataStore::init_global(cx);
+            } else {
+                TerminalThreadMetadataStore::init_global(cx);
+            }
+            sidebar.update(cx, |sidebar, cx| sidebar.update_entries(cx));
+        });
+        legacy_groups_before_the_stores_load.push(multi_workspace.read_with(
+            cx,
+            |multi_workspace, _| {
+                ["one", "two"].map(|name| {
+                    multi_workspace
+                        .project_group_keys()
+                        .contains(&ProjectGroupKey::new(
+                            None,
+                            PathList::new(&[legacy_key_path(name)]),
+                        ))
+                })
+            },
+        ));
+        entries_after_each_load.push(updated_entries(&sidebar, cx));
+    }
+    assert_eq!(
+        (
+            legacy_groups_before_the_stores_load,
+            entries_after_each_load,
+        ),
+        (
+            vec![[true, true], [true, true]],
+            vec![
+                entries_with_loaded_stores.clone(),
+                entries_with_loaded_stores
+            ],
+        ),
+        "a store that has not loaded yet is not evidence that a group is unused"
+    );
+}
+
+#[gpui::test]
+async fn test_delta_checkout_groups_with_its_source(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    let source_path = Path::new(util::path!("/repo"));
+    let next_source_path = Path::new(util::path!("/next"));
+    let first_clone_path = Path::new(util::path!("/repo/.delta/clones/abc/repo.git"));
+    let first_checkout_path = Path::new(util::path!("/repo/.delta/worktrees/abc/repo"));
+    let second_clone_path = Path::new(util::path!("/repo/.delta/clones/def/repo.git"));
+    let second_checkout_path = Path::new(util::path!("/repo/.delta/worktrees/def/repo"));
+    let delta_clone = || {
+        serde_json::json!({
+            "HEAD": "ref: refs/heads/feature\n",
+            "config": "[core]\n\tbare = false\n",
+            "delta": { "copy-baseline": "" },
+            "objects": {
+                "info": {
+                    "alternates": format!("{}\n", util::path!("/repo/.git/objects")),
+                },
+            },
+        })
+    };
+    fs.insert_tree(
+        source_path,
+        serde_json::json!({
+            ".git": { "HEAD": "ref: refs/heads/main\n" },
+            ".delta": {
+                "clones": {
+                    "abc": { "repo.git": delta_clone() },
+                    "def": { "repo.git": delta_clone() },
+                },
+                "worktrees": {
+                    "abc": {
+                        "repo": { ".git": format!("gitdir: {}\n", first_clone_path.display()) },
+                    },
+                    "def": {
+                        "repo": { ".git": format!("gitdir: {}\n", second_clone_path.display()) },
+                    },
+                },
+            },
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        next_source_path,
+        serde_json::json!({ ".git": { "HEAD": "ref: refs/heads/main\n" } }),
+    )
+    .await;
+    save_thread_metadata_with_main_paths(
+        "First",
+        "First",
+        PathList::new(&[first_checkout_path]),
+        PathList::new(&[source_path]),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        cx,
+    );
+    let source_project = project::Project::test(fs.clone(), [source_path], cx).await;
+    let first_project = project::Project::test(fs.clone(), [first_checkout_path], cx).await;
+    let second_project = project::Project::test(fs.clone(), [second_checkout_path], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(source_project, window, cx));
+    multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        multi_workspace.retain_active_workspace(cx);
+        multi_workspace.test_add_workspace(first_project, window, cx);
+        multi_workspace.test_add_workspace(second_project, window, cx);
+    });
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    let group_paths = |cx: &mut gpui::VisualTestContext| {
+        cx.run_until_parked();
+        multi_workspace.read_with(cx, |multi_workspace, _| {
+            multi_workspace
+                .project_group_keys()
+                .into_iter()
+                .map(|key| key.path_list().clone())
+                .collect::<Vec<_>>()
+        })
+    };
+    let first_main_paths = |cx: &mut gpui::VisualTestContext| {
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            ThreadMetadataStore::global(cx)
+                .read(cx)
+                .entries()
+                .find(|thread| thread.display_title().as_ref() == "First")
+                .map(|thread| thread.main_worktree_paths().paths().to_vec())
+        })
+    };
+
+    let group_paths_with_source = group_paths(cx);
+    let entries_with_source = visible_entries_as_strings(&sidebar, cx);
+    let mut default_branch_cache_paths = sidebar.read_with(cx, |sidebar, _| {
+        sidebar
+            .worktree_default_branches
+            .keys()
+            .map(|key| key.path_list().paths().to_vec())
+            .collect::<Vec<_>>()
+    });
+    default_branch_cache_paths.sort();
+    let branch_name = |root_path: &Path| {
+        format!(
+            "origin/{}",
+            root_path.to_string_lossy().replace(['/', '\\', ':'], "-")
+        )
+    };
+    let default_branches = sidebar.update(cx, |sidebar, cx| {
+        for repository_path in [source_path, first_clone_path, second_clone_path] {
+            sidebar.worktree_default_branches.insert(
+                ProjectGroupKey::new(None, PathList::new(&[repository_path])),
+                DefaultBranchCache::Resolved(RemoteBranchName::parse(&branch_name(
+                    repository_path,
+                ))),
+            );
+        }
+        let mut default_branches = multi_workspace
+            .read(cx)
+            .workspaces()
+            .map(|workspace| {
+                (
+                    workspace.read(cx).root_paths(cx)[0].to_path_buf(),
+                    sidebar
+                        .worktree_default_branch(workspace, cx)
+                        .map(|branch| branch.display_name()),
+                )
+            })
+            .collect::<Vec<_>>();
+        default_branches.sort();
+        default_branches
+    });
+    let mut menu_labels = cx.update(|_, cx| {
+        multi_workspace
+            .read(cx)
+            .workspaces()
+            .flat_map(|workspace| workspace_menu_worktree_labels(workspace, cx))
+            .map(|label| label.primary_name.to_string())
+            .collect::<Vec<_>>()
+    });
+    menu_labels.sort();
+
+    fs.insert_file(
+        first_clone_path.join("objects/info/alternates"),
+        format!("{}\n", util::path!("/next/.git/objects")).into_bytes(),
+    )
+    .await;
+    let group_paths_with_next_source = group_paths(cx);
+    let first_main_paths_with_next_source = first_main_paths(cx);
+    fs.remove_file(
+        &first_clone_path.join("delta/copy-baseline"),
+        fs::RemoveOptions::default(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        (
+            group_paths_with_source,
+            entries_with_source,
+            default_branch_cache_paths,
+            default_branches,
+            menu_labels,
+            group_paths_with_next_source,
+            first_main_paths_with_next_source,
+            group_paths(cx),
+            first_main_paths(cx),
+        ),
+        (
+            vec![PathList::new(&[source_path])],
+            vec!["v [repo]".to_string(), "  First {abc}".to_string()],
+            vec![
+                vec![source_path.to_path_buf()],
+                vec![first_clone_path.to_path_buf()],
+                vec![second_clone_path.to_path_buf()],
+            ],
+            vec![
+                (source_path.to_path_buf(), Some(branch_name(source_path))),
+                (
+                    first_checkout_path.to_path_buf(),
+                    Some(branch_name(first_clone_path)),
+                ),
+                (
+                    second_checkout_path.to_path_buf(),
+                    Some(branch_name(second_clone_path)),
+                ),
+            ],
+            vec!["abc".to_string(), "def".to_string(), "main".to_string()],
+            vec![
+                PathList::new(&[source_path]),
+                PathList::new(&[next_source_path]),
+            ],
+            Some(vec![next_source_path.to_path_buf()]),
+            vec![
+                PathList::new(&[source_path]),
+                PathList::new(&[first_clone_path]),
+            ],
+            Some(vec![first_clone_path.to_path_buf()]),
+        )
+    );
+}
+
+#[gpui::test]
 async fn test_non_archive_thread_paths_migrate_on_worktree_add_and_remove(cx: &mut TestAppContext) {
     // Historical threads (not open in any agent panel) should have their
     // worktree paths updated when a folder is added to or removed from the
@@ -15656,6 +16955,124 @@ fn test_worktree_info_branch_names_for_linked_worktrees() {
 }
 
 #[test]
+fn test_worktree_info_names_only_delta_checkouts_after_their_checkout() {
+    let worktree_names = |paths: &[(&str, &str, Option<(&str, bool, Option<&str>)>)]| {
+        let (main_paths, folder_paths) = paths
+            .iter()
+            .map(|(main_path, folder_path, _)| {
+                (PathBuf::from(main_path), PathBuf::from(folder_path))
+            })
+            .unzip::<_, _, Vec<_>, Vec<_>>();
+        let worktree_paths = WorktreePaths::from_path_lists(
+            PathList::new(&main_paths),
+            PathList::new(&folder_paths),
+        )
+        .expect("same length")
+        .with_delta_clones(paths.iter().filter_map(|(_, folder_path, clone)| {
+            let (clone_path, is_linked_worktree, checkout_path) = clone.as_ref()?;
+            Some((
+                PathBuf::from(folder_path),
+                project::DeltaClone {
+                    path: PathBuf::from(clone_path),
+                    is_linked_worktree: *is_linked_worktree,
+                    checkout_path: checkout_path.map(PathBuf::from),
+                },
+            ))
+        }));
+        worktree_info_from_thread_paths(&worktree_paths, &HashMap::<PathBuf, SharedString>::new())
+            .into_iter()
+            .map(|info| info.worktree_name.unwrap_or_default().to_string())
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        [
+            worktree_names(&[
+                (
+                    "/repo_a",
+                    "/storage/worktrees/red/repo_a/src",
+                    Some((
+                        "/storage/clones/red/repo_a.git",
+                        false,
+                        Some("/storage/worktrees/red/repo_a"),
+                    )),
+                ),
+                (
+                    "/repo_b",
+                    "/storage/worktrees/blue/repo_b/lib",
+                    Some((
+                        "/storage/clones/blue/repo_b.git",
+                        false,
+                        Some("/storage/worktrees/blue/repo_b"),
+                    )),
+                ),
+            ]),
+            worktree_names(&[(
+                "/repos/My Project",
+                "/storage/worktrees/checkout-a/My_Project",
+                Some((
+                    "/storage/clones/checkout-a/My_Project.git",
+                    false,
+                    Some("/storage/worktrees/checkout-a/My_Project"),
+                )),
+            )]),
+            worktree_names(&[("/repos/My Project", "/checkouts/review/My_Project", None)]),
+            worktree_names(&[("/repos/My Project", "/checkouts/review/My Project", None)]),
+            worktree_names(&[(
+                "/repo",
+                "/tmp/review/repo",
+                Some(("/repo/.delta/clones/abc/repo.git", true, None)),
+            )]),
+            worktree_names(&[(
+                "/repo",
+                "/tmp/review/repo",
+                Some(("/repo/.delta/clones/def/repo.git", true, None)),
+            )]),
+            worktree_names(&[(
+                "/repo",
+                "/worktrees/red/repo/src",
+                Some((
+                    "/repo/.delta/clones/abc/repo.git",
+                    true,
+                    Some("/worktrees/red/repo"),
+                )),
+            )]),
+            worktree_names(&[(
+                "/repo",
+                "/worktrees/blue/repo/src",
+                Some((
+                    "/repo/.delta/clones/abc/repo.git",
+                    true,
+                    Some("/worktrees/blue/repo"),
+                )),
+            )]),
+            worktree_names(&[(
+                "/repo",
+                "/home/abc/checkouts/red",
+                Some(("/repo/.delta/clones/abc/repo.git", false, None)),
+            )]),
+            worktree_names(&[(
+                "/repo",
+                "/home/abc/checkouts/blue",
+                Some(("/repo/.delta/clones/abc/repo.git", false, None)),
+            )]),
+        ],
+        [
+            vec!["repo_a:red".to_string(), "repo_b:blue".to_string()],
+            vec!["checkout-a".to_string()],
+            vec!["My_Project".to_string()],
+            vec!["review".to_string()],
+            vec!["abc/repo/review/repo".to_string()],
+            vec!["def/repo/review/repo".to_string()],
+            vec!["abc/repo/red/repo".to_string()],
+            vec!["abc/repo/blue/repo".to_string()],
+            vec!["abc/repo/red".to_string()],
+            vec!["abc/repo/blue".to_string()],
+        ]
+    );
+}
+
+#[test]
 fn test_worktree_info_missing_branch_returns_none() {
     let folder_paths = PathList::new(&[PathBuf::from("/projects/myapp")]);
     let worktree_paths = WorktreePaths::from_folder_paths(&folder_paths);
@@ -16686,4 +18103,140 @@ fn header_search_offsets(
         hidden,
         fullscreen,
     }
+}
+
+fn menu_label_names(labels: &[WorkspaceMenuWorktreeLabel]) -> Vec<(String, Option<String>)> {
+    labels
+        .iter()
+        .map(|label| {
+            (
+                label.primary_name.to_string(),
+                label.secondary_name.as_ref().map(|name| name.to_string()),
+            )
+        })
+        .collect()
+}
+
+fn project_menu_handle(
+    sidebar: &Entity<Sidebar>,
+    project_group_key: &ProjectGroupKey,
+    cx: &mut gpui::VisualTestContext,
+) -> PopoverMenuHandle<ContextMenu> {
+    sidebar
+        .read_with(cx, |sidebar, _| {
+            let header_index = sidebar.contents.entries.iter().position(|entry| {
+                matches!(entry, ListEntry::ProjectHeader { key, .. } if key == project_group_key)
+            })?;
+            sidebar
+                .project_header_menu_handles
+                .get(&header_index)
+                .cloned()
+        })
+        .unwrap()
+}
+
+fn simulate_frames(cx: &mut gpui::VisualTestContext) {
+    for _ in 0..2 {
+        cx.update(|window, cx| window.simulate_next_frame(cx));
+        cx.run_until_parked();
+    }
+}
+
+fn active_root_paths(
+    multi_workspace: &Entity<MultiWorkspace>,
+    cx: &mut gpui::VisualTestContext,
+) -> Vec<PathBuf> {
+    multi_workspace.read_with(cx, |multi_workspace, cx| {
+        multi_workspace
+            .workspace()
+            .read(cx)
+            .root_paths(cx)
+            .iter()
+            .map(|root_path| root_path.to_path_buf())
+            .collect()
+    })
+}
+
+async fn entries_after_folder_change(
+    sidebar: &Entity<Sidebar>,
+    project: &Entity<project::Project>,
+    add_tools_folder: bool,
+    cx: &mut gpui::VisualTestContext,
+) -> Vec<String> {
+    let tools_path = Path::new(util::path!("/tools"));
+    if add_tools_folder {
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(tools_path, true, cx)
+            })
+            .await
+            .unwrap();
+    } else {
+        project.update(cx, |project, cx| {
+            let worktree_id = project
+                .visible_worktrees(cx)
+                .find(|worktree| worktree.read(cx).abs_path().as_ref() == tools_path)
+                .map(|worktree| worktree.read(cx).id());
+            if let Some(worktree_id) = worktree_id {
+                project.remove_worktree(worktree_id, cx);
+            }
+        });
+    }
+    updated_entries(sidebar, cx)
+}
+
+fn save_terminal_metadata_with_main_paths(
+    title: &'static str,
+    folder_paths: PathList,
+    main_worktree_paths: PathList,
+    created_at: DateTime<Utc>,
+    cx: &mut TestAppContext,
+) {
+    cx.update(|cx| {
+        TerminalThreadMetadataStore::global(cx).update(cx, |store, cx| {
+            store.save(
+                TerminalThreadMetadata {
+                    terminal_id: agent_ui::TerminalId::test_new(),
+                    title: title.into(),
+                    custom_title: None,
+                    created_at,
+                    worktree_paths: WorktreePaths::from_path_lists(
+                        main_worktree_paths,
+                        folder_paths,
+                    )
+                    .unwrap(),
+                    remote_connection: None,
+                    working_directory: None,
+                },
+                cx,
+            );
+        });
+    });
+    cx.run_until_parked();
+}
+
+fn confirm_project_menu_row(
+    menu_handle: &PopoverMenuHandle<ContextMenu>,
+    row: usize,
+    cx: &mut gpui::VisualTestContext,
+) -> bool {
+    cx.update(|window, cx| {
+        menu_handle.hide(cx);
+        menu_handle.show(window, cx);
+    });
+    cx.run_until_parked();
+    simulate_frames(cx);
+    cx.dispatch_action(SelectFirst);
+    for _ in 0..row {
+        cx.dispatch_action(SelectNext);
+    }
+    cx.update(|window, cx| window.dispatch_action(Box::new(Confirm), cx));
+    menu_handle.is_deployed()
+}
+
+fn updated_entries(sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext) -> Vec<String> {
+    cx.run_until_parked();
+    sidebar.update(cx, |sidebar, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+    visible_entries_as_strings(sidebar, cx)
 }

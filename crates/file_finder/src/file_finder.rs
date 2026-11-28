@@ -1867,7 +1867,7 @@ impl FileFinderDelegate {
         })
     }
 
-    /// Skips first history match (that is displayed topmost) if it's currently opened.
+    /// Skips first match (that is displayed topmost) if it's currently opened.
     ///
     /// When the query carries a row (e.g. `foo.rs:42`), the user is asking to
     /// navigate inside a specific file, so we never skip past the active match
@@ -1879,8 +1879,17 @@ impl FileFinderDelegate {
     ) -> usize {
         if !query_has_position
             && FileFinderSettings::get_global(cx).skip_focus_for_active_in_search
-            && let Some(Match::History { path, .. }) = self.matches.get(0)
-            && Some(path) == self.currently_opened_path.as_ref()
+            && let Some(opened) = &self.currently_opened_path
+            && match self.matches.get(0) {
+                Some(Match::History { path, .. }) => path == opened,
+                Some(Match::Search(path_match)) => {
+                    project_path_for_search_match(&self.project, &path_match.0, cx)
+                        == opened.project
+                }
+                Some(Match::Absolute(..) | Match::Channel { .. } | Match::CreateNew(..)) | None => {
+                    false
+                }
+            }
         {
             let elements_after_first = self.matches.len() - 1;
             if elements_after_first > 0 {

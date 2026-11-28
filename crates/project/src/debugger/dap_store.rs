@@ -16,7 +16,7 @@ use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use dap::{
-    Capabilities, DapRegistry, DebugRequest, EvaluateArgumentsContext, StackFrameId,
+    DapRegistry, DebugRequest, EvaluateArgumentsContext, StackFrameId,
     adapters::{
         DapDelegate, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition, TcpArguments,
     },
@@ -47,7 +47,7 @@ use std::{
     borrow::Borrow,
     collections::BTreeMap,
     ffi::OsStr,
-    net::{IpAddr, Ipv4Addr},
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     sync::{Arc, Once},
 };
@@ -320,6 +320,56 @@ impl DapStore {
                     let response = request.await?;
                     let binary = DebugAdapterBinary::from_proto(response)?;
 
+                    if let Some(connection) = &binary.connection {
+                        let timeout = connection.timeout.unwrap_or_else(|| {
+                            cx.update(|cx| {
+                                dap::debugger_settings::DebuggerSettings::get_global(cx).timeout
+                            })
+                        });
+                        let address = SocketAddr::new(connection.host, connection.port);
+                        let working_dir =
+                            binary.cwd.as_ref().map(|path| path.display().to_string());
+                        let commands = remote.read_with(cx, |remote, _cx| -> Result<_> {
+                            let Some((proxy, child_proxy)) = remote.tcp_proxy_commands(
+                                address,
+                                timeout,
+                                binary.command.as_deref(),
+                                &binary.arguments,
+                            )?
+                            else {
+                                return Ok(None);
+                            };
+                            let build = |proxy: remote::CommandTemplate| {
+                                remote.build_command(
+                                    Some(proxy.program),
+                                    &proxy.args,
+                                    &binary.envs,
+                                    working_dir.clone(),
+                                    None,
+                                    Interactive::No,
+                                )
+                            };
+                            Ok(Some((build(proxy)?, build(child_proxy)?)))
+                        })?;
+                        if let Some((command, child_command)) = commands {
+                            return Ok(DebugAdapterBinary {
+                                command: Some(command.program),
+                                arguments: command.args,
+                                envs: command.env,
+                                cwd: None,
+                                connection: Some(TcpArguments {
+                                    timeout: Some(timeout),
+                                    stdio_proxy: Some(dap::adapters::StdioProxy {
+                                        command: child_command.program,
+                                        arguments: child_command.args,
+                                    }),
+                                    ..connection.clone()
+                                }),
+                                request_args: binary.request_args,
+                            });
+                        }
+                    }
+
                     let port_forwarding;
                     let connection;
                     if let Some(c) = binary.connection {
@@ -336,6 +386,7 @@ impl DapStore {
                             port,
                             host,
                             timeout: c.timeout,
+                            stdio_proxy: None,
                         })
                     } else {
                         port_forwarding = None;
@@ -550,17 +601,6 @@ impl DapStore {
     }
     pub fn sessions(&self) -> impl Iterator<Item = &Entity<Session>> {
         self.sessions.values()
-    }
-
-    pub fn capabilities_by_id(
-        &self,
-        session_id: impl Borrow<SessionId>,
-        cx: &App,
-    ) -> Option<Capabilities> {
-        let session_id = session_id.borrow();
-        self.sessions
-            .get(session_id)
-            .map(|client| client.read(cx).capabilities.clone())
     }
 
     pub fn breakpoint_store(&self) -> &Entity<BreakpointStore> {
@@ -930,10 +970,6 @@ impl DapStore {
 
     pub fn adapter_options(&self, name: &str) -> Option<Arc<PersistedAdapterOptions>> {
         self.adapter_options.get(name).cloned()
-    }
-
-    pub fn all_adapter_options(&self) -> &BTreeMap<DebugAdapterName, Arc<PersistedAdapterOptions>> {
-        &self.adapter_options
     }
 }
 

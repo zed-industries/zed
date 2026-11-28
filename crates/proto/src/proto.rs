@@ -17,6 +17,9 @@ include!(concat!(env!("OUT_DIR"), "/zed.messages.rs"));
 pub const REMOTE_SERVER_PEER_ID: PeerId = PeerId { owner_id: 0, id: 0 };
 pub const REMOTE_SERVER_PROJECT_ID: u64 = 0;
 
+// The TCP proxy reports startup on stderr so stdout remains a DAP stream.
+pub const DAP_TCP_PROXY_STARTUP_PREFIX: &str = "\0zed-dap-proxy-startup:";
+
 impl Envelope {
     #[inline(never)]
     pub fn decode_from_slice(buffer: &[u8]) -> Result<Self, DecodeError> {
@@ -143,6 +146,15 @@ messages!(
     (GetSignatureHelpResponse, Background),
     (GetTerminalShell, Background),
     (GetTerminalShellResponse, Background),
+    (GetGlobalSkills, Background),
+    (GetGlobalSkillsResponse, Background),
+    (GlobalSkillsChanged, Background),
+    (CreateGlobalSkill, Background),
+    (CreateGlobalSkillResponse, Background),
+    (TrashGlobalSkill, Background),
+    (ResolveGlobalSkillPath, Background),
+    (ResolveGlobalSkillPathResponse, Background),
+    (ApplyGlobalSkillFileOperation, Background),
     (GetTypeDefinition, Background),
     (GetTypeDefinitionResponse, Background),
     (GetImplementation, Background),
@@ -640,6 +652,11 @@ request_messages!(
     (GitClone, GitCloneResponse),
     (GetDirectoryEnvironment, DirectoryEnvironment),
     (GetTerminalShell, GetTerminalShellResponse),
+    (GetGlobalSkills, GetGlobalSkillsResponse),
+    (CreateGlobalSkill, CreateGlobalSkillResponse),
+    (TrashGlobalSkill, Ack),
+    (ResolveGlobalSkillPath, ResolveGlobalSkillPathResponse),
+    (ApplyGlobalSkillFileOperation, Ack),
     (GetProcesses, GetProcessesResponse),
     (GetAgentServerCommand, AgentServerCommand),
     (GetContextServerCommand, ContextServerCommand),
@@ -840,6 +857,12 @@ entity_messages!(
     ToggleLspLogs,
     GetDirectoryEnvironment,
     GetTerminalShell,
+    GetGlobalSkills,
+    GlobalSkillsChanged,
+    CreateGlobalSkill,
+    TrashGlobalSkill,
+    ResolveGlobalSkillPath,
+    ApplyGlobalSkillFileOperation,
 
     Push,
     Fetch,

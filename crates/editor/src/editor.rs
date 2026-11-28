@@ -346,9 +346,6 @@ pub enum ConflictsTheirs {}
 pub enum ConflictsOursMarker {}
 pub enum ConflictsTheirsMarker {}
 
-pub struct HunkAddedColor;
-pub struct HunkRemovedColor;
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Navigated {
     Yes,
@@ -1050,7 +1047,6 @@ pub struct Editor {
     show_diff_review_button: bool,
     show_wrap_guides: Option<bool>,
     show_indent_guides: Option<bool>,
-    buffers_with_disabled_indent_guides: HashSet<BufferId>,
     highlight_order: usize,
     highlighted_rows: TypeIdHashMap<Vec<RowHighlight>>,
     background_highlights: HashMap<HighlightKey, BackgroundHighlight>,
@@ -1921,8 +1917,6 @@ impl Editor {
             .clone_state(&self.scroll_manager, &my_snapshot, &clone_snapshot, cx);
         clone.searchable = self.searchable;
         clone.read_only = self.read_only;
-        clone.buffers_with_disabled_indent_guides =
-            self.buffers_with_disabled_indent_guides.clone();
         clone.enable_mouse_wheel_zoom = self.enable_mouse_wheel_zoom;
         clone.enable_lsp_data = self.enable_lsp_data;
         clone.needs_initial_data_update = self.enable_lsp_data;
@@ -2440,7 +2434,6 @@ impl Editor {
             show_diff_review_button: false,
             show_wrap_guides: None,
             show_indent_guides,
-            buffers_with_disabled_indent_guides: HashSet::default(),
             highlight_order: 0,
             highlighted_rows: Default::default(),
             background_highlights: HashMap::default(),
@@ -3852,7 +3845,6 @@ impl Editor {
                         |_, theme| theme.colors().editor_document_highlight_write_background,
                         cx,
                     );
-                    cx.notify();
                 })
                 .log_err();
             }
@@ -5174,11 +5166,10 @@ impl Editor {
                         let autoclose_enabled =
                             self.use_autoclose && snapshot_settings.use_autoclose;
                         if autoclose_enabled {
-                            let start = snapshot.anchor_after(selection_head);
-                            let end = snapshot.anchor_after(selection_head);
+                            let anchor = snapshot.anchor_after(selection_head);
                             self.autoclose_regions.push(AutocloseRegion {
                                 selection_id: selection.id,
-                                range: start..end,
+                                range: anchor..anchor,
                                 pair,
                             });
                         }
@@ -6035,6 +6026,18 @@ impl Editor {
 
     fn enable_wrap_selections_in_tag(&self, cx: &App) -> bool {
         let snapshot = self.buffer.read(cx).snapshot(cx);
+
+        // No selection can be in a language with wrap characters when neither the buffer nor the
+        // diff base text shown in its expanded deleted hunks has one.
+        if let Some(buffer) = snapshot.as_singleton()
+            && !buffer.has_language_with_wrap_characters()
+            && snapshot
+                .diff_for_buffer_id(buffer.remote_id())
+                .is_none_or(|diff| !diff.base_text().has_language_with_wrap_characters())
+        {
+            return false;
+        }
+
         for selection in self.selections.disjoint_anchors_arc().iter() {
             if snapshot
                 .language_at(selection.start)
@@ -8470,13 +8473,30 @@ impl Editor {
 
         let project = project.read(cx);
         let multi_buffer = self.buffer.read(cx);
-        let snapshot = multi_buffer.snapshot(cx);
 
+        if let Some(buffer) = multi_buffer.as_singleton() {
+            // A pending selection alone does not count, as in the general case below.
+            return !self.selections.disjoint_anchors().is_empty()
+                && project.supports_range_formatting(&buffer, cx);
+        }
+
+        let snapshot = multi_buffer.read(cx);
+        let mut previous_buffer_id = None;
         self.selections
             .disjoint_anchor_ranges()
             .flat_map(|range| [range.start, range.end])
-            .filter_map(|anchor| snapshot.anchor_to_buffer_anchor(anchor))
-            .filter_map(|(_, buffer_snapshot)| multi_buffer.buffer(buffer_snapshot.remote_id()))
+            .filter_map(|anchor| {
+                anchor.buffer_id().or_else(|| {
+                    snapshot
+                        .anchor_to_buffer_anchor(anchor)
+                        .map(|(_, buffer_snapshot)| buffer_snapshot.remote_id())
+                })
+            })
+            // Selections are ordered, so this collapses each run of selections in the same buffer
+            // into a single range formatting check. `Itertools::dedup` would read a whole run
+            // before yielding its buffer.
+            .filter(|buffer_id| previous_buffer_id.replace(*buffer_id) != Some(*buffer_id))
+            .filter_map(|buffer_id| multi_buffer.buffer(buffer_id))
             .any(|buffer| project.supports_range_formatting(&buffer, cx))
     }
 

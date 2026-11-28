@@ -393,9 +393,7 @@ impl LanguageModelClient for OpenAiLanguageModelProvider {
             Err(error) => return async move { Err(error) }.boxed(),
         };
         let request_limiter = self.request_limiters.for_model(&model.id);
-        if !config.supports_priority() {
-            request.speed = None;
-        }
+        request.speed = request.speed.filter(|speed| model.supports_speed(*speed));
         if config.uses_responses_api() {
             normalize_open_ai_response_thinking_effort(&mut request, &config);
             let request = match into_open_ai_response(
@@ -526,6 +524,7 @@ impl LanguageModelClient for OpenAiLanguageModelProvider {
             .boxed();
         }
 
+        request.speed = request.speed.filter(|speed| model.supports_speed(*speed));
         normalize_open_ai_response_thinking_effort(&mut request, &config);
         let request = match into_open_ai_response(
             request,
@@ -713,7 +712,7 @@ fn language_model(model: &open_ai::Model) -> LanguageModel {
         supports_streaming_tools: true,
         supports_thinking: supports_selectable_thinking_effort(model),
         supports_fast_mode: model.supports_priority(),
-        supports_ultrafast_mode: false,
+        supports_ultrafast_mode: model.supports_ultrafast(),
         supports_server_side_compaction: model.supports_compaction(),
         supports_explicit_compaction: model.supports_compaction(),
         supported_effort_levels: supported_thinking_effort_levels(model).into(),

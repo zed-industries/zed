@@ -164,13 +164,16 @@ if [[ -n "${MACOS_CERTIFICATE:-}" && -n "${MACOS_CERTIFICATE_PASSWORD:-}" && -n 
     trap cleanup EXIT
 fi
 
-GIT_VERSION="v2.43.3"
-GIT_VERSION_SHA="fa29823"
+GIT_VERSION="v2.56.1"
+GIT_VERSION_SHA="238326e"
+GIT_ARM64_SHA256="a882ec6882416b57d212a22bac845ae27944f96cf73453a864f6a12c17863a79"
+GIT_X64_SHA256="3fdb0c2f102fe0273d64b5d5fb77315c19f2b4648a154593723cb9ed98f2bc7d"
 
 function download_and_unpack() {
     local url=$1
-    local path_to_unpack=$2
-    local target_path=$3
+    local expected_sha256=$2
+    local path_to_unpack=$3
+    local target_path=$4
 
     temp_dir=$(mktemp -d)
 
@@ -179,7 +182,18 @@ function download_and_unpack() {
         exit 1
     fi
 
-    curl --silent --fail --location "$url" | tar -xvz -C "$temp_dir" -f - $path_to_unpack
+    local archive="$temp_dir/archive.tar.gz"
+    curl --silent --fail --location --output "$archive" "$url"
+
+    local actual_sha256
+    actual_sha256=$(shasum --algorithm 256 "$archive" | cut -d ' ' -f 1)
+    if [[ "$actual_sha256" != "$expected_sha256" ]]; then
+        echo "SHA-256 mismatch for $url: expected $expected_sha256, got $actual_sha256"
+        rm -rf "$temp_dir"
+        exit 1
+    fi
+
+    tar -xvz -C "$temp_dir" -f "$archive" $path_to_unpack
 
     mv "$temp_dir/$path_to_unpack" "$target_path"
 
@@ -195,10 +209,10 @@ function download_git() {
 
     case "$architecture" in
         aarch64-apple-darwin)
-            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-arm64.tar.gz" bin/git ./git
+            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-arm64.tar.gz" "$GIT_ARM64_SHA256" bin/git ./git
             ;;
         x86_64-apple-darwin)
-            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-x64.tar.gz" bin/git ./git
+            download_and_unpack "https://github.com/desktop/dugite-native/releases/download/${GIT_VERSION}/dugite-native-${GIT_VERSION}-${GIT_VERSION_SHA}-macOS-x64.tar.gz" "$GIT_X64_SHA256" bin/git ./git
             ;;
         *)
             echo "Unsupported architecture: $architecture"

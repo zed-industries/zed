@@ -86,10 +86,6 @@ impl RustLspAdapter {
                 for (key, value) in props {
                     let parts: Vec<&str> = key.split('.').collect();
 
-                    if parts.is_empty() {
-                        continue;
-                    }
-
                     let parts_to_process = if parts.first() == Some(&"rust-analyzer") {
                         &parts[1..]
                     } else {

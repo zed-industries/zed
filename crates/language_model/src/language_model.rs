@@ -324,6 +324,14 @@ impl LanguageModel {
         self.supports_fast_mode
     }
 
+    pub fn supports_speed(&self, speed: Speed) -> bool {
+        match speed {
+            Speed::Standard => true,
+            Speed::Fast => self.supports_fast_mode(),
+            Speed::Ultrafast => self.supports_ultrafast_mode,
+        }
+    }
+
     pub fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
         self.supported_effort_levels.to_vec()
     }

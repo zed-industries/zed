@@ -5,11 +5,11 @@ use agent_ui::{
     terminal_thread_metadata_store::TerminalThreadMetadata, thread_metadata_store::ThreadMetadata,
 };
 use gpui::{
-    Action as _, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Modifiers,
+    Action as _, DismissEvent, EventEmitter, FocusHandle, Focusable, Modifiers,
     ModifiersChangedEvent, Render, ScrollHandle, SharedString, prelude::*,
 };
 use ui::{AgentThreadStatus, ThreadItem, ThreadItemWorktreeInfo, WithScrollbar, prelude::*};
-use workspace::{ModalView, Workspace};
+use workspace::ModalView;
 use zed_actions::agents_sidebar::ToggleThreadSwitcher;
 
 use super::ThreadEntryWorkspace;
@@ -21,7 +21,7 @@ pub(crate) struct ThreadSwitcherThreadEntry {
     pub icon_from_external_svg: Option<SharedString>,
     pub status: AgentThreadStatus,
     pub metadata: ThreadMetadata,
-    pub workspace: Entity<Workspace>,
+    pub workspace: ThreadEntryWorkspace,
     pub project_name: Option<SharedString>,
     pub worktrees: Vec<ThreadItemWorktreeInfo>,
     pub diff_stats: DiffStats,
@@ -51,7 +51,7 @@ pub(crate) enum ThreadSwitcherEntry {
 pub(super) enum ThreadSwitcherSelection {
     Thread {
         metadata: ThreadMetadata,
-        workspace: Entity<Workspace>,
+        workspace: ThreadEntryWorkspace,
     },
     Terminal {
         metadata: TerminalThreadMetadata,
