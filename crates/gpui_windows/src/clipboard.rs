@@ -346,13 +346,23 @@ struct ClipboardGuard;
 
 impl ClipboardGuard {
     fn open() -> Option<Self> {
-        match unsafe { OpenClipboard(None) } {
-            Ok(()) => Some(Self),
-            Err(e) => {
-                log::error!("Failed to open clipboard: {e}");
-                None
+        // Only one process can have the clipboard open at a time, and clipboard
+        // managers or history tools briefly open it after every change, so a
+        // failure is often transient.
+        // This runs on the calling thread, so keep the worst case short.
+        const ATTEMPTS: u32 = 5;
+        const RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(5);
+
+        for attempt in 1..=ATTEMPTS {
+            match unsafe { OpenClipboard(None) } {
+                Ok(()) => return Some(Self),
+                Err(e) if attempt == ATTEMPTS => {
+                    log::error!("Failed to open clipboard: {e}");
+                }
+                Err(_) => std::thread::sleep(RETRY_DELAY),
             }
         }
+        None
     }
 }
 
