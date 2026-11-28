@@ -4,13 +4,14 @@ use crate::{
     Vim, VimSettings,
     motion::{Motion, MotionKind},
     object::Object,
-    state::{Mode, Register},
+    state::Mode,
 };
 use collections::HashMap;
 use editor::{ClipboardSelection, Editor, HighlightKey, SelectionEffects};
 use gpui::Context;
 use gpui::Window;
 use language::Point;
+use modal_editor::Register;
 use settings::Settings;
 
 impl Vim {

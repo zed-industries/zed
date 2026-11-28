@@ -45,6 +45,7 @@ text.workspace = true
 theme.workspace = true
 theme_settings.workspace = true
 menu.workspace = true
+modal_editor.workspace = true
 tokio = { version = "1.15", features = ["full"], optional = true }
 ui.workspace = true
 util.workspace = true
@@ -63,6 +64,7 @@ language = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
 markdown_preview.workspace = true
+modal_editor = { workspace = true, features = ["test-support"] }
 parking_lot.workspace = true
 project_panel.workspace = true
 outline_panel.workspace = true
