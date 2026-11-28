@@ -1290,6 +1290,24 @@
         // },
       },
     },
+    // Persistent sandbox permissions for agent-run terminal commands.
+    // These are added when choosing "Allow always" from a sandbox prompt.
+    "sandbox_permissions": {
+      // Whether sandboxed commands may reach any host over the network.
+      "allow_all_hosts": false,
+      // Hosts sandboxed commands may reach without prompting. Each entry is an
+      // exact hostname ("github.com") or a subdomain wildcard ("*.npmjs.org").
+      "network_hosts": [],
+      // Whether sandboxed commands may write anywhere on the filesystem.
+      "allow_fs_write_all": false,
+      // Whether to run agent terminal commands outside the OS sandbox.
+      "allow_unsandboxed": false,
+      // Directories sandboxed commands may write to without prompting.
+      "write_paths": [],
+      // Whether to warn when a sandbox prompt requests a domain or write path
+      // containing potentially confusable Unicode characters.
+      "warn_confusable_unicode": true,
+    },
     // When enabled, agent edits will be displayed in single-file editors for review
     "single_file_review": false,
     // Settings for automatic agent context compaction, which summarizes earlier
