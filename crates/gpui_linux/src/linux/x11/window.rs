@@ -36,6 +36,7 @@ use std::{
 use super::{X11Display, XINPUT_ALL_DEVICE_GROUPS, XINPUT_ALL_DEVICES};
 
 x11rb::atom_manager! {
+    #[cfg_attr(test, derive(Default))]
     pub XcbAtoms: AtomsCookie {
         XA_ATOM,
         XdndAware,
