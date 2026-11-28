@@ -1700,24 +1700,23 @@ mod tests {
         let (edit_tool, _project, _action_log, _fs, _thread) =
             setup_test_with_fs(cx, fs, &[path!("/root").as_ref()]).await;
 
-        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-        let _auth = cx.update(|cx| {
-            edit_tool.authorize(
-                &PathBuf::from(path!("/root/.agents/foo/../skills/my-skill/SKILL.md")),
-                &stream_tx,
-                cx,
-            )
-        });
-        let event = stream_rx.expect_authorization().await;
-        assert!(
-            event
-                .tool_call
-                .title
-                .value()
-                .is_some_and(|title| title.ends_with("(agent skills)")),
-            "`..` traversal into .agents/skills must still prompt: {:?}",
-            event.tool_call.title,
-        );
+        for path in [
+            path!("/root/.agents/foo/../skills/my-skill/SKILL.md"),
+            "root/.agents/foo/../skills/my-skill/SKILL.md",
+        ] {
+            let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+            let _auth = cx.update(|cx| edit_tool.authorize(&PathBuf::from(path), &stream_tx, cx));
+            let event = stream_rx.expect_authorization().await;
+            assert!(
+                event
+                    .tool_call
+                    .title
+                    .value()
+                    .is_some_and(|title| title.ends_with("(agent skills)")),
+                "`..` traversal into .agents/skills must still prompt for {path}: {:?}",
+                event.tool_call.title,
+            );
+        }
     }
 
     /// `.zed/foo/../../safe.json` similarly sidesteps the consecutive-
@@ -1780,24 +1779,24 @@ mod tests {
         let (edit_tool, _project, _action_log, _fs, _thread) =
             setup_test_with_fs(cx, fs, &[path!("/root").as_ref()]).await;
 
-        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-        let _auth = cx.update(|cx| {
-            edit_tool.authorize(
-                &PathBuf::from(path!("/root/safe/settings.json")),
-                &stream_tx,
-                cx,
-            )
-        });
-        let event = stream_rx.expect_authorization().await;
-        assert!(
-            event
-                .tool_call
-                .title
-                .value()
-                .is_some_and(|title| title.ends_with("(local settings)")),
-            "Intra-project symlink to .zed must still prompt: {:?}",
-            event.tool_call.title,
-        );
+        for path in [
+            path!("/root/safe/settings.json"),
+            "root/safe/settings.json",
+            "safe/settings.json",
+        ] {
+            let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+            let _auth = cx.update(|cx| edit_tool.authorize(&PathBuf::from(path), &stream_tx, cx));
+            let event = stream_rx.expect_authorization().await;
+            assert!(
+                event
+                    .tool_call
+                    .title
+                    .value()
+                    .is_some_and(|title| title.ends_with("(local settings)")),
+                "Intra-project symlink to .zed must still prompt for {path}: {:?}",
+                event.tool_call.title,
+            );
+        }
     }
 
     /// Same as the previous test but for the agent-skills sensitive
@@ -1822,24 +1821,80 @@ mod tests {
         let (edit_tool, _project, _action_log, _fs, _thread) =
             setup_test_with_fs(cx, fs, &[path!("/root").as_ref()]).await;
 
-        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-        let _auth = cx.update(|cx| {
-            edit_tool.authorize(
-                &PathBuf::from(path!("/root/safe/my-skill/SKILL.md")),
-                &stream_tx,
-                cx,
-            )
+        for path in [
+            path!("/root/safe/my-skill/SKILL.md"),
+            "root/safe/my-skill/SKILL.md",
+            "safe/my-skill/SKILL.md",
+        ] {
+            let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+            let _auth = cx.update(|cx| edit_tool.authorize(&PathBuf::from(path), &stream_tx, cx));
+            let event = stream_rx.expect_authorization().await;
+            assert!(
+                event
+                    .tool_call
+                    .title
+                    .value()
+                    .is_some_and(|title| title.ends_with("(agent skills)")),
+                "Intra-project symlink to .agents/skills must still prompt for {path}: {:?}",
+                event.tool_call.title,
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_streaming_authorize_allows_relative_paths_outside_sensitive_directories(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                ".zed": { "settings.json": "{}" },
+                "src": { "main.rs": "fn main() {}" },
+            }),
+        )
+        .await;
+        fs.insert_symlink(path!("/root/safe"), PathBuf::from("src"))
+            .await;
+        let (edit_tool, _project, _action_log, _fs, _thread) =
+            setup_test_with_fs(cx, fs, &[path!("/root").as_ref()]).await;
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            agent_settings::AgentSettings::override_global(settings, cx);
         });
-        let event = stream_rx.expect_authorization().await;
-        assert!(
-            event
-                .tool_call
-                .title
-                .value()
-                .is_some_and(|title| title.ends_with("(agent skills)")),
-            "Intra-project symlink to .agents/skills must still prompt: {:?}",
-            event.tool_call.title,
-        );
+
+        for path in [
+            path!("/root/src/main.rs"),
+            "root/src/main.rs",
+            "src/main.rs",
+            "src/new.rs",
+            path!("/root/safe/main.rs"),
+            "root/safe/main.rs",
+            "safe/main.rs",
+            "safe/new.rs",
+        ] {
+            let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+            let authorize_task =
+                cx.update(|cx| edit_tool.authorize(&PathBuf::from(path), &stream_tx, cx));
+            cx.run_until_parked();
+
+            let mut authorization_titles = Vec::new();
+            while let Ok(event) = stream_rx.try_recv() {
+                if let Ok(crate::ThreadEvent::ToolCallAuthorization(authorization)) = event {
+                    authorization_titles.extend(authorization.tool_call.title.value().cloned());
+                }
+            }
+            assert!(
+                authorization_titles.is_empty(),
+                "{path} is not sensitive and must not prompt: {authorization_titles:?}",
+            );
+            authorize_task
+                .await
+                .unwrap_or_else(|error| panic!("{path} should be authorized: {error}"));
+        }
     }
 
     #[gpui::test]

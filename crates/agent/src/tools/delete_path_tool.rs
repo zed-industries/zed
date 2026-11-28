@@ -118,10 +118,15 @@ impl AgentTool for DeletePathTool {
                     .map(|(_, target)| target)
             });
 
-            let settings_kind =
-                sensitive_settings_kind(Path::new(&path), &canonical_roots, fs.as_ref())
-                    .await
-                    .or(global_skill_settings_kind(global_skill_path.as_ref()));
+            let settings_kind = sensitive_settings_kind(
+                &project,
+                Path::new(&path),
+                &canonical_roots,
+                fs.as_ref(),
+                cx,
+            )
+            .await
+            .or(global_skill_settings_kind(global_skill_path.as_ref()));
 
             let decision =
                 if matches!(decision, ToolPermissionDecision::Allow) && settings_kind.is_some() {
@@ -502,6 +507,52 @@ mod tests {
             assert!(
                 !msg.contains("denied") && !msg.contains("authorization"),
                 "Error should not be a permission denial, got: {msg}",
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_delete_path_relative_path_through_symlink_to_local_settings(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root/project"),
+            json!({
+                ".zed": { "settings.json": "{}" }
+            }),
+        )
+        .await;
+        fs.insert_symlink(path!("/root/project/safe"), PathBuf::from(".zed"))
+            .await;
+
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(DeletePathTool::new(project, action_log));
+
+        for path in ["safe/settings.json", "project/safe/settings.json"] {
+            let (event_stream, mut event_rx) = ToolCallEventStream::test();
+            let _task = cx.update(|cx| {
+                tool.clone().run(
+                    ToolInput::resolved(DeletePathToolInput { path: path.into() }),
+                    event_stream,
+                    cx,
+                )
+            });
+
+            let auth = event_rx.expect_authorization().await;
+            let title = auth
+                .tool_call
+                .title
+                .value()
+                .expect("expected authorization title");
+            assert!(
+                title.contains("local settings"),
+                "Deleting {path} must prompt for local settings, got: {title}",
             );
         }
     }
