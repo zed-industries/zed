@@ -185,6 +185,14 @@ pub struct ChatCompletionRequest {
     pub tool_choice: Option<ToolChoice>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream_options: Option<StreamOptions>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chat_template_kwargs: Option<ChatTemplateKwargs>,
+}
+
+/// Extra variables passed to the model's Jinja chat template.
+#[derive(Serialize, Debug)]
+pub struct ChatTemplateKwargs {
+    pub enable_thinking: bool,
 }
 
 /// Asks the server to include a final `usage` chunk in the stream.
@@ -275,6 +283,8 @@ pub struct Props {
     #[serde(default)]
     pub modalities: Option<Modalities>,
     #[serde(default)]
+    pub chat_template: Option<String>,
+    #[serde(default)]
     pub chat_template_caps: Option<ChatTemplateCaps>,
 }
 
@@ -300,9 +310,19 @@ impl Props {
     }
 
     pub fn supports_thinking(&self) -> bool {
-        self.chat_template_caps
+        // `supports_preserve_reasoning` only means the template keeps
+        // reasoning from every past turn, so templates like Qwen 3.5's report
+        // false despite being capable of reasoning. Templates that let
+        // `enable_thinking` toggle reasoning do.
+        let preserves_reasoning = self
+            .chat_template_caps
             .as_ref()
-            .is_some_and(|caps| caps.supports_preserve_reasoning)
+            .is_some_and(|caps| caps.supports_preserve_reasoning);
+        let toggles_thinking = self
+            .chat_template
+            .as_deref()
+            .is_some_and(|template| template.contains("enable_thinking"));
+        preserves_reasoning || toggles_thinking
     }
 }
 
@@ -709,6 +729,26 @@ mod tests {
         assert!(props.supports_images());
         assert!(props.supports_tools());
         assert!(props.supports_thinking());
+    }
+
+    #[test]
+    fn props_supports_thinking_from_enable_thinking_template() {
+        let props = |chat_template: &str| -> Props {
+            serde_json::from_value(serde_json::json!({
+                "chat_template": chat_template,
+                "chat_template_caps": {
+                    "supports_preserve_reasoning": false,
+                    "supports_tools": true
+                }
+            }))
+            .unwrap()
+        };
+
+        assert!(
+            props("{%- if enable_thinking is defined and enable_thinking is true %}<think>{%- endif %}")
+                .supports_thinking()
+        );
+        assert!(!props("{{- '<|im_start|>assistant\\n' }}").supports_thinking());
     }
 
     fn model_event(value: serde_json::Value) -> ModelEvent {
