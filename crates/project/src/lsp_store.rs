@@ -380,6 +380,9 @@ pub struct LocalLspStore {
         >,
     >,
     buffer_snapshots: HashMap<BufferId, HashMap<LanguageServerId, Vec<LspBufferSnapshot>>>, // buffer_id -> server_id -> vec of snapshots
+    /// The furthest behind the newest version each server's versioned messages have been, up to
+    /// `MAX_LSP_VERSION_LAG`.
+    language_server_version_lags: HashMap<LanguageServerId, i32>,
     _subscription: gpui::Subscription,
     _binary_status_task: Task<()>,
     lsp_tree: LanguageServerTree,
@@ -3504,8 +3507,6 @@ impl LocalLspStore {
         version: Option<i32>,
         cx: &App,
     ) -> Result<TextBufferSnapshot> {
-        const OLD_VERSIONS_TO_RETAIN: i32 = 10;
-
         if let Some(version) = version {
             let buffer_id = buffer.read(cx).remote_id();
             let snapshots = if let Some(snapshots) = self
@@ -3514,13 +3515,26 @@ impl LocalLspStore {
                 .and_then(|m| m.get_mut(&server_id))
             {
                 snapshots
-            } else if version == 0 {
+            } else if version == 0 && self.language_servers.contains_key(&server_id) {
                 // Some language servers report version 0 even if the buffer hasn't been opened yet.
-                // We detect this case and treat it as if the version was `None`.
+                // We detect this case and treat it as if the version was `None`. Not for a stopped
+                // server: its snapshots were dropped, and its version 0 may predate later edits.
                 return Ok(buffer.read(cx).text_snapshot());
             } else {
                 anyhow::bail!("no snapshots found for buffer {buffer_id} and server {server_id}");
             };
+
+            // Kept at its largest, and recorded even if `version` was already trimmed, so trimming
+            // keeps up with servers that fall behind during bursts of edits.
+            if let Some(newest) = snapshots.last()
+                && (0..=newest.version).contains(&version)
+            {
+                let lag = self
+                    .language_server_version_lags
+                    .entry(server_id)
+                    .or_default();
+                *lag = (*lag).max((newest.version - version).min(MAX_LSP_VERSION_LAG));
+            }
 
             let found_snapshot = snapshots
                     .binary_search_by_key(&version, |e| e.version)
@@ -4993,6 +5007,7 @@ impl LspStore {
                 buffers_to_refresh_queue: VecDeque::new(),
                 _background_diagnostics_worker: Task::ready(()).shared(),
                 buffer_snapshots: Default::default(),
+                language_server_version_lags: HashMap::default(),
                 prettier_store,
                 environment,
                 http_client,
@@ -9733,8 +9748,13 @@ impl LspStore {
         let line_ending = next_snapshot.line_ending();
 
         for (language_server, document_sync_kind) in language_servers {
-            let buffer_snapshots = self
-                .as_local_mut()?
+            let local = self.as_local_mut()?;
+            let lag = local
+                .language_server_version_lags
+                .get(&language_server.server_id())
+                .copied()
+                .unwrap_or_default();
+            let buffer_snapshots = local
                 .buffer_snapshots
                 .get_mut(&buffer.remote_id())
                 .and_then(|m| m.get_mut(&language_server.server_id()))?;
@@ -9805,6 +9825,9 @@ impl LspStore {
                 version: next_version,
                 snapshot: next_snapshot.clone(),
             });
+            // Lookups alone never trim for servers that don't reference versions.
+            let oldest_retained = next_version - lag - OLD_VERSIONS_TO_RETAIN;
+            buffer_snapshots.retain(|snapshot| snapshot.version >= oldest_retained);
 
             language_server
                 .notify::<lsp::notification::DidChangeTextDocument>(
@@ -14388,6 +14411,15 @@ impl LspStore {
             for buffer_servers in local.buffers_opened_in_servers.values_mut() {
                 buffer_servers.remove(&for_server);
             }
+            // Only for servers that are gone: a running one needs its last snapshot for the next
+            // didChange.
+            if !local.language_servers.contains_key(&for_server) {
+                local.language_server_version_lags.remove(&for_server);
+                local.buffer_snapshots.retain(|_, snapshots_by_server_id| {
+                    snapshots_by_server_id.remove(&for_server);
+                    !snapshots_by_server_id.is_empty()
+                });
+            }
         }
     }
 
@@ -16587,6 +16619,12 @@ impl LanguageServerWatchedPaths {
     }
 }
 
+const OLD_VERSIONS_TO_RETAIN: i32 = 10;
+
+/// Caps how far behind the newest version a server's versioned messages can trail and still
+/// resolve, which bounds the snapshots kept for a server that references a stale or fixed version.
+const MAX_LSP_VERSION_LAG: i32 = 100;
+
 struct LspBufferSnapshot {
     version: i32,
     snapshot: TextBufferSnapshot,
@@ -17949,6 +17987,179 @@ mod tests {
                 );
             });
         }
+    }
+
+    async fn open_buffer_with_fake_servers<const N: usize>(
+        server_names: [&'static str; N],
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<Project>,
+        Entity<Buffer>,
+        OpenLspBufferHandle,
+        [LanguageServerId; N],
+    ) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            release_channel::init(Version::new(0, 0, 0), cx);
+        });
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(util::path!("/root"), serde_json::json!({ "main.rs": "" }))
+            .await;
+        let project = Project::test(fs, [util::path!("/root").as_ref()], cx).await;
+        let languages = project.read_with(cx, |project, _| project.languages().clone());
+        languages.add(language::rust_lang());
+        let fake_servers = server_names.map(|name| {
+            languages.register_fake_lsp(
+                "Rust",
+                language::FakeLspAdapter {
+                    name,
+                    ..Default::default()
+                },
+            )
+        });
+        let (buffer, lsp_handle) = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(util::path!("/root/main.rs"), cx)
+            })
+            .await
+            .expect("open buffer");
+        let mut server_ids = [LanguageServerId(0); N];
+        for (server_id, mut fake_servers) in server_ids.iter_mut().zip(fake_servers) {
+            *server_id = fake_servers
+                .next()
+                .await
+                .expect("start server")
+                .server
+                .server_id();
+        }
+        cx.run_until_parked();
+        (project, buffer, lsp_handle, server_ids)
+    }
+
+    fn edit_buffer(buffer: &Entity<Buffer>, edit_count: usize, cx: &mut TestAppContext) {
+        for _ in 0..edit_count {
+            buffer.update(cx, |buffer, cx| buffer.edit([(0..0, "x")], None, cx));
+        }
+    }
+
+    #[gpui::test]
+    async fn test_lsp_buffer_snapshot_retention(cx: &mut TestAppContext) {
+        let (project, buffer, _lsp_handle, [server_id]) =
+            open_buffer_with_fake_servers(["the-server"], cx).await;
+        let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+        let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+        let lookup = |version, cx: &mut TestAppContext| {
+            lsp_store.update(cx, |lsp_store, cx| {
+                lsp_store
+                    .as_local_mut()
+                    .expect("local lsp store")
+                    .buffer_snapshot_for_lsp_version(&buffer, server_id, Some(version), cx)
+                    .is_ok()
+            })
+        };
+        let retained_versions = |cx: &mut TestAppContext| {
+            lsp_store.read_with(cx, |lsp_store, _| {
+                let local = lsp_store.as_local().expect("local lsp store");
+                local.buffer_snapshots[&buffer_id][&server_id]
+                    .iter()
+                    .map(|snapshot| snapshot.version)
+                    .collect::<Vec<_>>()
+            })
+        };
+        let versions = |range: std::ops::RangeInclusive<i32>| range.collect::<Vec<_>>();
+
+        // Without versioned lookups, only the 10 versions before the newest remain.
+        edit_buffer(&buffer, 30, cx);
+        assert_eq!(retained_versions(cx), versions(20..=30));
+
+        // A lookup 5 versions behind keeps 5 more.
+        assert!(lookup(25, cx));
+        edit_buffer(&buffer, 10, cx);
+        assert_eq!(retained_versions(cx), versions(25..=40));
+
+        // An up-to-date lookup doesn't narrow the window before the next burst of edits.
+        assert!(lookup(40, cx));
+        edit_buffer(&buffer, 15, cx);
+        assert!(lookup(43, cx));
+
+        // A lookup behind the window fails, but widens it for later ones.
+        assert!(!lookup(20, cx));
+        edit_buffer(&buffer, 40, cx);
+        assert_eq!(retained_versions(cx), versions(50..=95));
+        assert!(lookup(60, cx));
+
+        // Versions never sent to the server don't change the window.
+        assert!(!lookup(96, cx));
+        assert!(!lookup(i32::MIN, cx));
+        edit_buffer(&buffer, 1, cx);
+        assert_eq!(retained_versions(cx), versions(51..=96));
+
+        // A stale version widens the window only up to the cap.
+        edit_buffer(&buffer, 200, cx);
+        assert!(!lookup(0, cx));
+        edit_buffer(&buffer, 200, cx);
+        assert_eq!(
+            retained_versions(cx),
+            versions(496 - MAX_LSP_VERSION_LAG - OLD_VERSIONS_TO_RETAIN..=496)
+        );
+    }
+
+    #[gpui::test]
+    async fn test_lsp_buffer_snapshots_dropped_with_server(cx: &mut TestAppContext) {
+        let (project, buffer, _lsp_handle, [first_server_id, second_server_id]) =
+            open_buffer_with_fake_servers(["first-server", "second-server"], cx).await;
+        let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+        let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+        let newest_versions = |cx: &mut TestAppContext| {
+            lsp_store.read_with(cx, |lsp_store, _| {
+                let local = lsp_store.as_local().expect("local lsp store");
+                let mut newest_versions = local
+                    .buffer_snapshots
+                    .get(&buffer_id)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|(server_id, snapshots)| {
+                        Some((*server_id, snapshots.last()?.version))
+                    })
+                    .collect::<Vec<_>>();
+                newest_versions.sort();
+                newest_versions
+            })
+        };
+
+        // Cleanup for a server that is still running keeps its snapshots.
+        lsp_store.update(cx, |lsp_store, _| {
+            lsp_store.cleanup_lsp_data(second_server_id)
+        });
+        edit_buffer(&buffer, 1, cx);
+        assert_eq!(
+            newest_versions(cx),
+            [(first_server_id, 1), (second_server_id, 1)]
+        );
+
+        lsp_store
+            .update(cx, |lsp_store, cx| {
+                lsp_store.stop_local_language_server(first_server_id, cx)
+            })
+            .await;
+        assert_eq!(newest_versions(cx), [(second_server_id, 1)]);
+        // A stopped server's version 0 must not resolve to the edited text.
+        let stopped_server_lookup = lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store
+                .as_local_mut()
+                .expect("local lsp store")
+                .buffer_snapshot_for_lsp_version(&buffer, first_server_id, Some(0), cx)
+                .map(|snapshot| snapshot.text())
+        });
+        assert!(stopped_server_lookup.is_err());
+
+        let worktree_id = buffer.read_with(cx, |buffer, cx| {
+            buffer.file().expect("buffer file").worktree_id(cx)
+        });
+        project.update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
+        cx.run_until_parked();
+        assert!(newest_versions(cx).is_empty());
     }
 
     #[test]
