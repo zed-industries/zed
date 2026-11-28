@@ -920,6 +920,18 @@ mod tests {
         Some(prefers_ime)
     }
 
+    fn query_keystroke_begins_pending_binding(
+        cx: &mut VisualTestContext,
+        keystroke: &'static str,
+    ) -> Option<bool> {
+        let keystroke = Keystroke::parse(keystroke).expect("valid keystroke");
+        let mut platform_window = cx.test_window(cx.window_handle());
+        let mut input_handler = platform_window.take_input_handler()?;
+        let begins_binding = input_handler.query_keystroke_begins_pending_binding(&keystroke);
+        platform_window.set_input_handler(input_handler);
+        Some(begins_binding)
+    }
+
     fn setup_altgr_test(
         cx: &mut TestAppContext,
     ) -> (Entity<PendingTextInputTestView>, &mut VisualTestContext) {
@@ -2196,5 +2208,61 @@ mod tests {
 
         cx.simulate_keystrokes("ctrl-b [");
         test.update(cx, |test, _| assert_eq!(test.text.borrow().as_str(), "["))
+    }
+
+    #[crate::test]
+    fn test_keystroke_begins_pending_binding(cx: &mut TestAppContext) {
+        let (test, cx) = cx.add_window_view(|_, cx| PendingTextInputTestView::new(cx));
+        let focus_handle = test.update(cx, |test, _| test.focus_handle.clone());
+        cx.update(|window, cx| {
+            window.focus(&focus_handle, cx);
+            window.activate_window();
+        });
+
+        // No bindings at all: nothing can start a chord.
+        assert_eq!(query_keystroke_begins_pending_binding(cx, "j"), Some(false));
+
+        // A single-stroke binding is not a chord, so plain typing must not be diverted.
+        cx.update(|_, cx| cx.bind_keys([KeyBinding::new("j", TestAction, Some("Terminal"))]));
+        cx.run_until_parked();
+        assert_eq!(query_keystroke_begins_pending_binding(cx, "j"), Some(false));
+
+        // `j k` is a chord: `j` begins it, `a` does not.
+        cx.update(|_, cx| {
+            cx.bind_keys([
+                KeyBinding::new("j", TestAction, Some("Terminal")),
+                KeyBinding::new("j k", TestAction, Some("Terminal")),
+            ])
+        });
+        cx.run_until_parked();
+        assert_eq!(query_keystroke_begins_pending_binding(cx, "j"), Some(true));
+        assert_eq!(query_keystroke_begins_pending_binding(cx, "a"), Some(false));
+
+        // Cmd chords are never diverted: they belong to AppKit key equivalents.
+        assert_eq!(
+            query_keystroke_begins_pending_binding(cx, "cmd-j"),
+            Some(false)
+        );
+    }
+
+    #[crate::test]
+    fn test_keystroke_extends_pending_binding(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.bind_keys([KeyBinding::new("j k l", TestAction, Some("Terminal"))]);
+        });
+        let (test, cx) = cx.add_window_view(|_, cx| PendingTextInputTestView::new(cx));
+        let focus_handle = test.update(cx, |test, _| test.focus_handle.clone());
+        cx.update(|window, cx| {
+            window.focus(&focus_handle, cx);
+            window.activate_window();
+        });
+
+        assert_eq!(query_keystroke_begins_pending_binding(cx, "j"), Some(true));
+
+        // Once `j` is pending, `k` extends the same chord; `z` still does not.
+        cx.simulate_keystrokes("j");
+        cx.update(|window, _| assert!(window.has_pending_keystrokes()));
+        assert_eq!(query_keystroke_begins_pending_binding(cx, "k"), Some(true));
+        assert_eq!(query_keystroke_begins_pending_binding(cx, "z"), Some(false));
     }
 }

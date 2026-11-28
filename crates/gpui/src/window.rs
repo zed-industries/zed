@@ -6989,6 +6989,38 @@ impl Window {
             })
     }
 
+    /// Returns whether `keystroke`, typed after any pending input, would start or continue a
+    /// multi-stroke key binding in the focused context.
+    ///
+    /// macOS backends use this to decide whether a character the active input source is willing
+    /// to commit as raw text should be routed to key-binding matching instead. Only chords are
+    /// considered: a keystroke that merely completes a single-stroke binding reports `false`, so
+    /// plain text entry is never diverted.
+    ///
+    /// Composing input is unaffected on purpose — an input source that starts composing calls
+    /// `setMarkedText` and never reaches this decision.
+    pub fn keystroke_begins_pending_binding(&self, keystroke: &Keystroke) -> bool {
+        if keystroke.modifiers.platform {
+            return false;
+        }
+
+        let node_id = self.focus_node_id_in_rendered_frame(self.focus);
+        let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
+
+        let mut input: SmallVec<[Keystroke; 1]> = self
+            .pending_input()
+            .map(|pending_input| pending_input.keystrokes().iter().cloned().collect())
+            .unwrap_or_default();
+        input.push(keystroke.clone());
+
+        let (_, pending_binding, _) = self
+            .rendered_frame
+            .dispatch_tree
+            .bindings_for_input(&input, &dispatch_path);
+
+        pending_binding
+    }
+
     /// Pauses or resumes the current pending input timeout on behalf of `owner`.
     ///
     /// A paused timeout resumes automatically if `owner` is released. Returns whether the timeout

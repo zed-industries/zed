@@ -2395,6 +2395,18 @@ impl PlatformInputHandler {
             .unwrap_or(false)
     }
 
+    /// Returns whether `keystroke` would begin or extend a multi-stroke key binding in the
+    /// window's focused context.
+    ///
+    /// macOS uses this at the point where the active input source commits a printable key as
+    /// raw text: a `j k` chord must not lose its first stroke to the IME. Only chords report
+    /// `true`, so ordinary typing and IME composition are untouched.
+    pub fn query_keystroke_begins_pending_binding(&mut self, keystroke: &Keystroke) -> bool {
+        self.cx
+            .update(|window, _cx| window.keystroke_begins_pending_binding(keystroke))
+            .unwrap_or(false)
+    }
+
     /// See [`InputHandler::text_input_configuration`].
     pub fn text_input_configuration(
         &mut self,
