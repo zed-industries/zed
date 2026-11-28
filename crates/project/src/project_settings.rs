@@ -484,6 +484,10 @@ pub struct GitSettings {
     ///
     /// Default: on
     pub branch_picker: BranchPickerSettings,
+    /// Git hosting provider base URLs enabled for repository search in the clone picker.
+    ///
+    /// Default: []
+    pub repository_search_providers: Vec<String>,
     /// Stash picker configuration.
     pub stash_picker: StashPickerSettings,
     /// How hunks are displayed visually in the editor.
@@ -794,6 +798,7 @@ impl Settings for ProjectSettings {
                     show_author_name: branch_picker.show_author_name.unwrap(),
                 }
             },
+            repository_search_providers: git.repository_search_providers.clone().unwrap(),
             stash_picker: StashPickerSettings {
                 date_style: git.stash_picker.unwrap().date_style.unwrap(),
             },
