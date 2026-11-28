@@ -18,10 +18,10 @@ use gpui::ContentMask;
 use crate::{
     DisplayRow, Editor, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT,
     MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, RowExt, StickyHeaderExcerpt,
-    display_map::Block,
-    element::{EditorElement, SplitSide, header_jump_data, render_buffer_header},
+    display_map::{Block, BlockId},
+    element::{EditorElement, SplitSide, header_jump_data, lines_for_height, render_buffer_header},
     scroll::ScrollOffset,
-    split::SplittableEditor,
+    split::{SplittableEditor, TopBlock},
 };
 
 const RESIZE_HANDLE_WIDTH: f32 = 8.0;
@@ -139,6 +139,7 @@ impl RenderOnce for SplitEditorView {
 
         let lhs_editor = splittable_editor.lhs_editor().unwrap().clone();
         let rhs_editor = splittable_editor.rhs_editor().clone();
+        let top_block = splittable_editor.top_block().cloned();
 
         let mut lhs = EditorElement::new(&lhs_editor, self.style.clone());
         let mut rhs = EditorElement::new(&rhs_editor, self.style.clone());
@@ -151,7 +152,12 @@ impl RenderOnce for SplitEditorView {
 
         let separator_color = cx.theme().colors().border_variant;
 
-        let resize_handle = render_resize_handle(&self.split_state, separator_color, window, cx);
+        // With nothing to compare, only the top block is visible, so keep the panes seamless.
+        let resize_handle = if rhs_editor.read(cx).is_empty(cx) {
+            div().flex_shrink_0().w(px(1.)).into_any_element()
+        } else {
+            render_resize_handle(&self.split_state, separator_color, window, cx)
+        };
 
         let state_for_drag = self.split_state.downgrade();
 
@@ -159,6 +165,7 @@ impl RenderOnce for SplitEditorView {
             lhs_editor.clone(),
             rhs_editor.clone(),
             self.style.clone(),
+            top_block,
         );
 
         let lhs_editor_for_order = lhs_editor;
@@ -220,14 +227,21 @@ struct SplitBufferHeadersElement {
     lhs_editor: Entity<Editor>,
     rhs_editor: Entity<Editor>,
     style: EditorStyle,
+    top_block: Option<TopBlock>,
 }
 
 impl SplitBufferHeadersElement {
-    fn new(lhs_editor: Entity<Editor>, rhs_editor: Entity<Editor>, style: EditorStyle) -> Self {
+    fn new(
+        lhs_editor: Entity<Editor>,
+        rhs_editor: Entity<Editor>,
+        style: EditorStyle,
+        top_block: Option<TopBlock>,
+    ) -> Self {
         Self {
             lhs_editor,
             rhs_editor,
             style,
+            top_block,
         }
     }
 }
@@ -236,8 +250,14 @@ struct BufferHeaderLayout {
     element: AnyElement,
 }
 
+struct TopBlockLayout {
+    element: AnyElement,
+    clip_bounds: Bounds<Pixels>,
+}
+
 struct SplitBufferHeadersPrepaintState {
     content_bounds: Bounds<Pixels>,
+    top_block: Option<TopBlockLayout>,
     sticky_header: Option<AnyElement>,
     non_sticky_headers: Vec<BufferHeaderLayout>,
 }
@@ -283,6 +303,7 @@ impl Element for SplitBufferHeadersElement {
         if bounds.size.width <= px(0.) || bounds.size.height <= px(0.) {
             return SplitBufferHeadersPrepaintState {
                 content_bounds: bounds,
+                top_block: None,
                 sticky_header: None,
                 non_sticky_headers: Vec::new(),
             };
@@ -326,6 +347,15 @@ impl Element for SplitBufferHeadersElement {
                         bounds: prepaint.content_bounds,
                     }),
                     |window| {
+                        if let Some(top_block) = &mut prepaint.top_block {
+                            window.with_content_mask(
+                                Some(ContentMask {
+                                    bounds: top_block.clip_bounds,
+                                }),
+                                |window| top_block.element.paint(window, cx),
+                            );
+                        }
+
                         for header_layout in &mut prepaint.non_sticky_headers {
                             header_layout.element.paint(window, cx);
                         }
@@ -387,6 +417,18 @@ impl SplitBufferHeadersElement {
         let (selected_buffer_ids, latest_selection_anchors) =
             self.compute_selection_info(&snapshot, cx);
 
+        let top_block = self.build_top_block(
+            &snapshot,
+            scroll_position,
+            content_bounds,
+            available_width,
+            line_height,
+            start_row,
+            end_row,
+            window,
+            cx,
+        );
+
         let sticky_header = if snapshot.buffer_snapshot().show_headers() {
             snapshot
                 .sticky_header_excerpt(scroll_position.y)
@@ -431,6 +473,7 @@ impl SplitBufferHeadersElement {
 
         SplitBufferHeadersPrepaintState {
             content_bounds,
+            top_block,
             sticky_header,
             non_sticky_headers,
         }
@@ -497,6 +540,82 @@ impl SplitBufferHeadersElement {
             .collect();
 
         (selected_buffer_ids, latest_selection_anchors)
+    }
+
+    fn build_top_block(
+        &self,
+        snapshot: &EditorSnapshot,
+        scroll_position: gpui::Point<ScrollOffset>,
+        bounds: Bounds<Pixels>,
+        available_width: Pixels,
+        line_height: Pixels,
+        start_row: DisplayRow,
+        end_row: DisplayRow,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<TopBlockLayout> {
+        let top_block = self.top_block.as_ref()?;
+        let block_id = BlockId::Custom(top_block.id);
+        let (block_row, block) = snapshot
+            .blocks_in_range(start_row..end_row)
+            .find(|(_, block)| block.id() == block_id)?;
+        let block_height = block.height();
+
+        let mut element = div()
+            .size_full()
+            .bg(cx.theme().colors().editor_background)
+            .block_mouse_except_scroll()
+            .child((top_block.render)(window, cx))
+            .into_any_element();
+        let content_size = element.layout_as_root(
+            size(
+                AvailableSpace::Definite(available_width),
+                AvailableSpace::MinContent,
+            ),
+            window,
+            cx,
+        );
+        let height_in_lines =
+            (lines_for_height(content_size.height, line_height, window) as u32).max(1);
+        let height = line_height * height_in_lines as f32;
+        if content_size.height != height {
+            element.layout_as_root(
+                size(AvailableSpace::Definite(available_width), height.into()),
+                window,
+                cx,
+            );
+        }
+        if height_in_lines != block_height {
+            self.rhs_editor.update(cx, |editor, cx| {
+                editor.resize_blocks(
+                    HashMap::from_iter([(top_block.id, height_in_lines)]),
+                    None,
+                    cx,
+                )
+            });
+            // Notifications during prepaint do not schedule another frame.
+            window.request_animation_frame();
+        }
+
+        let y_offset = (block_row.0 as f64 - scroll_position.y) * f64::from(line_height);
+        let origin = point(bounds.origin.x, bounds.origin.y + Pixels::from(y_offset));
+        // The editors still use the old height until the next frame.
+        let clip_bounds = Bounds::new(
+            origin,
+            size(available_width, line_height * block_height as f32),
+        )
+        .intersect(&bounds);
+        window.with_content_mask(
+            Some(ContentMask {
+                bounds: clip_bounds,
+            }),
+            |window| element.prepaint_at(origin, window, cx),
+        );
+
+        Some(TopBlockLayout {
+            element,
+            clip_bounds,
+        })
     }
 
     fn build_sticky_header(

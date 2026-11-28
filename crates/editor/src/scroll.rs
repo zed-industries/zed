@@ -48,7 +48,7 @@ impl ScrollAnchor {
     pub fn scroll_position(&self, snapshot: &DisplaySnapshot) -> gpui::Point<ScrollOffset> {
         self.offset.apply_along(Axis::Vertical, |offset| {
             if self.anchor == Anchor::Min {
-                0.
+                offset.max(0.)
             } else {
                 let scroll_top = self.anchor.to_display_point(snapshot).row().as_f64();
                 (offset + scroll_top).max(0.)
@@ -224,6 +224,7 @@ impl ScrollManager {
 
         let mut result = if let Some(display_map_id) = shared.display_map_id
             && display_map_id != snapshot.display_map_id
+            && shared.scroll_anchor.anchor != Anchor::Min
         {
             let companion_snapshot = snapshot
                 .companion_snapshot()
@@ -343,14 +344,27 @@ impl ScrollManager {
             )
             .to_point(map);
         let top_anchor = map.buffer_snapshot().anchor_before(scroll_top_buffer_point);
+        let rows_above_start: u32 = map
+            .blocks_in_range(DisplayRow(0)..map.max_point().row().next_row())
+            .take_while(|(_, block)| block.is_above_start())
+            .map(|(_, block)| block.height())
+            .sum();
+        // Inside top blocks, follow the viewport rather than text that moves when blocks resize.
+        let anchor = if scroll_top < rows_above_start as f64 {
+            Anchor::Min
+        } else {
+            top_anchor
+        };
+        let anchor_top = if anchor == Anchor::Min {
+            0.
+        } else {
+            anchor.to_display_point(map).row().as_f64()
+        };
 
         self.set_anchor(
             ScrollAnchor {
-                anchor: top_anchor,
-                offset: point(
-                    scroll_position.x.max(0.),
-                    scroll_top - top_anchor.to_display_point(map).row().as_f64(),
-                ),
+                anchor,
+                offset: point(scroll_position.x.max(0.), scroll_top - anchor_top),
             },
             map,
             scroll_top_buffer_point.row,

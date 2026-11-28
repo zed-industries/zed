@@ -51848,6 +51848,113 @@ async fn test_display_row_for_inline_code_action_with_block_above(cx: &mut gpui:
 }
 
 #[gpui::test]
+fn test_top_block_resize_keeps_viewport(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let text = (0..50)
+        .map(|row| format!("line {row}\n"))
+        .collect::<String>();
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple(&text, cx);
+        build_editor(buffer, window, cx)
+    });
+    let block_id = editor
+        .update(cx, |editor, _, cx| {
+            editor.insert_blocks(
+                [BlockProperties {
+                    style: BlockStyle::Fixed,
+                    placement: BlockPlacement::Above(Anchor::Min),
+                    height: Some(1),
+                    // Render at the current height so layout doesn't undo the test's resizes.
+                    render: Arc::new(|cx| div().h(cx.line_height * cx.height as f32).into_any()),
+                    priority: 0,
+                }],
+                None,
+                cx,
+            )[0]
+        })
+        .unwrap();
+    let mut scroll_and_resize = |scroll_top: Option<f64>, height: u32| {
+        editor
+            .update(cx, |editor, window, cx| {
+                if let Some(scroll_top) = scroll_top {
+                    editor.set_scroll_position(gpui::point(0., scroll_top), window, cx);
+                }
+                editor.resize_blocks(HashMap::from_iter([(block_id, height)]), None, cx);
+                editor.scroll_position(cx).y
+            })
+            .unwrap()
+    };
+
+    // Within the block, the viewport stays in place as it grows, even after scrolling past it.
+    scroll_and_resize(None, 3);
+    scroll_and_resize(Some(20.), 3);
+    assert_eq!(scroll_and_resize(Some(1.), 6), 1.);
+
+    // Below the block, the viewport follows the text.
+    assert_eq!(scroll_and_resize(Some(20.), 8), 22.);
+}
+
+#[gpui::test]
+async fn test_custom_block_height_at_fractional_scale(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let text = (0..10)
+        .map(|row| format!("line {row}\n"))
+        .collect::<String>();
+    cx.set_state(&format!("ˇ{text}"));
+    let block_ids = cx.update_editor(|editor, _, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        editor.insert_blocks(
+            [
+                BlockProperties {
+                    placement: BlockPlacement::Above(Anchor::Min),
+                    height: Some(3),
+                    style: BlockStyle::Fixed,
+                    render: Arc::new(|cx| div().h(cx.line_height * 3.).into_any()),
+                    priority: 0,
+                },
+                BlockProperties {
+                    placement: BlockPlacement::Above(snapshot.anchor_before(Point::new(5, 0))),
+                    height: Some(3),
+                    style: BlockStyle::Fixed,
+                    render: Arc::new(|cx| div().h(cx.line_height * 2.5).into_any()),
+                    priority: 0,
+                },
+            ],
+            None,
+            cx,
+        )
+    });
+
+    let editor = cx.editor.clone();
+    for scale in [1.0, 1.25, 1.5, 1.75, 2.0] {
+        cx.simulate_scale_factor_change(scale);
+        for _ in 0..3 {
+            cx.draw(
+                gpui::Point::default(),
+                size(px(3000.), px(3000.)),
+                |_, _| editor.clone().into_any_element(),
+            );
+            cx.run_until_parked();
+        }
+        let heights = cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            block_ids
+                .iter()
+                .map(|block_id| {
+                    snapshot
+                        .block_for_id(BlockId::Custom(*block_id))
+                        .map(|block| block.height())
+                })
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(heights, [Some(3), Some(3)], "scale factor {scale}");
+    }
+}
+
+#[gpui::test]
 async fn test_soft_wrap_indent_updated_on_language_changed(cx: &mut gpui::TestAppContext) {
     // Configure Rust to have a different continuation indent behavior than the default.
     init_test(cx, |settings| {

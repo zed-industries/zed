@@ -3121,9 +3121,8 @@ fn window_bottom(
         let first_visible_line = text_layout_details
             .scroll_anchor
             .scroll_top_display_point(map);
-        let bottom_row = first_visible_line.row().0
-            + (visible_rows + text_layout_details.scroll_anchor.scroll_anchor.offset.y - 1.).floor()
-                as u32;
+        let scroll_top = text_layout_details.scroll_anchor.scroll_position(map).y;
+        let bottom_row = (scroll_top + visible_rows - 1.).floor() as u32;
         if bottom_row < map.max_point().row().0
             && text_layout_details.vertical_scroll_margin as usize > times
         {
@@ -3405,12 +3404,15 @@ mod test {
         test::{NeovimBackedTestContext, VimTestContext},
     };
     use editor::{
-        Editor, EditorMode, Inlay, MultiBuffer, test::editor_test_context::EditorTestContext,
+        Anchor, Editor, EditorMode, Inlay, MultiBuffer,
+        display_map::{BlockPlacement, BlockProperties, BlockStyle},
+        test::editor_test_context::EditorTestContext,
     };
-    use gpui::KeyBinding;
+    use gpui::{AppContext as _, Element as _, KeyBinding, Styled as _, div, point, px, size};
     use indoc::indoc;
     use language::Point;
     use multi_buffer::MultiBufferRow;
+    use std::sync::Arc;
 
     #[gpui::test]
     async fn test_start_end_of_paragraph(cx: &mut gpui::TestAppContext) {
@@ -4562,6 +4564,61 @@ mod test {
           4 5 6
           7 8 9
           "});
+    }
+
+    #[gpui::test]
+    async fn test_window_bottom_inside_top_block(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        let (line_height, visible_line_count) = cx.update_editor(|editor, window, cx| {
+            (
+                editor
+                    .style(cx)
+                    .text
+                    .line_height_in_pixels(window.rem_size()),
+                editor.visible_line_count().unwrap(),
+            )
+        });
+        let window = cx.window;
+        let margin = cx
+            .update_window(window, |_, window, _cx| {
+                window.viewport_size().height - line_height * visible_line_count as f32
+            })
+            .unwrap();
+        cx.simulate_window_resize(cx.window, size(px(1000.), margin + 10. * line_height));
+
+        let text = (0..20)
+            .map(|row| format!("line {row}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        cx.set_state(&format!("ˇ{text}"), Mode::Normal);
+        cx.update_editor(|editor, window, cx| {
+            editor.insert_blocks(
+                [BlockProperties {
+                    style: BlockStyle::Fixed,
+                    placement: BlockPlacement::Above(Anchor::Min),
+                    height: Some(3),
+                    render: Arc::new(|cx| div().h(3. * cx.window.line_height()).into_any()),
+                    priority: 0,
+                }],
+                None,
+                cx,
+            );
+            editor.set_scroll_position(point(0., 1.), window, cx);
+        });
+
+        // Display rows 1..=10 are visible, and the scroll margin keeps the cursor 3 rows above
+        // the bottom, on display row 7, which is buffer row 4 below the 3-row block.
+        cx.simulate_keystrokes("shift-l");
+        cx.update_editor(|editor, _, cx| {
+            assert_eq!(
+                editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx))
+                    .head(),
+                Point::new(4, 0)
+            );
+        });
     }
 
     #[gpui::test]

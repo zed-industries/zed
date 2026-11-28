@@ -18,8 +18,7 @@ use git::{
 use gpui::{
     AnyElement, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, Entity,
     EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
-    PromptLevel, Render, ScrollHandle, StatefulInteractiveElement as _, Styled, Task, WeakEntity,
-    Window, actions,
+    PromptLevel, Render, Styled, Task, WeakEntity, Window, actions,
 };
 use language::{
     Buffer, BufferId, Capability, DiskState, File, LanguageRegistry, LineEnding,
@@ -38,7 +37,7 @@ use std::{
     sync::Arc,
 };
 use theme::ActiveTheme;
-use ui::{ContextMenu, DiffStat, Disclosure, Divider, Tooltip, WithScrollbar, prelude::*};
+use ui::{ContextMenu, DiffStat, Disclosure, Divider, Tooltip, prelude::*};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath, truncate_and_trailoff};
 use workspace::item::TabTooltipContent;
 use workspace::{
@@ -80,7 +79,6 @@ pub struct CommitView {
     editor: Entity<SplittableEditor>,
     message: Entity<Markdown>,
     message_expanded: bool,
-    message_scroll_handle: ScrollHandle,
     stash: Option<usize>,
     multibuffer: Entity<MultiBuffer>,
     repository: Entity<Repository>,
@@ -353,6 +351,7 @@ impl CommitView {
 
             editor
         });
+        Self::show_header_in_editor(&editor, cx);
         let commit_sha = Arc::<str>::from(commit.sha.as_ref());
 
         let repository_clone = repository.clone();
@@ -454,7 +453,6 @@ impl CommitView {
             editor,
             message,
             message_expanded: commit_view_settings.expand_description,
-            message_scroll_handle: ScrollHandle::new(),
             multibuffer,
             stash,
             repository,
@@ -610,8 +608,7 @@ impl CommitView {
     /// Positions the file's header at the top of the viewport and places the cursor
     /// at the start of its first excerpt, without adding a navigation history entry.
     ///
-    /// The buffer must be the first file inserted into the view, with its header
-    /// within the initial header-height display rows. Call this before appending
+    /// The buffer must be the first file inserted into the view. Call this before appending
     /// other files so the scroll anchor preserves its position as they are inserted.
     fn reveal_first_file(
         &mut self,
@@ -622,16 +619,9 @@ impl CommitView {
         self.editor.update(cx, |editor, cx| {
             editor.rhs_editor().update(cx, |editor, cx| {
                 let display_snapshot = editor.display_snapshot(cx);
-                let header_height = display_snapshot.buffer_header_height();
 
-                // Since we're guaranteed that the file we're
-                // dealing with is the first one for which excerpts
-                // are added, we can constrain our search range to
-                // simply
-                // `DisplayRow(0)..DisplayRow(header_height)`, as
-                // the block should always be found within that.
                 let header = display_snapshot
-                    .blocks_in_range(DisplayRow(0)..DisplayRow(header_height))
+                    .blocks_in_range(DisplayRow(0)..display_snapshot.max_point().row())
                     .find_map(|(row, block)| match block {
                         Block::BufferHeader { excerpt, .. } if excerpt.buffer_id() == buffer_id => {
                             Some((row, excerpt.start_anchor))
@@ -851,6 +841,22 @@ impl CommitView {
         self.open_file_at_head(&file, window, cx);
     }
 
+    fn show_header_in_editor(editor: &Entity<SplittableEditor>, cx: &mut Context<Self>) {
+        let commit_view = cx.weak_entity();
+        editor.update(cx, |editor, cx| {
+            editor.set_top_block(
+                Arc::new(move |window, cx| {
+                    commit_view
+                        .update(cx, |commit_view, cx| {
+                            commit_view.render_header(window, cx).into_any_element()
+                        })
+                        .unwrap_or_else(|_| gpui::Empty.into_any_element())
+                }),
+                cx,
+            );
+        });
+    }
+
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let commit = &self.commit;
         let author_name = commit.author_name.clone();
@@ -903,8 +909,9 @@ impl CommitView {
             "Expand Commit Description"
         };
 
+        // Fill the block's whole rows so the border stays above the first file header.
         v_flex()
-            .w_full()
+            .size_full()
             .py_2p5()
             .gap_2()
             .border_b_1()
@@ -1023,7 +1030,6 @@ impl CommitView {
         let has_more = message.contains('\n');
         let collapsed = has_more && !is_expanded;
         let collapsed_height = window.line_height();
-        let max_expanded_height = window.line_height() * 12.;
 
         Some(
             h_flex()
@@ -1032,23 +1038,11 @@ impl CommitView {
                 .child(h_flex().flex_none().w(avatar_spacer))
                 .child(
                     div()
-                        .relative()
                         .flex_1()
                         .min_w_0()
-                        .child(
-                            div()
-                                .id("commit-message")
-                                .size_full()
-                                .text_sm()
-                                .when(collapsed, |this| this.h(collapsed_height).overflow_hidden())
-                                .when(!collapsed, |this| {
-                                    this.max_h(max_expanded_height)
-                                        .overflow_y_scroll()
-                                        .track_scroll(&self.message_scroll_handle)
-                                })
-                                .child(MarkdownElement::new(self.message.clone(), markdown_style)),
-                        )
-                        .vertical_scrollbar_for(&self.message_scroll_handle, window, cx),
+                        .text_sm()
+                        .when(collapsed, |this| this.h(collapsed_height).overflow_hidden())
+                        .child(MarkdownElement::new(self.message.clone(), markdown_style)),
                 ),
         )
     }
@@ -1498,6 +1492,7 @@ impl Item for CommitView {
                     editor
                 }
             });
+            Self::show_header_in_editor(&editor, cx);
             let language_registry = project.read(cx).languages().clone();
             let message = cx.new(|cx| {
                 Markdown::new(
@@ -1511,7 +1506,6 @@ impl Item for CommitView {
                 editor,
                 message,
                 message_expanded: self.message_expanded,
-                message_scroll_handle: ScrollHandle::new(),
                 multibuffer: self.multibuffer.clone(),
                 commit: self.commit.clone(),
                 stash: self.stash,
@@ -1529,7 +1523,7 @@ impl Item for CommitView {
 }
 
 impl Render for CommitView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_stash = self.stash.is_some();
 
         v_flex()
@@ -1537,11 +1531,7 @@ impl Render for CommitView {
             .on_action(cx.listener(Self::open_file_at_head_action))
             .size_full()
             .bg(cx.theme().colors().editor_background)
-            .child(self.render_header(window, cx))
-            .when(
-                !self.editor.read(cx).rhs_editor().read(cx).is_empty(cx),
-                |this| this.child(div().flex_grow(1.).child(self.editor.clone())),
-            )
+            .child(div().flex_grow(1.).min_h_0().child(self.editor.clone()))
             .when(self.is_shallow_boundary, |this| {
                 this.child(self.render_shallow_boundary_notice(cx))
             })
@@ -1839,6 +1829,31 @@ mod tests {
 
         commit_view.read_with(cx, |commit_view, cx| {
             assert_eq!(folded_files(commit_view, cx), 0);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_commit_view_header_scrolls_with_diff(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (commit_view, cx) = open_test_commit_view(None, cx).await;
+
+        commit_view.update(cx, |commit_view, cx| {
+            commit_view.editor.update(cx, |editor, cx| {
+                editor.rhs_editor().update(cx, |editor, cx| {
+                    let display_snapshot = editor.display_snapshot(cx);
+                    let mut blocks = display_snapshot
+                        .blocks_in_range(DisplayRow(0)..display_snapshot.max_point().row());
+
+                    let (header_row, header) = blocks.next().expect("should have a commit header");
+                    assert_eq!(header_row, DisplayRow(0));
+                    assert!(matches!(header, Block::Custom(_)));
+
+                    let (_, file_header) = blocks.next().expect("should have a file header");
+                    assert!(file_header.is_buffer_header());
+
+                    assert_eq!(editor.scroll_position(cx).y, 0.);
+                });
+            });
         });
     }
 
@@ -2236,9 +2251,28 @@ mod tests {
                         })
                         .expect("b.bin should be folded");
 
+                    let first_path =
+                        RepoPath::new("a.txt").expect("should be valid repository path");
+                    let first_header_row = display_snapshot
+                        .blocks_in_range(DisplayRow(0)..max_display_row)
+                        .find_map(|(display_row, block)| match block {
+                            Block::BufferHeader { excerpt, .. }
+                            | Block::FoldedBuffer {
+                                first_excerpt: excerpt,
+                                ..
+                            } => {
+                                let buffer = excerpt.buffer(&multi_buffer_snapshot);
+                                let file = buffer.file()?;
+
+                                (file.path().as_ref() == &*first_path).then_some(display_row)
+                            }
+                            _ => None,
+                        })
+                        .expect("a.txt should have a header");
+
                     // Confirm that a.txt was inserted before the revealed file,
                     // otherwise the scroll position would trivially match.
-                    assert!(display_row > DisplayRow(0));
+                    assert!(first_header_row < display_row);
 
                     // Assert that the editor's scroll is anchored to the folded
                     // buffer header for the revealed file.
