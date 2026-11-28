@@ -1234,6 +1234,10 @@ pub struct StatusColorsContent {
     #[serde(rename = "created.border")]
     pub created_border: Option<ThemeColor>,
 
+    /// Like `created`, but for a change that has been fully staged in Git.
+    #[serde(rename = "created.staged")]
+    pub created_staged: Option<ThemeColor>,
+
     /// Indicates that something no longer exists, like a deleted file.
     #[serde(rename = "deleted")]
     pub deleted: Option<ThemeColor>,
@@ -1243,6 +1247,10 @@ pub struct StatusColorsContent {
 
     #[serde(rename = "deleted.border")]
     pub deleted_border: Option<ThemeColor>,
+
+    /// Like `deleted`, but for a change that has been fully staged in Git.
+    #[serde(rename = "deleted.staged")]
+    pub deleted_staged: Option<ThemeColor>,
 
     /// Indicates a system error, a failed operation or a diagnostic error.
     #[serde(rename = "error")]
@@ -1304,6 +1312,10 @@ pub struct StatusColorsContent {
     #[serde(rename = "modified.border")]
     pub modified_border: Option<ThemeColor>,
 
+    /// Like `modified`, but for a change that has been fully staged in Git.
+    #[serde(rename = "modified.staged")]
+    pub modified_staged: Option<ThemeColor>,
+
     /// Indicates something that is predicted, like automatic code completion, or generated code.
     #[serde(rename = "predictive")]
     pub predictive: Option<ThemeColor>,
@@ -1343,6 +1355,17 @@ pub struct StatusColorsContent {
 
     #[serde(rename = "unreachable.border")]
     pub unreachable_border: Option<ThemeColor>,
+
+    /// Indicates something new that Git does not yet track, like a file that
+    /// has not been staged/added to the index.
+    #[serde(rename = "untracked")]
+    pub untracked: Option<ThemeColor>,
+
+    #[serde(rename = "untracked.background")]
+    pub untracked_background: Option<ThemeColor>,
+
+    #[serde(rename = "untracked.border")]
+    pub untracked_border: Option<ThemeColor>,
 
     /// Represents a warning status, like an operation that is about to fail.
     #[serde(rename = "warning")]
