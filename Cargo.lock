@@ -1404,6 +1404,7 @@ dependencies = [
  "util",
  "which",
  "workspace",
+ "zed_actions",
  "zlog",
 ]
 
@@ -17280,6 +17281,7 @@ dependencies = [
  "path",
  "pollster 0.4.0",
  "sqlformat",
+ "thiserror 2.0.21",
  "thread_local",
  "uuid",
 ]

@@ -9,8 +9,39 @@ use std::ffi::CString;
 use anyhow::{Context as _, Result};
 use indoc::{formatdoc, indoc};
 use libsqlite3_sys::sqlite3_exec;
+use thiserror::Error;
 
 use crate::connection::Connection;
+
+/// The database has completed migrations that the caller doesn't know about, because a newer
+/// version of the app migrated it, and they aren't all additive. Its schema may no longer match
+/// what this version expects.
+#[derive(Debug, Error)]
+#[error(
+    "{domain} has {completed} completed migrations, but only {known} are known. A newer version likely migrated this database."
+)]
+pub struct UnknownMigrationsError {
+    domain: &'static str,
+    known: usize,
+    completed: usize,
+}
+
+/// Whether a migration only creates tables or indexes, or adds columns. A version of the app
+/// that doesn't know such a migration still works, because its queries name their columns.
+/// A unique index isn't additive: rows that the older version inserts can violate it.
+fn is_additive_migration(migration: &str) -> bool {
+    migration.split(';').all(|statement| {
+        let mut words = statement.split_whitespace().map(str::to_ascii_uppercase);
+        match words.next().as_deref() {
+            None => true,
+            Some("CREATE") => matches!(words.next().as_deref(), Some("TABLE" | "INDEX")),
+            Some("ALTER") => {
+                words.next().as_deref() == Some("TABLE") && words.nth(1).as_deref() == Some("ADD")
+            }
+            _ => false,
+        }
+    })
+}
 
 impl Connection {
     fn eager_exec(&self, sql: &str) -> anyhow::Result<()> {
@@ -55,6 +86,18 @@ impl Connection {
                     WHERE domain = ?
                     ORDER BY step
                     "})?(domain)?;
+
+            if completed_migrations
+                .iter()
+                .skip(migrations.len())
+                .any(|(_, _, migration)| !is_additive_migration(migration))
+            {
+                anyhow::bail!(UnknownMigrationsError {
+                    domain,
+                    known: migrations.len(),
+                    completed: completed_migrations.len(),
+                });
+            }
 
             let mut store_completed_migration = self
                 .exec_bound("INSERT INTO migrations (domain, step, migration) VALUES (?, ?, ?)")?;
@@ -154,7 +197,10 @@ impl Connection {
 mod test {
     use indoc::indoc;
 
-    use crate::connection::Connection;
+    use crate::{
+        connection::Connection,
+        migrations::{UnknownMigrationsError, is_additive_migration},
+    };
 
     #[test]
     fn test_migrations_are_added_to_table() {
@@ -349,6 +395,38 @@ mod test {
 
         // Verify new migration returns error when run
         assert!(second_migration_result.is_err())
+    }
+
+    #[test]
+    fn migrations_from_newer_version() {
+        let connection = Connection::open_memory(Some("migrations_from_newer_version"));
+        let migrations = [
+            "CREATE TABLE test (col INTEGER)",
+            "ALTER TABLE test ADD COLUMN added TEXT; CREATE INDEX test_col ON test (col)",
+            "ALTER TABLE test RENAME COLUMN col TO renamed",
+        ];
+        let migrate = |known| {
+            connection.migrate("test", &migrations[..known], &mut disallow_migration_change)
+        };
+
+        migrate(2).unwrap();
+        migrate(1).unwrap();
+
+        migrate(3).unwrap();
+        assert!(migrate(2).unwrap_err().is::<UnknownMigrationsError>());
+        assert!(migrate(1).unwrap_err().is::<UnknownMigrationsError>());
+    }
+
+    #[test]
+    fn non_additive_migrations() {
+        for migration in [
+            "CREATE UNIQUE INDEX test_col ON test (col)",
+            "ALTER TABLE test DROP COLUMN col",
+            "CREATE TABLE test_2 (col INTEGER); DROP TABLE test",
+            "UPDATE test SET col = 1",
+        ] {
+            assert!(!is_additive_migration(migration), "{migration}");
+        }
     }
 
     #[test]

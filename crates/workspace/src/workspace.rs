@@ -162,7 +162,7 @@ pub use workspace_settings::{
     RestoreOnStartupBehavior, StatusBarSettings, TabBarSettings, WorkspaceSettings,
     closing_last_window_quits_app, observe_accessible_mode,
 };
-use zed_actions::{Spawn, feedback::FileBugReport, theme::ToggleMode};
+use zed_actions::{Spawn, auto_update::Check, feedback::FileBugReport, theme::ToggleMode};
 
 use crate::{dock::PanelSizeState, item::ItemBufferKind, notifications::NotificationId};
 use crate::{
@@ -171,6 +171,7 @@ use crate::{
         model::{SerializedItem, SerializedPane, SerializedPaneGroup, add_saved_rows},
     },
     security_modal::SecurityModal,
+    workspace_error::{ErrorAction, ErrorSeverity, WorkspaceError},
 };
 
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
@@ -10001,27 +10002,44 @@ fn notify_if_database_failed(window: WindowHandle<MultiWorkspace>, cx: &mut Asyn
         .update(cx, |multi_workspace, _, cx| {
             let workspace = multi_workspace.workspace().clone();
             workspace.update(cx, |workspace, cx| {
-                if (*db::ALL_FILE_DB_FAILED).load(std::sync::atomic::Ordering::Acquire) {
-                    struct DatabaseFailedNotification;
-
-                    workspace.show_notification(
-                        NotificationId::unique::<DatabaseFailedNotification>(),
-                        cx,
-                        |cx| {
-                            cx.new(|cx| {
-                                MessageNotification::new("Failed to load the database file.", cx)
-                                    .primary_message("File an Issue")
-                                    .primary_icon(IconName::Plus)
-                                    .primary_on_click(|window, cx| {
-                                        window.dispatch_action(Box::new(FileBugReport), cx)
-                                    })
-                            })
-                        },
-                    );
+                if let Some(failure) = db::file_db_failure() {
+                    workspace.show_error(failure, cx);
                 }
             });
         })
         .log_err();
+}
+
+impl WorkspaceError for db::FileDbFailure {
+    fn primary_message(&self) -> SharedString {
+        match self {
+            Self::NewerVersion => "A newer version of Zed changed the database.",
+            Self::Other => "Failed to load the database file.",
+        }
+        .into()
+    }
+
+    fn secondary_message(&self) -> Option<SharedString> {
+        match self {
+            Self::NewerVersion => {
+                Some("Update Zed to restore your workspace; until then, nothing is saved.".into())
+            }
+            Self::Other => None,
+        }
+    }
+
+    fn primary_action(&self) -> ErrorAction {
+        match self {
+            Self::NewerVersion => ErrorAction::new("Check for Updates", Check),
+            Self::Other => {
+                ErrorAction::new("File an Issue", FileBugReport).with_icon(IconName::Plus)
+            }
+        }
+    }
+
+    fn severity(&self) -> ErrorSeverity {
+        ErrorSeverity::Critical
+    }
 }
 
 fn px_with_ui_font_fallback(val: u32, cx: &Context<Workspace>) -> Pixels {
